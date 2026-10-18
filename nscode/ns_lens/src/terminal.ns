@@ -1,0 +1,1890 @@
+// The View > Terminal floating panel. A pseudo-terminal child runs the user's
+// login shell in the opened project; this module parses the shell's VT output
+// into a cell grid and turns the window's key edges back into terminal input.
+// The panel is a real terminal, not a command log: cursor addressing, colours,
+// scroll regions, alternate screens and the usual xterm replies are supported.
+use std
+use os
+use view
+use ui
+
+lit TERM_MAX_COLS = 240
+lit TERM_MAX_ROWS = 72
+lit TERM_HISTORY_LINES = 512
+lit TERM_READ_BYTES = 16384
+lit TERM_READ_ROUNDS = 2
+lit TERM_DRAIN_ROUNDS = 16
+
+lit TERM_TITLE_H = 30.0
+lit TERM_FOOTER_H = 18.0
+lit TERM_PAD = 6.0
+lit TERM_MIN_W = 320.0
+lit TERM_MIN_H = 160.0
+lit TERM_RESIZE = 14.0
+
+lit TERM_FG_DEFAULT = 256
+lit TERM_BG_DEFAULT = 257
+
+// Attribute bits above the nine-bit foreground and background indices.
+lit TERM_BOLD = 1
+lit TERM_DIM = 2
+lit TERM_UNDERLINE = 4
+lit TERM_REVERSE = 8
+
+// Parser states.
+lit TERM_GROUND = 0
+lit TERM_ESCAPE = 1
+lit TERM_CSI = 2
+lit TERM_OSC = 3
+lit TERM_CHARSET = 4
+lit TERM_OSC_ESCAPE = 5
+lit TERM_STRING = 6
+lit TERM_STRING_ESCAPE = 7
+
+let g_term_cols: i32 = 80
+let g_term_rows: i32 = 24
+let g_term_chars = [i32](TERM_MAX_COLS * TERM_MAX_ROWS)
+let g_term_attrs = [i32](TERM_MAX_COLS * TERM_MAX_ROWS)
+let g_term_cur_col: i32 = 0
+let g_term_cur_row: i32 = 0
+let g_term_fg: i32 = TERM_FG_DEFAULT
+let g_term_bg: i32 = TERM_BG_DEFAULT
+let g_term_flags: i32 = 0
+let g_term_scroll_top: i32 = 0
+let g_term_scroll_bottom: i32 = 23
+let g_term_cursor_visible = true
+let g_term_autowrap = true
+let g_term_app_cursor = false
+let g_term_bracketed_paste = false
+let g_term_save_col: i32 = 0
+let g_term_save_row: i32 = 0
+let g_term_save_fg: i32 = TERM_FG_DEFAULT
+let g_term_save_bg: i32 = TERM_BG_DEFAULT
+let g_term_save_flags: i32 = 0
+let g_term_save_app_cursor = false
+
+// Alternate screen. Entering copies the main grid here and restores it on
+// leave, so full-screen programs never consume the scrollback.
+let g_term_alt = false
+let g_term_main_chars = [i32](TERM_MAX_COLS * TERM_MAX_ROWS)
+let g_term_main_attrs = [i32](TERM_MAX_COLS * TERM_MAX_ROWS)
+let g_term_main_col: i32 = 0
+let g_term_main_row: i32 = 0
+let g_term_main_fg: i32 = TERM_FG_DEFAULT
+let g_term_main_bg: i32 = TERM_BG_DEFAULT
+let g_term_main_flags: i32 = 0
+let g_term_main_top: i32 = 0
+let g_term_main_bottom: i32 = 23
+
+// Scrollback ring. A line is copied out of the top of the screen when a
+// full-screen scroll drops it.
+let g_term_hist_chars = [i32](TERM_HISTORY_LINES * TERM_MAX_COLS)
+let g_term_hist_attrs = [i32](TERM_HISTORY_LINES * TERM_MAX_COLS)
+let g_term_hist_head: i32 = 0
+let g_term_hist_count: i32 = 0
+let g_term_offset: i32 = 0
+
+// Parser state that survives between reads.
+let g_term_state: i32 = TERM_GROUND
+let g_term_params = [i32](16)
+let g_term_param_count: i32 = 0
+let g_term_param_value: i32 = 0
+let g_term_param_any = false
+let g_term_csi_private: i32 = 0
+let g_term_utf8_code: i32 = 0
+let g_term_utf8_left: i32 = 0
+let g_term_palette = [u32](258)
+let g_term_palette_ready = false
+
+let g_terminal_open = false
+let g_terminal_focus = false
+let g_terminal_handle: i32 = 0
+let g_terminal_exited = false
+let g_terminal_error = ""
+let g_terminal_ready = false
+let g_terminal_x: f64 = 24.0
+let g_terminal_y: f64 = 380.0
+let g_terminal_w: f64 = 740.0
+let g_terminal_h: f64 = 380.0
+let g_terminal_dragging = false
+let g_terminal_resizing = false
+let g_terminal_grab_x: f64 = 0.0
+let g_terminal_grab_y: f64 = 0.0
+let g_terminal_grab_w: f64 = 0.0
+let g_terminal_grab_h: f64 = 0.0
+
+// ---- colours ---------------------------------------------------------------
+
+fn term_hex_digit(v: i32) str {
+    return substr("0123456789abcdef", clamp_i(v, 0, 15), 1)
+}
+
+fn term_hex_byte(v: i32) str {
+    return term_hex_digit((v >> 4) & 15) + term_hex_digit(v & 15)
+}
+
+fn term_cube_level(index: i32) i32 {
+    if index <= 0 {
+        return 0
+    }
+    if index == 1 {
+        return 95
+    }
+    if index == 2 {
+        return 135
+    }
+    if index == 3 {
+        return 175
+    }
+    if index == 4 {
+        return 215
+    }
+    return 255
+}
+
+fn term_palette_init() {
+    if g_term_palette_ready {
+        return
+    }
+    let preset = [str](16)
+    preset[0] = "000000"
+    preset[1] = "800000"
+    preset[2] = "008000"
+    preset[3] = "808000"
+    preset[4] = "000080"
+    preset[5] = "800080"
+    preset[6] = "008080"
+    preset[7] = "c0c0c0"
+    preset[8] = "5a5a5a"
+    preset[9] = "ff5f5f"
+    preset[10] = "5fd75f"
+    preset[11] = "e5e55f"
+    preset[12] = "5f87ff"
+    preset[13] = "ff5fff"
+    preset[14] = "5fe5e5"
+    preset[15] = "ffffff"
+    for i in 0 to 16 {
+        g_term_palette[i] = ui_pack_color("#" + preset[i])
+    }
+    let i = 16
+    loop i < 232 {
+        let n = i - 16
+        let r = term_cube_level(n / 36)
+        let g = term_cube_level((n / 6) % 6)
+        let b = term_cube_level(n % 6)
+        g_term_palette[i] = ui_pack_color("#" + term_hex_byte(r) + term_hex_byte(g) + term_hex_byte(b))
+        i = i + 1
+    }
+    loop i < 256 {
+        let v = 8 + (i - 232) * 10
+        g_term_palette[i] = ui_pack_color("#" + term_hex_byte(v) + term_hex_byte(v) + term_hex_byte(v))
+        i = i + 1
+    }
+    g_term_palette[TERM_FG_DEFAULT] = col_text()
+    g_term_palette[TERM_BG_DEFAULT] = col_editor_bg()
+    g_term_palette_ready = true
+}
+
+// The terminal floats over the map like the bars do. Its default background
+// uses the shared floating-panel alpha; explicit SGR backgrounds stay opaque.
+fn col_terminal_bg() u32 {
+    return lens_float_color(col_editor_bg())
+}
+
+fn term_color(index: i32) u32 {
+    if index < 0 || index >= 258 {
+        return col_text()
+    }
+    return g_term_palette[index]
+}
+
+// RGB SGR colours are folded into the 6x6x6 cube, which every terminal palette
+// already covers; the full-value ranges land on the same cells as xterm.
+fn term_rgb_index(r: i32, g: i32, b: i32) i32 {
+    return 16 + term_cube_index(r) * 36 + term_cube_index(g) * 6 + term_cube_index(b)
+}
+
+fn term_cube_index(v: i32) i32 {
+    if v < 48 {
+        return 0
+    }
+    if v < 115 {
+        return 1
+    }
+    if v < 155 {
+        return 2
+    }
+    if v < 195 {
+        return 3
+    }
+    if v < 235 {
+        return 4
+    }
+    return 5
+}
+
+// ---- attributes ------------------------------------------------------------
+
+fn term_attr_pack(fg: i32, bg: i32, flags: i32) i32 {
+    return (fg & 511) | ((bg & 511) << 9) | ((flags & 31) << 18)
+}
+
+fn term_attr_fg(attr: i32) i32 { return attr & 511 }
+fn term_attr_bg(attr: i32) i32 { return (attr >> 9) & 511 }
+fn term_attr_flags(attr: i32) i32 { return (attr >> 18) & 31 }
+
+fn term_current_attr() i32 {
+    return term_attr_pack(g_term_fg, g_term_bg, g_term_flags)
+}
+
+fn term_blank_attr() i32 {
+    let bg = g_term_bg
+    if (g_term_flags & TERM_REVERSE) != 0 {
+        bg = g_term_fg
+    }
+    return term_attr_pack(TERM_FG_DEFAULT, bg, 0)
+}
+
+fn term_attr_reset() {
+    g_term_fg = TERM_FG_DEFAULT
+    g_term_bg = TERM_BG_DEFAULT
+    g_term_flags = 0
+}
+
+// ---- screen cells ----------------------------------------------------------
+
+fn term_cell(row: i32, col: i32) i32 {
+    return row * TERM_MAX_COLS + col
+}
+
+fn term_history_cell(line: i32, col: i32) i32 {
+    return (line % TERM_HISTORY_LINES) * TERM_MAX_COLS + col
+}
+
+// Physical slot of logical history line 0, the oldest retained line. Once the
+// ring is full this moves around the buffer with the write head.
+fn term_history_start() i32 {
+    let start = g_term_hist_head - g_term_hist_count
+    if start < 0 {
+        start = start + TERM_HISTORY_LINES
+    }
+    return start
+}
+
+fn term_set_cell(row: i32, col: i32, cp: i32, attr: i32) {
+    if row < 0 || row >= TERM_MAX_ROWS || col < 0 || col >= TERM_MAX_COLS {
+        return
+    }
+    let at = term_cell(row, col)
+    g_term_chars[at] = cp
+    g_term_attrs[at] = attr
+}
+
+fn term_blank_cells(row: i32, col0: i32, col1: i32, attr: i32) {
+    if row < 0 || row >= TERM_MAX_ROWS {
+        return
+    }
+    let a = clamp_i(col0, 0, TERM_MAX_COLS)
+    let b = clamp_i(col1, 0, TERM_MAX_COLS)
+    for col in a to b {
+        let at = term_cell(row, col)
+        g_term_chars[at] = 32
+        g_term_attrs[at] = attr
+    }
+}
+
+fn term_blank_row(row: i32, attr: i32) {
+    term_blank_cells(row, 0, TERM_MAX_COLS, attr)
+}
+
+fn term_clear_screen() {
+    let attr = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
+    for row in 0 to TERM_MAX_ROWS {
+        term_blank_row(row, attr)
+    }
+}
+
+fn term_clear_history() {
+    g_term_hist_head = 0
+    g_term_hist_count = 0
+    g_term_offset = 0
+}
+
+fn term_push_history_row(row: i32) {
+    let line = g_term_hist_head
+    let attr = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
+    for col in 0 to TERM_MAX_COLS {
+        let dst_at = term_history_cell(line, col)
+        if col < g_term_cols {
+            g_term_hist_chars[dst_at] = g_term_chars[term_cell(row, col)]
+            g_term_hist_attrs[dst_at] = g_term_attrs[term_cell(row, col)]
+        } else {
+            g_term_hist_chars[dst_at] = 32
+            g_term_hist_attrs[dst_at] = attr
+        }
+    }
+    g_term_hist_head = (g_term_hist_head + 1) % TERM_HISTORY_LINES
+    if g_term_hist_count < TERM_HISTORY_LINES {
+        g_term_hist_count = g_term_hist_count + 1
+    }
+    if g_term_offset > 0 {
+        g_term_offset = clamp_i(g_term_offset + 1, 0, g_term_hist_count)
+    }
+}
+
+// ---- cursor and scrolling --------------------------------------------------
+
+fn term_set_cursor(row: i32, col: i32) {
+    g_term_cur_row = clamp_i(row, 0, g_term_rows - 1)
+    g_term_cur_col = clamp_i(col, 0, g_term_cols)
+}
+
+fn term_scroll_up(count: i32) {
+    let top = clamp_i(g_term_scroll_top, 0, g_term_rows - 1)
+    let bottom = clamp_i(g_term_scroll_bottom, top, g_term_rows - 1)
+    let n = clamp_i(count, 1, bottom - top + 1)
+    if top == 0 && bottom == g_term_rows - 1 && g_term_alt == false {
+        for k in 0 to n {
+            term_push_history_row(top + k)
+        }
+    }
+    for row in top to bottom - n + 1 {
+        for col in 0 to TERM_MAX_COLS {
+            let src_at = term_cell(row + n, col)
+            let dst_at = term_cell(row, col)
+            g_term_chars[dst_at] = g_term_chars[src_at]
+            g_term_attrs[dst_at] = g_term_attrs[src_at]
+        }
+    }
+    let attr = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
+    for row in bottom - n + 1 to bottom + 1 {
+        term_blank_row(row, attr)
+    }
+}
+
+fn term_scroll_down(count: i32) {
+    let top = clamp_i(g_term_scroll_top, 0, g_term_rows - 1)
+    let bottom = clamp_i(g_term_scroll_bottom, top, g_term_rows - 1)
+    let n = clamp_i(count, 1, bottom - top + 1)
+    let row = bottom
+    loop row >= top + n {
+        for col in 0 to TERM_MAX_COLS {
+            let src_at = term_cell(row - n, col)
+            let dst_at = term_cell(row, col)
+            g_term_chars[dst_at] = g_term_chars[src_at]
+            g_term_attrs[dst_at] = g_term_attrs[src_at]
+        }
+        row = row - 1
+    }
+    let attr = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
+    for blank in top to top + n {
+        term_blank_row(blank, attr)
+    }
+}
+
+fn term_linefeed() {
+    if g_term_cur_row >= g_term_scroll_bottom {
+        term_scroll_up(1)
+    } else if g_term_cur_row < g_term_rows - 1 {
+        g_term_cur_row = g_term_cur_row + 1
+    }
+}
+
+fn term_reverse_index() {
+    if g_term_cur_row <= g_term_scroll_top {
+        term_scroll_down(1)
+    } else {
+        g_term_cur_row = g_term_cur_row - 1
+    }
+}
+
+fn term_save_cursor() {
+    g_term_save_col = g_term_cur_col
+    g_term_save_row = g_term_cur_row
+    g_term_save_fg = g_term_fg
+    g_term_save_bg = g_term_bg
+    g_term_save_flags = g_term_flags
+    g_term_save_app_cursor = g_term_app_cursor
+}
+
+fn term_restore_cursor() {
+    g_term_cur_col = clamp_i(g_term_save_col, 0, g_term_cols)
+    g_term_cur_row = clamp_i(g_term_save_row, 0, g_term_rows - 1)
+    g_term_fg = g_term_save_fg
+    g_term_bg = g_term_save_bg
+    g_term_flags = g_term_save_flags
+    g_term_app_cursor = g_term_save_app_cursor
+}
+
+// ---- output ----------------------------------------------------------------
+
+// Display width of a code point: 0 for combining marks, 2 for the East Asian
+// wide ranges most terminals treat as double cells.
+fn term_char_width(cp: i32) i32 {
+    if cp < 32 {
+        return 0
+    }
+    if cp >= 0x300 && cp <= 0x36f {
+        return 0
+    }
+    if cp >= 0x1ab0 && cp <= 0x1aff {
+        return 0
+    }
+    if cp >= 0x1dc0 && cp <= 0x1dff {
+        return 0
+    }
+    if cp >= 0x20d0 && cp <= 0x20ff {
+        return 0
+    }
+    if cp >= 0xfe20 && cp <= 0xfe2f {
+        return 0
+    }
+    if cp >= 0x1100 && cp <= 0x115f {
+        return 2
+    }
+    if cp >= 0x2e80 && cp <= 0xa4cf {
+        return 2
+    }
+    if cp >= 0xac00 && cp <= 0xd7a3 {
+        return 2
+    }
+    if cp >= 0xf900 && cp <= 0xfaff {
+        return 2
+    }
+    if cp >= 0xfe30 && cp <= 0xfe6f {
+        return 2
+    }
+    if cp >= 0xff00 && cp <= 0xff60 {
+        return 2
+    }
+    if cp >= 0xffe0 && cp <= 0xffe6 {
+        return 2
+    }
+    if cp >= 0x1f300 && cp <= 0x1f64f {
+        return 2
+    }
+    if cp >= 0x1f900 && cp <= 0x1f9ff {
+        return 2
+    }
+    if cp >= 0x20000 && cp <= 0x3fffd {
+        return 2
+    }
+    return 1
+}
+
+fn term_put_char(cp: i32) {
+    let width = term_char_width(cp)
+    if width <= 0 {
+        return
+    }
+    if g_term_cur_col + width > g_term_cols {
+        if g_term_autowrap {
+            g_term_cur_col = 0
+            term_linefeed()
+        } else {
+            g_term_cur_col = g_term_cols - width
+            if g_term_cur_col < 0 {
+                g_term_cur_col = 0
+            }
+        }
+    }
+    let row = clamp_i(g_term_cur_row, 0, g_term_rows - 1)
+    let col = clamp_i(g_term_cur_col, 0, g_term_cols - 1)
+    term_set_cell(row, col, cp, term_current_attr())
+    if width == 2 && col + 1 < g_term_cols {
+        term_set_cell(row, col + 1, -1, term_current_attr())
+    }
+    g_term_cur_col = clamp_i(col + width, 0, g_term_cols)
+}
+
+fn term_tab_forward() {
+    let col = g_term_cur_col
+    let next = ((col / 8) + 1) * 8
+    g_term_cur_col = clamp_i(next, 0, g_term_cols)
+}
+
+fn term_control(byte: i32) {
+    if byte == 7 {
+        return
+    }
+    if byte == 8 {
+        if g_term_cur_col > 0 {
+            g_term_cur_col = g_term_cur_col - 1
+        }
+        return
+    }
+    if byte == 9 {
+        term_tab_forward()
+        return
+    }
+    if byte == 10 || byte == 11 || byte == 12 {
+        term_linefeed()
+        return
+    }
+    if byte == 13 {
+        g_term_cur_col = 0
+    }
+}
+
+fn term_receive_char(cp: i32) {
+    term_put_char(cp)
+}
+
+fn term_reply(text: str) {
+    if g_terminal_handle > 0 && g_terminal_exited == false {
+        os_pty_write(g_terminal_handle, text)
+    }
+}
+
+// ---- CSI -------------------------------------------------------------------
+
+fn term_param(i: i32) i32 {
+    if i < 0 || i >= g_term_param_count {
+        return 0
+    }
+    return g_term_params[i]
+}
+
+fn term_param_or(i: i32, fallback: i32) i32 {
+    let value = term_param(i)
+    if value <= 0 {
+        return fallback
+    }
+    return value
+}
+
+fn term_push_param() {
+    if g_term_param_count < 16 {
+        let value = 0
+        if g_term_param_any {
+            value = g_term_param_value
+        }
+        g_term_params[g_term_param_count] = value
+        g_term_param_count = g_term_param_count + 1
+    }
+    g_term_param_value = 0
+    g_term_param_any = false
+}
+
+fn term_csi_reset() {
+    g_term_param_count = 0
+    g_term_param_value = 0
+    g_term_param_any = false
+    g_term_csi_private = 0
+}
+
+fn term_erase_line(mode: i32) {
+    let attr = term_blank_attr()
+    let row = clamp_i(g_term_cur_row, 0, g_term_rows - 1)
+    let col = clamp_i(g_term_cur_col, 0, g_term_cols)
+    if mode == 0 {
+        term_blank_cells(row, col, g_term_cols, attr)
+    } else if mode == 1 {
+        term_blank_cells(row, 0, clamp_i(col + 1, 0, g_term_cols), attr)
+    } else {
+        term_blank_cells(row, 0, g_term_cols, attr)
+    }
+}
+
+fn term_erase_display(mode: i32) {
+    let attr = term_blank_attr()
+    let row = clamp_i(g_term_cur_row, 0, g_term_rows - 1)
+    let col = clamp_i(g_term_cur_col, 0, g_term_cols)
+    if mode == 2 || mode == 3 {
+        for r in 0 to g_term_rows {
+            term_blank_cells(r, 0, g_term_cols, attr)
+        }
+        if mode == 3 {
+            term_clear_history()
+        }
+        return
+    }
+    if mode == 0 {
+        term_blank_cells(row, col, g_term_cols, attr)
+        for r in row + 1 to g_term_rows {
+            term_blank_cells(r, 0, g_term_cols, attr)
+        }
+    } else if mode == 1 {
+        for r in 0 to row {
+            term_blank_cells(r, 0, g_term_cols, attr)
+        }
+        term_blank_cells(row, 0, clamp_i(col + 1, 0, g_term_cols), attr)
+    }
+}
+
+fn term_insert_chars(count: i32) {
+    let row = clamp_i(g_term_cur_row, 0, g_term_rows - 1)
+    let col = clamp_i(g_term_cur_col, 0, g_term_cols)
+    let n = clamp_i(count, 1, g_term_cols)
+    let attr = term_blank_attr()
+    let c = g_term_cols - 1 - n
+    loop c >= col {
+        let src_at = term_cell(row, c)
+        let dst_at = term_cell(row, c + n)
+        g_term_chars[dst_at] = g_term_chars[src_at]
+        g_term_attrs[dst_at] = g_term_attrs[src_at]
+        c = c - 1
+    }
+    term_blank_cells(row, col, clamp_i(col + n, 0, g_term_cols), attr)
+}
+
+fn term_delete_chars(count: i32) {
+    let row = clamp_i(g_term_cur_row, 0, g_term_rows - 1)
+    let col = clamp_i(g_term_cur_col, 0, g_term_cols)
+    let n = clamp_i(count, 1, g_term_cols)
+    for c in 0 to g_term_cols - col {
+        let src_at = col + n + c
+        let dst_at = term_cell(row, col + c)
+        if src_at < g_term_cols {
+            let source = term_cell(row, src_at)
+            g_term_chars[dst_at] = g_term_chars[source]
+            g_term_attrs[dst_at] = g_term_attrs[source]
+        } else {
+            g_term_chars[dst_at] = 32
+            g_term_attrs[dst_at] = term_blank_attr()
+        }
+    }
+}
+
+fn term_insert_lines(count: i32) {
+    let top = clamp_i(g_term_scroll_top, 0, g_term_rows - 1)
+    let bottom = clamp_i(g_term_scroll_bottom, top, g_term_rows - 1)
+    let row = clamp_i(g_term_cur_row, top, bottom)
+    let n = clamp_i(count, 1, bottom - row + 1)
+    let attr = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
+    let r = bottom
+    loop r >= row + n {
+        for col in 0 to TERM_MAX_COLS {
+            let src_at = term_cell(r - n, col)
+            let dst_at = term_cell(r, col)
+            g_term_chars[dst_at] = g_term_chars[src_at]
+            g_term_attrs[dst_at] = g_term_attrs[src_at]
+        }
+        r = r - 1
+    }
+    for blank in row to row + n {
+        term_blank_row(blank, attr)
+    }
+}
+
+fn term_delete_lines(count: i32) {
+    let top = clamp_i(g_term_scroll_top, 0, g_term_rows - 1)
+    let bottom = clamp_i(g_term_scroll_bottom, top, g_term_rows - 1)
+    let row = clamp_i(g_term_cur_row, top, bottom)
+    let n = clamp_i(count, 1, bottom - row + 1)
+    let attr = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
+    for r in row to bottom - n + 1 {
+        for col in 0 to TERM_MAX_COLS {
+            let src_at = term_cell(r + n, col)
+            let dst_at = term_cell(r, col)
+            g_term_chars[dst_at] = g_term_chars[src_at]
+            g_term_attrs[dst_at] = g_term_attrs[src_at]
+        }
+    }
+    for blank in bottom - n + 1 to bottom + 1 {
+        term_blank_row(blank, attr)
+    }
+}
+
+// Alternate screen switching copies the visible grid; the scrollback ring is
+// left untouched so leaving a full-screen program keeps the shell history.
+fn term_alt_enter(clear: bool) {
+    if g_term_alt {
+        if clear {
+            let attr = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
+            for r in 0 to g_term_rows {
+                term_blank_cells(r, 0, g_term_cols, attr)
+            }
+            g_term_cur_col = 0
+            g_term_cur_row = 0
+        }
+        return
+    }
+    term_save_cursor()
+    for i in 0 to TERM_MAX_COLS * TERM_MAX_ROWS {
+        g_term_main_chars[i] = g_term_chars[i]
+        g_term_main_attrs[i] = g_term_attrs[i]
+    }
+    g_term_main_col = g_term_cur_col
+    g_term_main_row = g_term_cur_row
+    g_term_main_fg = g_term_fg
+    g_term_main_bg = g_term_bg
+    g_term_main_flags = g_term_flags
+    g_term_main_top = g_term_scroll_top
+    g_term_main_bottom = g_term_scroll_bottom
+    g_term_alt = true
+    g_term_offset = 0
+    if clear {
+        let attr = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
+        for r in 0 to g_term_rows {
+            term_blank_cells(r, 0, g_term_cols, attr)
+        }
+        g_term_cur_col = 0
+        g_term_cur_row = 0
+    }
+}
+
+fn term_alt_leave() {
+    if g_term_alt == false {
+        return
+    }
+    for i in 0 to TERM_MAX_COLS * TERM_MAX_ROWS {
+        g_term_chars[i] = g_term_main_chars[i]
+        g_term_attrs[i] = g_term_main_attrs[i]
+    }
+    g_term_cur_col = g_term_main_col
+    g_term_cur_row = g_term_main_row
+    g_term_fg = g_term_main_fg
+    g_term_bg = g_term_main_bg
+    g_term_flags = g_term_main_flags
+    g_term_scroll_top = g_term_main_top
+    g_term_scroll_bottom = g_term_main_bottom
+    g_term_alt = false
+    g_term_offset = 0
+    g_term_cursor_visible = true
+    term_restore_cursor()
+}
+
+fn term_set_mode(private: bool, enabled: bool, param: i32) {
+    if param == 1 {
+        g_term_app_cursor = enabled
+    } else if param == 7 {
+        g_term_autowrap = enabled
+    } else if param == 25 {
+        g_term_cursor_visible = enabled
+    } else if param == 47 || param == 1047 || param == 1049 {
+        if enabled {
+            term_alt_enter(true)
+        } else {
+            term_alt_leave()
+        }
+    } else if param == 2004 {
+        g_term_bracketed_paste = enabled
+    }
+}
+
+fn term_sgr() {
+    if g_term_param_count == 0 {
+        term_attr_reset()
+        return
+    }
+    let i = 0
+    loop i < g_term_param_count {
+        let p = g_term_params[i]
+        if p == 0 {
+            term_attr_reset()
+        } else if p == 1 {
+            g_term_flags = g_term_flags | TERM_BOLD
+        } else if p == 2 {
+            g_term_flags = g_term_flags | TERM_DIM
+        } else if p == 4 {
+            g_term_flags = g_term_flags | TERM_UNDERLINE
+        } else if p == 7 {
+            g_term_flags = g_term_flags | TERM_REVERSE
+        } else if p == 22 {
+            g_term_flags = g_term_flags & ~TERM_BOLD & ~TERM_DIM
+        } else if p == 24 {
+            g_term_flags = g_term_flags & ~TERM_UNDERLINE
+        } else if p == 27 {
+            g_term_flags = g_term_flags & ~TERM_REVERSE
+        } else if p >= 30 && p <= 37 {
+            g_term_fg = p - 30
+        } else if p >= 40 && p <= 47 {
+            g_term_bg = p - 40
+        } else if p >= 90 && p <= 97 {
+            g_term_fg = p - 90 + 8
+        } else if p >= 100 && p <= 107 {
+            g_term_bg = p - 100 + 8
+        } else if p == 39 {
+            g_term_fg = TERM_FG_DEFAULT
+        } else if p == 49 {
+            g_term_bg = TERM_BG_DEFAULT
+        } else if p == 38 || p == 48 {
+            let is_fg = p == 38
+            let mode = 0
+            if i + 1 < g_term_param_count {
+                mode = g_term_params[i + 1]
+            }
+            if mode == 5 && i + 2 < g_term_param_count {
+                let color = clamp_i(g_term_params[i + 2], 0, 255)
+                if is_fg {
+                    g_term_fg = color
+                } else {
+                    g_term_bg = color
+                }
+                i = i + 2
+            } else if mode == 2 && i + 4 < g_term_param_count {
+                let color = term_rgb_index(clamp_i(g_term_params[i + 2], 0, 255), clamp_i(g_term_params[i + 3], 0, 255), clamp_i(g_term_params[i + 4], 0, 255))
+                if is_fg {
+                    g_term_fg = color
+                } else {
+                    g_term_bg = color
+                }
+                i = i + 4
+            }
+        }
+        i = i + 1
+    }
+}
+
+fn term_csi(final: i32) {
+    let private = g_term_csi_private
+    if final == 64 {
+        term_insert_chars(term_param_or(0, 1))
+    } else if final == 65 {
+        g_term_cur_row = clamp_i(g_term_cur_row - term_param_or(0, 1), 0, g_term_rows - 1)
+    } else if final == 66 || final == 101 {
+        g_term_cur_row = clamp_i(g_term_cur_row + term_param_or(0, 1), 0, g_term_rows - 1)
+    } else if final == 67 || final == 97 {
+        g_term_cur_col = clamp_i(g_term_cur_col + term_param_or(0, 1), 0, g_term_cols)
+    } else if final == 68 {
+        g_term_cur_col = clamp_i(g_term_cur_col - term_param_or(0, 1), 0, g_term_cols)
+    } else if final == 69 {
+        g_term_cur_col = 0
+        term_linefeed()
+    } else if final == 70 {
+        g_term_cur_col = 0
+        if g_term_cur_row > 0 {
+            g_term_cur_row = g_term_cur_row - 1
+        }
+    } else if final == 71 || final == 96 {
+        g_term_cur_col = term_param_or(0, 1) - 1
+        g_term_cur_col = clamp_i(g_term_cur_col, 0, g_term_cols)
+    } else if final == 72 || final == 102 {
+        term_set_cursor(term_param_or(0, 1) - 1, term_param_or(1, 1) - 1)
+    } else if final == 74 {
+        term_erase_display(term_param(0))
+    } else if final == 75 {
+        term_erase_line(term_param(0))
+    } else if final == 76 {
+        term_insert_lines(term_param_or(0, 1))
+    } else if final == 77 {
+        term_delete_lines(term_param_or(0, 1))
+    } else if final == 80 {
+        term_delete_chars(term_param_or(0, 1))
+    } else if final == 83 {
+        term_scroll_up(term_param_or(0, 1))
+    } else if final == 84 {
+        term_scroll_down(term_param_or(0, 1))
+    } else if final == 88 {
+        let attr = term_blank_attr()
+        term_blank_cells(g_term_cur_row, g_term_cur_col, g_term_cur_col + term_param_or(0, 1), attr)
+    } else if final == 100 {
+        g_term_cur_row = clamp_i(term_param_or(0, 1) - 1, 0, g_term_rows - 1)
+    } else if final == 104 || final == 108 {
+        let enabled = final == 104
+        for n in 0 to g_term_param_count {
+            term_set_mode(private != 0, enabled, g_term_params[n])
+        }
+    } else if final == 109 {
+        term_sgr()
+    } else if final == 110 {
+        let kind = term_param(0)
+        if kind == 5 {
+            term_reply("\u{1b}[0n")
+        } else if kind == 6 {
+            let row = clamp_i(g_term_cur_row + 1, 1, 9999)
+            let col = clamp_i(g_term_cur_col, 0, g_term_cols - 1) + 1
+            term_reply("\u{1b}[" + itos(row) + ";" + itos(col) + "R")
+        }
+    } else if final == 99 {
+        if private == 62 {
+            term_reply("\u{1b}[>0;1;0c")
+        } else {
+            term_reply("\u{1b}[?1;2c")
+        }
+    } else if final == 112 {
+        if private == 33 {
+            term_attr_reset()
+            g_term_cursor_visible = true
+            g_term_scroll_top = 0
+            g_term_scroll_bottom = g_term_rows - 1
+        }
+    } else if final == 114 {
+        let top = term_param_or(0, 1) - 1
+        let bottom = term_param_or(1, g_term_rows) - 1
+        g_term_scroll_top = clamp_i(top, 0, g_term_rows - 1)
+        g_term_scroll_bottom = clamp_i(bottom, g_term_scroll_top, g_term_rows - 1)
+        term_set_cursor(0, 0)
+    } else if final == 115 {
+        term_save_cursor()
+    } else if final == 117 {
+        term_restore_cursor()
+    }
+}
+
+// ---- parser ----------------------------------------------------------------
+
+fn term_escape(byte: i32) {
+    if byte == 91 {
+        term_csi_reset()
+        g_term_state = TERM_CSI
+        return
+    }
+    if byte == 93 {
+        g_term_state = TERM_OSC
+        return
+    }
+    if byte == 80 || byte == 88 || byte == 94 || byte == 95 {
+        g_term_state = TERM_STRING
+        return
+    }
+    if byte == 40 || byte == 41 || byte == 42 || byte == 43 || byte == 35 || byte == 37 {
+        g_term_state = TERM_CHARSET
+        return
+    }
+    if byte == 55 {
+        term_save_cursor()
+    } else if byte == 56 {
+        term_restore_cursor()
+    } else if byte == 68 {
+        term_linefeed()
+    } else if byte == 69 {
+        g_term_cur_col = 0
+        term_linefeed()
+    } else if byte == 77 {
+        term_reverse_index()
+    } else if byte == 72 {
+        // Horizontal tab set is accepted but every eighth column is a stop.
+    } else if byte == 99 {
+        term_full_reset()
+    } else if byte == 61 || byte == 62 {
+        g_term_app_cursor = byte == 61
+    }
+    g_term_state = TERM_GROUND
+}
+
+fn term_csi_byte(byte: i32) {
+    if byte >= 48 && byte <= 57 {
+        g_term_param_value = clamp_i(g_term_param_value * 10 + (byte - 48), 0, 999999)
+        g_term_param_any = true
+        return
+    }
+    if byte == 59 || byte == 58 {
+        term_push_param()
+        return
+    }
+    if byte == 63 || byte == 62 || byte == 60 || byte == 61 || byte == 33 {
+        if g_term_param_count == 0 && g_term_param_any == false {
+            g_term_csi_private = byte
+            return
+        }
+    }
+    if byte >= 32 && byte <= 47 {
+        return
+    }
+    if byte >= 64 && byte <= 126 {
+        if g_term_param_any {
+            term_push_param()
+        }
+        term_csi(byte)
+        g_term_state = TERM_GROUND
+        return
+    }
+    if byte == 27 {
+        g_term_state = TERM_ESCAPE
+        return
+    }
+    g_term_state = TERM_GROUND
+}
+
+fn term_utf8_byte(byte: i32) {
+    if g_term_utf8_left > 0 {
+        if byte >= 128 && byte <= 191 {
+            g_term_utf8_code = (g_term_utf8_code << 6) | (byte & 63)
+            g_term_utf8_left = g_term_utf8_left - 1
+            if g_term_utf8_left == 0 {
+                term_receive_char(g_term_utf8_code)
+            }
+            return
+        }
+        g_term_utf8_left = 0
+        term_receive_char(63)
+    }
+    if byte >= 192 && byte <= 223 {
+        g_term_utf8_code = byte & 31
+        g_term_utf8_left = 1
+    } else if byte >= 224 && byte <= 239 {
+        g_term_utf8_code = byte & 15
+        g_term_utf8_left = 2
+    } else if byte >= 240 && byte <= 247 {
+        g_term_utf8_code = byte & 7
+        g_term_utf8_left = 3
+    } else {
+        term_receive_char(byte & 255)
+    }
+}
+
+fn term_byte(byte: i32) {
+    if g_term_state == TERM_GROUND {
+        if byte == 27 {
+            g_term_state = TERM_ESCAPE
+        } else if byte < 32 || byte == 127 {
+            term_control(byte)
+        } else if byte < 128 {
+            term_receive_char(byte)
+        } else {
+            term_utf8_byte(byte)
+        }
+        return
+    }
+    if g_term_state == TERM_ESCAPE {
+        term_escape(byte)
+        return
+    }
+    if g_term_state == TERM_CSI {
+        term_csi_byte(byte)
+        return
+    }
+    if g_term_state == TERM_OSC {
+        if byte == 7 {
+            g_term_state = TERM_GROUND
+        } else if byte == 27 {
+            g_term_state = TERM_OSC_ESCAPE
+        }
+        return
+    }
+    if g_term_state == TERM_OSC_ESCAPE {
+        if byte == 92 {
+            g_term_state = TERM_GROUND
+        } else if byte != 27 {
+            g_term_state = TERM_OSC
+        }
+        return
+    }
+    if g_term_state == TERM_CHARSET {
+        g_term_state = TERM_GROUND
+        return
+    }
+    if g_term_state == TERM_STRING {
+        if byte == 27 {
+            g_term_state = TERM_STRING_ESCAPE
+        }
+        return
+    }
+    if g_term_state == TERM_STRING_ESCAPE {
+        if byte == 92 {
+            g_term_state = TERM_GROUND
+        } else if byte != 27 {
+            g_term_state = TERM_STRING
+        }
+    }
+}
+
+fn term_feed_text(text: str) {
+    term_palette_init()
+    for i in 0 to text.len {
+        term_byte((text[i] as i32) & 255)
+    }
+}
+
+fn term_reset_parser() {
+    g_term_state = TERM_GROUND
+    g_term_utf8_left = 0
+    g_term_utf8_code = 0
+    g_term_param_count = 0
+    g_term_param_value = 0
+    g_term_param_any = false
+    g_term_csi_private = 0
+}
+
+fn term_full_reset() {
+    term_palette_init()
+    g_term_cols = clamp_i(g_term_cols, 2, TERM_MAX_COLS)
+    g_term_rows = clamp_i(g_term_rows, 2, TERM_MAX_ROWS)
+    g_term_alt = false
+    g_term_scroll_top = 0
+    g_term_scroll_bottom = g_term_rows - 1
+    g_term_cur_col = 0
+    g_term_cur_row = 0
+    g_term_fg = TERM_FG_DEFAULT
+    g_term_bg = TERM_BG_DEFAULT
+    g_term_flags = 0
+    g_term_cursor_visible = true
+    g_term_autowrap = true
+    g_term_app_cursor = false
+    g_term_bracketed_paste = false
+    term_clear_screen()
+    term_clear_history()
+    term_reset_parser()
+}
+
+// A new size keeps every existing cell at its coordinates. Columns that did
+// not exist before are blank, and rows below the old grid start clear, which is
+// enough for shells whose own reflow redraws the prompt.
+fn term_resize(cols: i32, rows: i32) {
+    let new_cols = clamp_i(cols, 2, TERM_MAX_COLS)
+    let new_rows = clamp_i(rows, 2, TERM_MAX_ROWS)
+    if new_cols == g_term_cols && new_rows == g_term_rows {
+        return
+    }
+    let attr = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
+    for row in 0 to new_rows {
+        if row < g_term_rows {
+            if new_cols > g_term_cols {
+                term_blank_cells(row, g_term_cols, new_cols, attr)
+            }
+        } else {
+            term_blank_cells(row, 0, new_cols, attr)
+        }
+    }
+    g_term_cols = new_cols
+    g_term_rows = new_rows
+    g_term_scroll_top = 0
+    g_term_scroll_bottom = new_rows - 1
+    g_term_cur_col = clamp_i(g_term_cur_col, 0, new_cols)
+    g_term_cur_row = clamp_i(g_term_cur_row, 0, new_rows - 1)
+    if g_terminal_handle > 0 {
+        os_pty_resize(g_terminal_handle, new_cols, new_rows)
+    }
+    if g_term_offset > g_term_hist_count {
+        g_term_offset = g_term_hist_count
+    }
+}
+
+// ---- shell process ---------------------------------------------------------
+
+fn terminal_open() bool {
+    return g_terminal_open
+}
+
+fn terminal_focused() bool {
+    return g_terminal_open && g_terminal_focus
+}
+
+fn terminal_needs_frames() bool {
+    return g_terminal_handle > 0
+}
+
+fn terminal_hide() {
+    g_terminal_open = false
+    g_terminal_focus = false
+    g_terminal_dragging = false
+    g_terminal_resizing = false
+    g_lens_input_dirty = true
+}
+
+fn terminal_clamp(w: f64, h: f64) {
+    g_terminal_w = clamp(g_terminal_w, TERM_MIN_W, clamp(w - 16.0, TERM_MIN_W, 1600.0))
+    g_terminal_h = clamp(g_terminal_h, TERM_MIN_H, clamp(h - 48.0, TERM_MIN_H, 1200.0))
+    g_terminal_x = clamp(g_terminal_x, 4.0, clamp(w - g_terminal_w - 4.0, 4.0, 10000.0))
+    let min_y = LENS_TOP_BAR_H + 4.0
+    let max_y = clamp(h - STATUS_BAR_H - g_terminal_h - 8.0, min_y, 10000.0)
+    g_terminal_y = clamp(g_terminal_y, min_y, max_y)
+}
+
+fn terminal_frame_delay() i32 {
+    if terminal_focused() {
+        return 16
+    }
+    if g_terminal_open {
+        return 33
+    }
+    return 100
+}
+
+fn terminal_restart() {
+    if g_terminal_handle > 0 {
+        os_pty_close(g_terminal_handle)
+        g_terminal_handle = 0
+    }
+    term_full_reset()
+    g_terminal_exited = false
+    g_terminal_error = ""
+    if g_terminal_open == false {
+        return
+    }
+    g_terminal_handle = os_pty_open(g_workspace_root, g_term_cols, g_term_rows)
+    g_terminal_focus = g_terminal_handle > 0
+    if g_terminal_handle <= 0 {
+        g_terminal_error = "This platform has no terminal backend"
+        g_terminal_exited = true
+    }
+    g_lens_input_dirty = true
+}
+
+fn terminal_show() {
+    g_terminal_open = true
+    if g_terminal_ready == false {
+        g_terminal_ready = true
+        g_terminal_w = 740.0
+        g_terminal_h = 380.0
+        g_terminal_x = g_lens_view_w - g_terminal_w - 24.0
+        g_terminal_y = g_lens_canvas_h - g_terminal_h - 56.0
+    }
+    if g_terminal_handle <= 0 && g_terminal_exited == false {
+        terminal_restart()
+    } else if g_terminal_handle > 0 {
+        g_terminal_focus = true
+    } else {
+        g_terminal_focus = false
+        g_terminal_exited = true
+    }
+    g_lens_input_dirty = true
+}
+
+fn terminal_toggle() {
+    if g_terminal_open {
+        terminal_hide()
+    } else {
+        terminal_show()
+    }
+}
+
+fn terminal_shutdown() {
+    if g_terminal_handle > 0 {
+        os_pty_close(g_terminal_handle)
+        g_terminal_handle = 0
+    }
+    g_terminal_open = false
+    g_terminal_focus = false
+}
+
+fn terminal_blocks_pointer(v: ref view) bool {
+    if g_terminal_open == false {
+        return false
+    }
+    return raw_hit(v, g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h)
+}
+
+// Read and parse every pending chunk before input is handled, so a key press
+// applies to the state the shell has already drawn.
+fn terminal_poll() {
+    if g_terminal_handle <= 0 {
+        return
+    }
+    let got = false
+    for round in 0 to TERM_READ_ROUNDS {
+        let chunk = os_pty_read(g_terminal_handle, TERM_READ_BYTES)
+        if chunk.len > 0 {
+            term_feed_text(chunk)
+            got = true
+        } else {
+            break
+        }
+    }
+    if got {
+        g_lens_input_dirty = true
+        g_term_offset = clamp_i(g_term_offset, 0, g_term_hist_count)
+    }
+    if os_pty_running(g_terminal_handle) == 0 {
+        // Drain everything the child wrote just before it exited.
+        for round in 0 to TERM_DRAIN_ROUNDS {
+            let tail = os_pty_read(g_terminal_handle, TERM_READ_BYTES)
+            if tail.len <= 0 {
+                break
+            }
+            term_feed_text(tail)
+        }
+        os_pty_close(g_terminal_handle)
+        g_terminal_handle = 0
+        g_terminal_exited = true
+        g_terminal_focus = false
+        g_lens_input_dirty = true
+    }
+}
+
+// ---- terminal input --------------------------------------------------------
+
+fn terminal_send(data: str) {
+    if g_terminal_handle <= 0 || data == "" {
+        return
+    }
+    os_pty_write(g_terminal_handle, data)
+    g_term_offset = 0
+}
+
+fn terminal_cp_str(cp: i32) str {
+    if cp >= 32 && cp <= 126 {
+        return chr(cp)
+    }
+    if cp < 0 || cp > 0x10ffff {
+        cp = 32
+    }
+    let digits = "0123456789abcdef"
+    let out = ""
+    let n = 4
+    if cp > 65535 {
+        n = 6
+    }
+    for i in 0 to n {
+        out = out + substr(digits, (cp >> ((n - 1 - i) * 4)) & 15, 1)
+    }
+    return unescape("\\u{" + out + "}")
+}
+
+// An open terminal with no active file editor claims typing even after a click
+// somewhere else cleared its focus. Pointer moves and clicks must not qualify:
+// the view exposes latched keys only through its pending-input summary, so a
+// clean frame with no pointer queue, button, scroll or gesture is a key press.
+fn terminal_key_input(v: ref view) bool {
+    if view_input_pending(v) == false {
+        return false
+    }
+    if view_input_count(v) > 0 {
+        return false
+    }
+    if v.mouse_pressed || v.mouse_released || v.mouse_right_pressed || v.mouse_right_released {
+        return false
+    }
+    if v.mouse_middle_pressed || v.mouse_middle_released {
+        return false
+    }
+    if v.scroll_x != 0.0 || v.scroll_y != 0.0 {
+        return false
+    }
+    let gesture = view_gesture(v)
+    if gesture.zoom_factor != 1.0 || gesture.rotation != 0.0 {
+        return false
+    }
+    if gesture.orbit_x != 0.0 || gesture.orbit_y != 0.0 {
+        return false
+    }
+    if gesture.pan_x != 0.0 || gesture.pan_y != 0.0 {
+        return false
+    }
+    return true
+}
+
+fn terminal_super_down(v: ref view) bool {
+    return view_is_key_pressed(v, 343) || view_is_key_pressed(v, 347)
+}
+
+fn terminal_control_byte(k: i32) i32 {
+    if k >= 65 && k <= 90 {
+        return k - 64
+    }
+    if k == 32 || k == 50 {
+        return 0
+    }
+    if k == 51 || k == 91 {
+        return 27
+    }
+    if k == 52 || k == 92 {
+        return 28
+    }
+    if k == 53 || k == 93 {
+        return 29
+    }
+    if k == 54 {
+        return 30
+    }
+    if k == 55 {
+        return 31
+    }
+    if k == 56 || k == 47 {
+        return 127
+    }
+    return -1
+}
+
+fn terminal_arrow(final: str) str {
+    if g_term_app_cursor {
+        return "\u{1b}O" + final
+    }
+    return "\u{1b}[" + final
+}
+
+fn terminal_function_key(k: i32) str {
+    if k == 290 {
+        return "\u{1b}OP"
+    }
+    if k == 291 {
+        return "\u{1b}OQ"
+    }
+    if k == 292 {
+        return "\u{1b}OR"
+    }
+    if k == 293 {
+        return "\u{1b}OS"
+    }
+    if k == 294 {
+        return "\u{1b}[15~"
+    }
+    if k == 295 {
+        return "\u{1b}[17~"
+    }
+    if k == 296 {
+        return "\u{1b}[18~"
+    }
+    if k == 297 {
+        return "\u{1b}[19~"
+    }
+    if k == 298 {
+        return "\u{1b}[20~"
+    }
+    if k == 299 {
+        return "\u{1b}[21~"
+    }
+    if k == 300 {
+        return "\u{1b}[23~"
+    }
+    if k == 301 {
+        return "\u{1b}[24~"
+    }
+    return ""
+}
+
+fn terminal_paste(v: ref view) {
+    let text = view_get_clipboard(v)
+    if text == "" {
+        return
+    }
+    if g_term_bracketed_paste {
+        terminal_send("\u{1b}[200~" + text + "\u{1b}[201~")
+    } else {
+        terminal_send(text)
+    }
+}
+
+fn terminal_keys(v: ref view) {
+    if g_terminal_handle <= 0 {
+        return
+    }
+    let send = ""
+    // Command shortcuts act on Lens itself; everything else goes to the shell.
+    if terminal_super_down(v) {
+        if key_edge(v, 86) {
+            terminal_paste(v)
+            return
+        }
+        if key_edge(v, 79) {
+            lens_open_project()
+            return
+        }
+        if key_edge(v, 80) {
+            lens_search_show()
+            return
+        }
+        if key_edge(v, 257) || key_edge(v, 335) {
+            lens_commit_show()
+            return
+        }
+        if key_edge(v, 75) {
+            term_erase_display(2)
+            term_clear_history()
+            term_set_cursor(0, 0)
+            return
+        }
+        return
+    }
+    if key_edge(v, 256) {
+        send = send + "\u{1b}"
+    }
+    if key_edge(v, 257) || key_edge(v, 335) {
+        send = send + "\r"
+    }
+    if key_edge(v, 258) {
+        if shift_down(v) {
+            send = send + "\u{1b}[Z"
+        } else {
+            send = send + "\t"
+        }
+    }
+    if key_edge(v, 259) {
+        send = send + "\u{7f}"
+    }
+    if key_edge(v, 260) {
+        send = send + "\u{1b}[2~"
+    }
+    if key_edge(v, 261) {
+        send = send + "\u{1b}[3~"
+    }
+    if key_edge(v, 262) {
+        send = send + terminal_arrow("C")
+    }
+    if key_edge(v, 263) {
+        send = send + terminal_arrow("D")
+    }
+    if key_edge(v, 264) {
+        send = send + terminal_arrow("B")
+    }
+    if key_edge(v, 265) {
+        send = send + terminal_arrow("A")
+    }
+    if key_edge(v, 266) {
+        send = send + "\u{1b}[5~"
+    }
+    if key_edge(v, 267) {
+        send = send + "\u{1b}[6~"
+    }
+    if key_edge(v, 268) {
+        send = send + terminal_arrow("H")
+    }
+    if key_edge(v, 269) {
+        send = send + terminal_arrow("F")
+    }
+    for k in 290 to 302 {
+        if key_edge(v, k) {
+            send = send + terminal_function_key(k)
+        }
+    }
+    // Keypad keys.
+    for k in 320 to 337 {
+        if key_edge(v, k) {
+            if k == 335 {
+                send = send + "\r"
+            } else if k <= 329 {
+                send = send + chr(48 + k - 320)
+            } else if k == 330 {
+                send = send + "."
+            } else if k == 331 {
+                send = send + "/"
+            } else if k == 332 {
+                send = send + "*"
+            } else if k == 333 {
+                send = send + "-"
+            } else if k == 334 {
+                send = send + "+"
+            } else if k == 336 {
+                send = send + "="
+            }
+        }
+    }
+    // Printable keys. Control and alt modify the byte that is sent.
+    for k in 32 to 97 {
+        if key_edge(v, k) {
+            let shift = key_event_shift()
+            let alt = (g_key_event_mods & 4) != 0
+            let ctrl = (g_key_event_mods & 2) != 0
+            let prefix = ""
+            if alt {
+                prefix = "\u{1b}"
+            }
+            if ctrl {
+                let byte = terminal_control_byte(k)
+                if byte >= 0 {
+                    send = send + prefix + terminal_cp_str(byte)
+                }
+            } else {
+                let c = key_char(k, shift)
+                if c != "" {
+                    send = send + prefix + c
+                }
+            }
+        }
+    }
+    terminal_send(send)
+}
+
+// ---- terminal panel --------------------------------------------------------
+
+fn terminal_title_button_restart_x() f64 {
+    return g_terminal_x + g_terminal_w - 102.0
+}
+
+fn terminal_title_button_close_x() f64 {
+    return g_terminal_x + g_terminal_w - 34.0
+}
+
+fn terminal_mouse(v: ref view, w: f64, h: f64) {
+    if g_terminal_open == false {
+        return
+    }
+    terminal_clamp(w, h)
+    let inside = raw_hit(v, g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h)
+    if (v.mouse_pressed || v.mouse_right_pressed) && inside == false {
+        g_terminal_focus = false
+    }
+    if v.mouse_pressed && inside {
+        // Taking the pointer here ends any outline name edit it had claimed.
+        outline_prompt_close()
+        if raw_hit(v, terminal_title_button_close_x(), g_terminal_y + 5.0, 22.0, 20.0) {
+            terminal_hide()
+            v.mouse_pressed = false
+            return
+        }
+        if raw_hit(v, terminal_title_button_restart_x(), g_terminal_y + 5.0, 60.0, 20.0) {
+            terminal_restart()
+            v.mouse_pressed = false
+            return
+        }
+        if raw_hit(v, g_terminal_x + g_terminal_w - TERM_RESIZE, g_terminal_y + g_terminal_h - TERM_RESIZE, TERM_RESIZE, TERM_RESIZE) {
+            g_terminal_resizing = true
+            g_terminal_grab_x = g_mouse_x
+            g_terminal_grab_y = g_mouse_y
+            g_terminal_grab_w = g_terminal_w
+            g_terminal_grab_h = g_terminal_h
+            g_terminal_focus = true
+            v.mouse_pressed = false
+            return
+        }
+        if raw_hit(v, g_terminal_x, g_terminal_y, g_terminal_w, TERM_TITLE_H) {
+            g_terminal_dragging = true
+            g_terminal_grab_x = g_mouse_x - g_terminal_x
+            g_terminal_grab_y = g_mouse_y - g_terminal_y
+            g_terminal_focus = true
+            v.mouse_pressed = false
+            return
+        }
+        g_terminal_focus = true
+        v.mouse_pressed = false
+        v.mouse_right_pressed = false
+        v.scroll_y = 0.0
+        return
+    }
+    if v.mouse_right_pressed && inside {
+        v.mouse_right_pressed = false
+        return
+    }
+    if inside && v.scroll_y != 0.0 {
+        let step: i32 = 3
+        if v.scroll_y > 0.0 {
+            step = 3
+        } else {
+            step = -3
+        }
+        g_term_offset = clamp_i(g_term_offset + step, 0, g_term_hist_count)
+        v.scroll_y = 0.0
+    }
+    if g_terminal_dragging && v.mouse_down {
+        g_terminal_x = g_mouse_x - g_terminal_grab_x
+        g_terminal_y = g_mouse_y - g_terminal_grab_y
+        terminal_clamp(w, h)
+        return
+    }
+    if g_terminal_resizing && v.mouse_down {
+        g_terminal_w = g_terminal_grab_w + (g_mouse_x - g_terminal_grab_x)
+        g_terminal_h = g_terminal_grab_h + (g_mouse_y - g_terminal_grab_y)
+        terminal_clamp(w, h)
+        return
+    }
+    if v.mouse_released || !v.mouse_down {
+        g_terminal_dragging = false
+        g_terminal_resizing = false
+    }
+}
+
+fn terminal_attr_bg_color(attr: i32) u32 {
+    let bg = term_attr_bg(attr)
+    let fg = term_attr_fg(attr)
+    if (term_attr_flags(attr) & TERM_REVERSE) != 0 {
+        return term_color(fg)
+    }
+    // 0 means "leave the panel background alone"; painting it again would
+    // compound the 70% fill into an opaque one.
+    if bg == TERM_BG_DEFAULT {
+        return 0u
+    }
+    return term_color(bg)
+}
+
+fn terminal_attr_fg_color(attr: i32) u32 {
+    let bg = term_attr_bg(attr)
+    let fg = term_attr_fg(attr)
+    if (term_attr_flags(attr) & TERM_REVERSE) != 0 {
+        return term_color(bg)
+    }
+    return term_color(fg)
+}
+
+fn terminal_row_char(row: i32, col: i32) i32 {
+    if row < 0 || row >= g_term_rows || col < 0 || col >= g_term_cols {
+        return 32
+    }
+    return g_term_chars[term_cell(row, col)]
+}
+
+fn terminal_row_attr(row: i32, col: i32) i32 {
+    if row < 0 || row >= g_term_rows || col < 0 || col >= g_term_cols {
+        return 0
+    }
+    return g_term_attrs[term_cell(row, col)]
+}
+
+fn terminal_hist_char(line: i32, col: i32) i32 {
+    if line < 0 || line >= g_term_hist_count || col < 0 || col >= g_term_cols {
+        return 32
+    }
+    let slot = (term_history_start() + line) % TERM_HISTORY_LINES
+    return g_term_hist_chars[term_history_cell(slot, col)]
+}
+
+fn terminal_hist_attr(line: i32, col: i32) i32 {
+    if line < 0 || line >= g_term_hist_count || col < 0 || col >= g_term_cols {
+        return 0
+    }
+    let slot = (term_history_start() + line) % TERM_HISTORY_LINES
+    return g_term_hist_attrs[term_history_cell(slot, col)]
+}
+
+fn terminal_source_row(view_row: i32) i32 {
+    return view_row - g_term_offset
+}
+
+fn terminal_draw_row(r: ref ui_renderer, view_row: i32, x: f64, y: f64, cw: f64, lh: f64) {
+    let source = terminal_source_row(view_row)
+    let history = source < 0
+    let hist_line = g_term_hist_count + source
+    let screen_row = source
+    let valid = false
+    if history {
+        valid = hist_line >= 0 && hist_line < g_term_hist_count
+    } else {
+        valid = screen_row >= 0 && screen_row < g_term_rows
+    }
+    if valid == false {
+        return
+    }
+    // Background runs.
+    let col = 0
+    loop col < g_term_cols {
+        let attr = 0
+        if history {
+            attr = terminal_hist_attr(hist_line, col)
+        } else {
+            attr = terminal_row_attr(screen_row, col)
+        }
+        let color = terminal_attr_bg_color(attr)
+        let start = col
+        col = col + 1
+        loop col < g_term_cols {
+            let next = 0
+            if history {
+                next = terminal_hist_attr(hist_line, col)
+            } else {
+                next = terminal_row_attr(screen_row, col)
+            }
+            if terminal_attr_bg_color(next) != color {
+                break
+            }
+            col = col + 1
+        }
+        if color != 0u {
+            ui_fill_rect(r, x + (start as f64) * cw, y, ((col - start) as f64) * cw, lh, color, 0.0)
+        }
+    }
+    // Text runs, trimmed to non-blank cells so a row of spaces submits no text.
+    col = 0
+    loop col < g_term_cols {
+        let attr = 0
+        if history {
+            attr = terminal_hist_attr(hist_line, col)
+        } else {
+            attr = terminal_row_attr(screen_row, col)
+        }
+        let color = terminal_attr_fg_color(attr)
+        let flags = term_attr_flags(attr)
+        let start = col
+        let text_start = start
+        let text = ""
+        let started = false
+        loop col < g_term_cols {
+            let next_attr = 0
+            let cp = 32
+            if history {
+                next_attr = terminal_hist_attr(hist_line, col)
+                cp = terminal_hist_char(hist_line, col)
+            } else {
+                next_attr = terminal_row_attr(screen_row, col)
+                cp = terminal_row_char(screen_row, col)
+            }
+            if terminal_attr_fg_color(next_attr) != color || term_attr_flags(next_attr) != flags {
+                break
+            }
+            if cp == -1 {
+                // A wide character's second cell owns no glyph of its own.
+                col = col + 1
+            } else {
+                if cp < 32 {
+                    cp = 32
+                }
+                if cp == 32 {
+                    if started {
+                        text = text + " "
+                    }
+                } else {
+                    if started == false {
+                        started = true
+                        text_start = col
+                    }
+                    text = text + terminal_cp_str(cp)
+                }
+                col = col + 1
+            }
+        }
+        if started {
+            let tx = x + (text_start as f64) * cw
+            let ty = text_center_y(r, y, lh, TERM_FONT_PX())
+            if (flags & TERM_BOLD) != 0 {
+                ui_draw_text(r, tx + 0.5, ty, text, TERM_FONT_PX(), color, FONT_MONO())
+            }
+            ui_draw_text(r, tx, ty, text, TERM_FONT_PX(), color, FONT_MONO())
+            if (flags & TERM_UNDERLINE) != 0 {
+                ui_fill_rect(r, tx, y + lh - 1.5, ((col - text_start) as f64) * cw, 1.0, color, 0.0)
+            }
+        }
+    }
+}
+
+fn TERM_FONT_PX() f64 { return small_px() }
+
+fn terminal_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    if g_terminal_open == false {
+        return
+    }
+    terminal_clamp(w, h)
+    term_palette_init()
+    let border = col_muted()
+    if g_terminal_focus {
+        border = col_accent()
+    }
+    ui_fill_round_rect(r, g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h, 4.0, col_terminal_bg(), 0.0)
+    ui_stroke_round_rect(r, g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h, 4.0, 1.0, border, 0.0)
+    // The whole panel shares the 70% background; a hairline separates the title
+    // instead of painting a second, more opaque header fill.
+    ui_fill_rect(r, g_terminal_x + 1.0, g_terminal_y + TERM_TITLE_H - 1.0, g_terminal_w - 2.0, 1.0, col_editor_sel(), 0.0)
+    let ty = ui_text_v_center_y(r, g_terminal_y, TERM_TITLE_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, g_terminal_x + 12.0, ty, g_terminal_w - 130.0, TERM_TITLE_H, "Terminal  " + g_workspace_root, small_px(), col_text())
+    lens_draw_button(r, v, terminal_title_button_restart_x(), g_terminal_y + 5.0, 60.0, 20.0, "restart", false)
+    if raw_hit(v, terminal_title_button_close_x(), g_terminal_y + 5.0, 22.0, 20.0) {
+        ui_fill_round_rect(r, terminal_title_button_close_x(), g_terminal_y + 5.0, 22.0, 20.0, 3.0, col_editor_panel_hi(), 0.0)
+    }
+    draw_centered_text(r, terminal_title_button_close_x(), g_terminal_y + 5.0, 22.0, 20.0, "x", small_px(), col_text())
+    let gx = g_terminal_x + TERM_PAD
+    let gy = g_terminal_y + TERM_TITLE_H + TERM_PAD
+    let gw = clamp(g_terminal_w - TERM_PAD * 2.0, 20.0, 10000.0)
+    let gh = clamp(g_terminal_h - TERM_TITLE_H - TERM_FOOTER_H - TERM_PAD * 2.0, 20.0, 10000.0)
+    let cw = ui_mono_char_width(r, TERM_FONT_PX(), FONT_MONO())
+    if cw <= 0.0 {
+        cw = TERM_FONT_PX() * 0.6
+    }
+    let lh = clamp(TERM_FONT_PX() * 1.3, 8.0, 40.0)
+    let cols = clamp_i((gw / cw) as i32, 2, TERM_MAX_COLS)
+    let rows = clamp_i((gh / lh) as i32, 2, TERM_MAX_ROWS)
+    if g_terminal_handle > 0 && (cols != g_term_cols || rows != g_term_rows) {
+        term_resize(cols, rows)
+    }
+    if g_terminal_error != "" {
+        draw_text_clipped(r, gx + 6.0, gy + 6.0, gw - 12.0, 20.0, g_terminal_error, small_px(), col_muted())
+    } else {
+        g_term_offset = clamp_i(g_term_offset, 0, g_term_hist_count)
+        for n in 0 to g_term_rows {
+            terminal_draw_row(r, n, gx, gy + (n as f64) * lh, cw, lh)
+        }
+        // Cursor: a caret at the live end, hidden while scrolling back.
+        if g_term_cursor_visible && g_term_offset == 0 && g_terminal_handle > 0 {
+            let blink = os_time() * 2.0
+            if blink - ((blink as i64) as f64) < 0.65 {
+                let cx = gx + clamp_i(g_term_cur_col, 0, g_term_cols - 1) as f64 * cw
+                let cy = gy + clamp_i(g_term_cur_row, 0, g_term_rows - 1) as f64 * lh
+                ui_fill_rect(r, cx, cy + 2.0, 2.0, lh - 4.0, col_editor_cursor(), 0.0)
+            }
+        }
+    }
+    let status = ""
+    if g_terminal_exited {
+        if g_terminal_error != "" {
+            status = g_terminal_error
+        } else {
+            status = "shell exited  ·  restart to open a new one"
+        }
+    } else if g_term_offset > 0 {
+        status = "scrollback -" + itos(g_term_offset)
+    } else if g_terminal_focus {
+        status = "cmd+V paste  ·  esc interrupts  ·  wheel scrolls back"
+    } else {
+        status = "click to type"
+    }
+    draw_text_clipped(r, g_terminal_x + 12.0, g_terminal_y + g_terminal_h - TERM_FOOTER_H + 1.0, g_terminal_w - 24.0, TERM_FOOTER_H, status, small_px(), col_muted())
+}

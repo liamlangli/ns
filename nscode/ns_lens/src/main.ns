@@ -27,6 +27,7 @@ fn main() {
         })
         v.on_terminate({ dead in
             os_watch_stop()
+            terminal_shutdown()
             ui_renderer_destroy(r)
         })
         view_run(v)

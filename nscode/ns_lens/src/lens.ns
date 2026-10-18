@@ -105,12 +105,25 @@ lit LENS_MODE_FULL = 2
 // little taller than the status bar; its controls are as tall as the status
 // bar's.
 lit LENS_TOP_BAR_H = 32.0
+// Floating panels (outline and terminal) share an 80% opaque background so the
+// map stays visible behind them without making their text hard to read.
+lit LENS_FLOAT_ALPHA = 204
+
+fn lens_float_color(color: u32) u32 {
+    return (color & 0x00ffffffu) | ((LENS_FLOAT_ALPHA as u32) << 24)
+}
 lit LENS_MODE_W = 80.0
 lit LENS_MODE_H = 20.0
 lit LENS_MODE_ITEM = 26.0
 let g_lens_view_mode: i32 = 0
 let g_lens_mode_open = false
 let g_lens_mode_block = false
+// Folder whose contents the map shows, as a workspace entry index and its
+// absolute path. -1 and "" show the whole opened project; the View > Outline
+// panel sets and clears the scope. Directories only group the treemap, so a
+// scope changes which leaves are laid out, never the map's shape otherwise.
+let g_lens_scope: i32 = -1
+let g_lens_scope_path = ""
 let g_lens_change_path = [str](4096)
 let g_lens_change_count: i32 = 0
 let g_lens_change_text = ""
@@ -165,6 +178,9 @@ let g_lens_canvas_h: f64 = 800.0
 let g_lens_view_w: f64 = 1280.0
 let g_lens_body_h: f64 = 680.0
 let g_lens_message = ""
+// A floating panel changed something that needs one more frame (a rescan, a
+// terminal chunk, or a prompt action). The frame request at the end consumes it.
+let g_lens_input_dirty = false
 // Leaf whose path label took the last left press, and the pointer there.
 let g_lens_label_press: i32 = -1
 let g_lens_label_press_x: f64 = 0.0
@@ -332,6 +348,9 @@ fn lens_entry_shown(index: i32) bool {
     if os_entry_is_dir(index) != 0 {
         return false
     }
+    if g_lens_scope_path != "" && lens_scope_contains(index) == false {
+        return false
+    }
     if g_lens_view_mode == LENS_MODE_FULL {
         return true
     }
@@ -339,6 +358,73 @@ fn lens_entry_shown(index: i32) bool {
         return lens_change_has(lens_relative_path(os_entry_path(index)))
     }
     return workspace_entry_code(index)
+}
+
+// Whether `index` is the scoped folder or lies below it.
+fn lens_scope_contains(index: i32) bool {
+    if g_lens_scope_path == "" {
+        return true
+    }
+    let parent = index
+    loop parent >= 0 {
+        if parent == g_lens_scope {
+            return true
+        }
+        parent = os_entry_parent(parent)
+    }
+    return false
+}
+
+// Re-resolve the scoped folder after a rescan or rename. A folder that is no
+// longer in the snapshot clears the scope and brings the whole project back.
+fn lens_scope_sync() {
+    if g_lens_scope_path == "" {
+        g_lens_scope = -1
+        return
+    }
+    if g_lens_scope >= 0 && g_lens_scope < g_workspace_count && os_entry_is_dir(g_lens_scope) != 0 && os_entry_path(g_lens_scope) == g_lens_scope_path {
+        return
+    }
+    let index = workspace_find_path(g_lens_scope_path)
+    if index < 0 || os_entry_is_dir(index) == 0 {
+        g_lens_scope = -1
+        g_lens_scope_path = ""
+    } else {
+        g_lens_scope = index
+    }
+}
+
+fn lens_scope_set(index: i32) {
+    if index < 0 {
+        lens_scope_clear()
+        return
+    }
+    if index >= g_workspace_count || os_entry_is_dir(index) == 0 {
+        return
+    }
+    g_lens_scope = index
+    g_lens_scope_path = os_entry_path(index)
+    // Scoping is a treemap action; ref mode returns to the map it filters.
+    if g_lens_view_mode == LENS_MODE_REF {
+        lens_set_mode(LENS_MODE_CODE)
+    } else {
+        lens_rebuild()
+    }
+    g_lens_target_x = 0.0
+    g_lens_target_y = 0.0
+    g_lens_target_distance = 1600.0
+}
+
+fn lens_scope_clear() {
+    if g_lens_scope_path == "" && g_lens_scope < 0 {
+        return
+    }
+    g_lens_scope = -1
+    g_lens_scope_path = ""
+    lens_rebuild()
+    g_lens_target_x = 0.0
+    g_lens_target_y = 0.0
+    g_lens_target_distance = 1600.0
 }
 
 fn lens_include_file(index: i32) {
@@ -397,6 +483,7 @@ fn lens_set_mode(mode: i32) {
 }
 
 fn lens_rebuild() {
+    lens_scope_sync()
     if g_lens_view_mode == LENS_MODE_CHANGE && g_lens_change_root != g_workspace_root {
         // Another folder's list must not pick this one's leaves. This
         // folder's listing arrives from the worker and rebuilds again.
@@ -453,7 +540,7 @@ fn lens_rebuild() {
     lens_cache_init()
     let signature = lens_layout_signature()
     if lens_load_layout(signature) == false {
-        lens_layout_children(-1, -600.0, -450.0, 1200.0, 900.0)
+        lens_layout_children(g_lens_scope, -600.0, -450.0, 1200.0, 900.0)
         lens_store_layout(signature)
     }
     lens_leaf_fits()
@@ -586,8 +673,9 @@ fn lens_open(index: i32) bool {
         g_lens_message = "File is unavailable"
         return false
     }
-    // Keep one Lens-owned editor resident. Unsaved changes are never evicted.
-    if g_lens_editing && g_workspace_active != index {
+    // Keep one Lens-owned editor resident. Unsaved changes are never evicted;
+    // a rescan can leave no active tab, which needs no release step.
+    if g_lens_editing && g_workspace_active >= 0 && g_workspace_active != index {
         if workspace_entry_dirty(g_workspace_active) {
             g_lens_message = "Save the current file before editing another file"
             return false
@@ -640,7 +728,12 @@ fn lens_open_project() {
     g_lens_editing = false
     g_lens_reading = false
     g_lens_selected_path = ""
+    g_lens_scope = -1
+    g_lens_scope_path = ""
+    outline_reset()
     workspace_open_root(root)
+    // The shell starts in the workspace root, so restart it after that changes.
+    terminal_restart()
     g_lens_target_x = 0.0
     g_lens_target_y = 0.0
     g_lens_target_distance = 1600.0
@@ -683,6 +776,8 @@ fn lens_mode_handle(v: ref view, w: f64) {
             g_lens_mode_open = false
         } else {
             g_lens_mode_open = true
+            g_lens_file_open = false
+            g_lens_view_open = false
         }
         v.mouse_pressed = false
         return
@@ -781,6 +876,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     g_lens_render_serial = g_lens_render_serial + 1
     lens_batch_window_reset()
     lens_io_poll()
+    terminal_poll()
     if g_lens_generation != g_workspace_generation {
         if g_lens_view_mode == LENS_MODE_CHANGE {
             g_lens_change_poll = os_time() + 2.0
@@ -805,12 +901,19 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_menu_keys(v)
     lens_menu_mouse(v, w, h)
     lens_mode_handle(v, w)
+    // Floating panels take pointer input before the map. The terminal is drawn
+    // above the outline, so it also wins when their rectangles overlap.
+    if lens_menu_blocks() == false {
+        terminal_mouse(v, w, h)
+        outline_mouse(v, w, h)
+    }
     if g_lens_view_mode == LENS_MODE_REF { lens_ref_tick() }
     // The map is laid out flat and seen through the plane camera: every map
     // interaction runs on the flat plane, under the unprojected pointer.
     let screen_x = g_mouse_x
     let screen_y = g_mouse_y
-    let over_map = g_lens_mode_block == false && lens_menu_blocks() == false && !lens_ref_depth_hit(v, w) && hit(v, 0.0, bar_bottom, map_w, h - STATUS_BAR_H - bar_bottom)
+    let over_panel = outline_blocks_pointer(v) || terminal_blocks_pointer(v)
+    let over_map = g_lens_mode_block == false && lens_menu_blocks() == false && over_panel == false && !lens_ref_depth_hit(v, w) && hit(v, 0.0, bar_bottom, map_w, h - STATUS_BAR_H - bar_bottom)
     if over_map && v.mouse_middle_down {
         g_lens_tilt = clamp(g_lens_tilt + (screen_y - g_lens_screen_drag_y) * 0.25, 0.0, LENS_MAX_TILT)
     }
@@ -1074,7 +1177,11 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         } else if g_lens_view_mode == LENS_MODE_FULL {
             note = "No files in "
         }
-        draw_centered_text(r, 0.0, top, w, body_h, note + g_workspace_root + "  ·  File > Open (cmd+O)", small_px(), col_muted())
+        let subject = g_workspace_root
+        if g_lens_scope_path != "" {
+            subject = g_lens_scope_path
+        }
+        draw_centered_text(r, 0.0, top, w, body_h, note + subject + "  ·  File > Open (cmd+O)", small_px(), col_muted())
     }
     if g_workspace_count >= 4096 {
         g_lens_message = "Filesystem snapshot limit reached: 4096 entries"
@@ -1099,6 +1206,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     }
     draw_status_bar(r, 0.0, h - STATUS_BAR_H, w, lens_detail_of(code_ready, code_total, bars_ready, bars_total))
     if g_lens_view_mode == LENS_MODE_REF { lens_ref_controls(r, v, w) }
+    lens_draw_overlay(r, w, h)
+    outline_draw(r, v, w, h)
+    terminal_draw(r, v, w, h)
     lens_draw_mode_menu(r, v, w)
     lens_draw_menus(r, v, w, h)
 
@@ -1107,8 +1217,14 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         // The display paces a moving camera. A timer started after the frame
         // would add its delay to the frame's own cost.
         view_request_frame(v, 1)
+    } else if g_lens_input_dirty {
+        // A panel action or terminal chunk changed what this frame should show.
+        g_lens_input_dirty = false
+        view_request_frame_after(v, 1)
     } else if read_budget == 0 || g_lens_io_running || g_lens_change_running || g_lens_close_view || lens_job_visible() || g_lens_search_running {
         view_request_frame_after(v, 16)
+    } else if terminal_needs_frames() {
+        view_request_frame_after(v, terminal_frame_delay())
     } else {
         // Idle polling keeps file watching alive without drawing 60 empty frames.
         view_request_frame_after(v, 100)

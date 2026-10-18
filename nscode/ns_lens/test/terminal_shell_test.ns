@@ -1,0 +1,118 @@
+// End-to-end check of the pty bridge: start the user's login shell, feed it a
+// command and read the echoed marker back. Hosts without a terminal backend
+// skip instead of failing.
+use std
+use os
+use task
+
+fn find_text(text: str, needle: str) i32 {
+    if needle.len == 0 || text.len < needle.len {
+        return -1
+    }
+    for i in 0 to text.len - needle.len + 1 {
+        let hit = true
+        for j in 0 to needle.len {
+            if ((text[i + j] as i32) & 255) != ((needle[j] as i32) & 255) {
+                hit = false
+                break
+            }
+        }
+        if hit {
+            return i
+        }
+    }
+    return -1
+}
+
+fn screen_has(needle: str) bool {
+    for row in 0 to g_term_rows {
+        let line = ""
+        for col in 0 to g_term_cols {
+            let cp = g_term_chars[term_cell(row, col)]
+            if cp >= 32 && cp < 127 {
+                line = line + chr(cp)
+            } else {
+                line = line + " "
+            }
+        }
+        if find_text(line, needle) >= 0 {
+            return true
+        }
+    }
+    return false
+}
+
+fn read_until(handle: i32, text: str, needle: str, seconds: f64) str {
+    let out = text
+    let deadline = os_time() + seconds
+    loop os_time() < deadline {
+        let chunk = os_pty_read(handle, 4096)
+        if chunk.len > 0 {
+            out = out + chunk
+        } else {
+            sleep(20)
+        }
+        if find_text(out, needle) >= 0 {
+            return out
+        }
+    }
+    return out
+}
+
+// Read startup chatter until it has been quiet for half a second.
+fn read_startup(handle: i32) str {
+    let out = ""
+    let last = os_time()
+    let deadline = os_time() + 6.0
+    loop os_time() < deadline {
+        let chunk = os_pty_read(handle, 4096)
+        if chunk.len > 0 {
+            out = out + chunk
+            last = os_time()
+        } else {
+            if out.len > 0 && os_time() - last > 0.5 {
+                break
+            }
+            sleep(20)
+        }
+    }
+    return out
+}
+
+fn main() {
+    let handle = os_pty_open(os_cwd(), 80, 24)
+    if handle <= 0 {
+        print("skip no pty backend" + unescape("\n"))
+        return
+    }
+    let startup = read_startup(handle)
+    if startup.len == 0 {
+        os_pty_close(handle)
+        print("skip shell produced no output" + unescape("\n"))
+        return
+    }
+    // The command never spells the marker itself, so the echo cannot satisfy
+    // the search; only printf's output does.
+    os_pty_write(handle, "printf 'NS_PTY_%s' OK\r")
+    let output = read_until(handle, startup, "NS_PTY_OK", 4.0)
+    if find_text(output, "NS_PTY_OK") < 0 {
+        // A shell that was still initializing may have flushed the first line.
+        os_pty_write(handle, "printf 'NS_PTY_%s' OK\r")
+        let retry = read_until(handle, output, "NS_PTY_OK", 4.0)
+        output = retry
+    }
+    os_pty_close(handle)
+    if find_text(output, "NS_PTY_OK") < 0 {
+        print("shell output was: [" + output + "]" + unescape("\n"))
+    }
+    assert find_text(output, "NS_PTY_OK") >= 0
+    // The same bytes the shell produced must survive the VT parser. Feed the
+    // chunk through the emulator rather than testing synthetic sequences only.
+    let at = find_text(output, "NS_PTY_OK")
+    g_term_cols = 80
+    g_term_rows = 24
+    term_full_reset()
+    term_feed_text(substr(output, 0, at + 9))
+    assert screen_has("NS_PTY_OK")
+    print("shell: passed" + unescape("\n"))
+}

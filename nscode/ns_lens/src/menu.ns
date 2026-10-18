@@ -10,6 +10,11 @@ lit LENS_FILE_X = 12.0
 lit LENS_FILE_W = 64.0
 lit LENS_FILE_MENU_W = 220.0
 lit LENS_FILE_ITEMS = 5
+// The View menu follows File and the map mode menu in the top bar.
+lit LENS_VIEW_X = 172.0
+lit LENS_VIEW_W = 64.0
+lit LENS_VIEW_MENU_W = 150.0
+lit LENS_VIEW_ITEMS = 2
 lit LENS_SEARCH_W = 560.0
 lit LENS_SEARCH_INPUT_H = 30.0
 lit LENS_SEARCH_ROWS = 12
@@ -22,6 +27,8 @@ lit LENS_ACTIVITY_H = 22.0
 
 let g_lens_file_open = false
 let g_lens_file_block = false
+let g_lens_view_open = false
+let g_lens_view_block = false
 let g_lens_search_block = false
 let g_lens_commit_open = false
 let g_lens_commit_message = ""
@@ -56,6 +63,30 @@ fn lens_file_item_keys(i: i32) str {
     return ""
 }
 
+fn lens_view_item_label(i: i32) str {
+    if i == 0 {
+        return "Outline"
+    }
+    return "Terminal"
+}
+
+// A panel's toggle state, shown on the right of its menu row.
+fn lens_view_item_on(i: i32) bool {
+    if i == 0 {
+        return outline_open()
+    }
+    return terminal_open()
+}
+
+fn lens_view_action(i: i32) {
+    g_lens_view_open = false
+    if i == 0 {
+        outline_toggle()
+    } else {
+        terminal_toggle()
+    }
+}
+
 fn lens_hint_keys(i: i32) str {
     if i == 0 { return "wheel/pinch" }
     if i == 1 { return "shift+wheel" }
@@ -77,14 +108,16 @@ fn lens_hint_action(i: i32) str {
     return "commit"
 }
 
-// Keys belong to the search box or the commit dialog while either is open.
+// Keys belong to the search box, the commit dialog, the ignore editor, an
+// outline prompt or the terminal while any of them is open.
 fn lens_typing() bool {
-    return g_lens_ignore_open || g_lens_commit_open || g_lens_search_open
+    return g_lens_ignore_open || g_lens_commit_open || g_lens_search_open || outline_prompt_active() || terminal_focused()
 }
 
-// Pointer input the map must not also take this frame.
+// Pointer input the map must not also take this frame. Floating panels block
+// their own rectangles with their hit tests, so only popups belong here.
 fn lens_menu_blocks() bool {
-    return g_lens_ignore_open || g_lens_commit_open || g_lens_file_block || g_lens_search_block
+    return g_lens_ignore_open || g_lens_commit_open || g_lens_file_block || g_lens_view_open || g_lens_view_block || g_lens_search_block
 }
 
 fn cmd_down(v: ref view) bool {
@@ -212,6 +245,22 @@ fn lens_menu_keys(v: ref view) {
         lens_search_set_query(lens_field_edit(v, g_lens_search_query))
         return
     }
+    // The outline's name prompt and the terminal own every key while active.
+    if outline_prompt_active() {
+        outline_prompt_keys(v)
+        return
+    }
+    if terminal_focused() {
+        terminal_keys(v)
+        return
+    }
+    // With no file open for editing, typing naturally belongs to an open
+    // terminal even if a click on the outline or map cleared its focus.
+    if terminal_open() && g_lens_editing == false && terminal_key_input(v) {
+        g_terminal_focus = true
+        terminal_keys(v)
+        return
+    }
     if cmd_down(v) {
         if key_edge(v, 79) {
             lens_open_project()
@@ -247,6 +296,8 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * (LENS_FILE_ITEMS as f64)
     g_lens_file_block = g_lens_file_open && raw_hit(v, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h)
+    let view_pop_h = LENS_MODE_ITEM * (LENS_VIEW_ITEMS as f64)
+    g_lens_view_block = g_lens_view_open && raw_hit(v, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, view_pop_h)
     let sx = lens_search_x(w)
     let sy = lens_search_y()
     g_lens_search_block = g_lens_search_open && raw_hit(v, sx, sy, LENS_SEARCH_W, lens_search_panel_h())
@@ -280,6 +331,22 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
         g_lens_file_open = g_lens_file_open == false
         // The map menu's popup opens where File's would cover it.
         g_lens_mode_open = false
+        g_lens_view_open = false
+        v.mouse_pressed = false
+        return
+    }
+    if raw_hit(v, LENS_VIEW_X, lens_mode_y(), LENS_VIEW_W, LENS_MODE_H) {
+        g_lens_view_open = g_lens_view_open == false
+        g_lens_file_open = false
+        g_lens_mode_open = false
+        v.mouse_pressed = false
+        return
+    }
+    if g_lens_view_open {
+        if g_lens_view_block {
+            lens_view_action(clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, LENS_VIEW_ITEMS - 1))
+        }
+        g_lens_view_open = false
         v.mouse_pressed = false
         return
     }
@@ -345,6 +412,39 @@ fn lens_draw_file_menu(r: ref ui_renderer, v: ref view) {
         let keys = lens_file_item_keys(i)
         let kw = ui_text_width(r, keys, small_px(), FONT_MONO())
         draw_text_clipped(r, LENS_FILE_X + LENS_FILE_MENU_W - 10.0 - kw, row_ty, kw, LENS_MODE_ITEM, keys, small_px(), col_muted())
+    }
+}
+
+fn lens_draw_view_menu(r: ref ui_renderer, v: ref view) {
+    let y = lens_mode_y()
+    let border = col_muted()
+    if g_lens_view_open {
+        border = col_accent()
+    }
+    ui_fill_round_rect(r, LENS_VIEW_X, y, LENS_VIEW_W, LENS_MODE_H, 3.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, LENS_VIEW_X, y, LENS_VIEW_W, LENS_MODE_H, 3.0, 1.0, border, 0.0)
+    let ty = ui_text_v_center_y(r, y, LENS_MODE_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, LENS_VIEW_X + 10.0, ty, LENS_VIEW_W - 28.0, LENS_MODE_H, "View", small_px(), col_text())
+    draw_text_clipped(r, LENS_VIEW_X + LENS_VIEW_W - 16.0, ty, 12.0, LENS_MODE_H, "v", small_px(), col_muted())
+    if g_lens_view_open == false {
+        return
+    }
+    let pop_y = lens_mode_popup_y()
+    let pop_h = LENS_MODE_ITEM * (LENS_VIEW_ITEMS as f64)
+    ui_fill_round_rect(r, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, pop_h, 3.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
+    for i in 0 to LENS_VIEW_ITEMS {
+        let iy = pop_y + (i as f64) * LENS_MODE_ITEM
+        if raw_hit(v, LENS_VIEW_X, iy, LENS_VIEW_MENU_W, LENS_MODE_ITEM) {
+            ui_fill_rect(r, LENS_VIEW_X + 1.0, iy, LENS_VIEW_MENU_W - 2.0, LENS_MODE_ITEM, col_editor_panel_hi(), 0.0)
+        }
+        let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
+        draw_text_clipped(r, LENS_VIEW_X + 10.0, row_ty, 100.0, LENS_MODE_ITEM, lens_view_item_label(i), small_px(), col_text())
+        if lens_view_item_on(i) {
+            let state = "on"
+            let sw = ui_text_width(r, state, small_px(), FONT_MONO())
+            draw_text_clipped(r, LENS_VIEW_X + LENS_VIEW_MENU_W - 10.0 - sw, row_ty, sw, LENS_MODE_ITEM, state, small_px(), col_accent())
+        }
     }
 }
 
@@ -491,11 +591,19 @@ fn lens_draw_activity(r: ref ui_renderer, y: f64, w: f64) {
     draw_text_clipped(r, x, ty, w - x - 12.0, LENS_ACTIVITY_H, g_lens_message, small_px(), col_muted())
 }
 
-fn lens_draw_menus(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+// The bottom-left hints and activity row float over the map but under the
+// panels, so a panel dragged over them stays readable.
+fn lens_draw_overlay(r: ref ui_renderer, w: f64, h: f64) {
     let activity_y = h - 28.0 - LENS_ACTIVITY_H
     lens_draw_activity(r, activity_y, w)
     lens_draw_hints(r, activity_y - 4.0)
+}
+
+// Menu buttons and every popup, drawn after the panels so an open menu is
+// always on top.
+fn lens_draw_menus(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_draw_file_menu(r, v)
+    lens_draw_view_menu(r, v)
     lens_draw_search(r, v, w)
     lens_draw_commit(r, v, w, h)
     lens_draw_ignore(r, v, w, h)

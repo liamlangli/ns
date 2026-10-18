@@ -1,0 +1,126 @@
+// Drive the terminal through the same key path the window uses: latch a key
+// press on a view, run the Lens menu/terminal key handler, and verify the shell
+// receives the command and its output reaches the emulated screen.
+use std
+use os
+use view
+use task
+use editor
+
+fn find_text(text: str, needle: str) i32 {
+    if needle.len == 0 || text.len < needle.len {
+        return -1
+    }
+    for i in 0 to text.len - needle.len + 1 {
+        let hit = true
+        for j in 0 to needle.len {
+            if ((text[i + j] as i32) & 255) != ((needle[j] as i32) & 255) {
+                hit = false
+                break
+            }
+        }
+        if hit {
+            return i
+        }
+    }
+    return -1
+}
+
+fn screen_has(needle: str) bool {
+    for row in 0 to g_term_rows {
+        let line = ""
+        for col in 0 to g_term_cols {
+            let cp = g_term_chars[term_cell(row, col)]
+            if cp >= 32 && cp < 127 {
+                line = line + chr(cp)
+            } else {
+                line = line + " "
+            }
+        }
+        if find_text(line, needle) >= 0 {
+            return true
+        }
+    }
+    return false
+}
+
+fn key_for_char(c: i32) i32 {
+    if c >= 97 && c <= 122 {
+        return c - 32
+    }
+    if c == 32 || c == 59 || (c >= 48 && c <= 57) || c == 39 {
+        return c
+    }
+    return -1
+}
+
+// Latch one key press and run the handler exactly as a frame would.
+fn type_char(v: ref view, c: i32) {
+    let key = key_for_char(c)
+    if key < 0 {
+        return
+    }
+    view_on_key_action(v, key, 0)
+    lens_menu_keys(v)
+    view_on_key_action(v, key, 1)
+    view_input_reset(v)
+}
+
+fn read_for(seconds: f64) {
+    let deadline = os_time() + seconds
+    loop os_time() < deadline {
+        let before = g_term_hist_count + g_term_cur_row * 1000 + g_term_cur_col
+        terminal_poll()
+        let after = g_term_hist_count + g_term_cur_row * 1000 + g_term_cur_col
+        if before == after {
+            sleep(10)
+        }
+    }
+}
+
+fn main() {
+    let handle = os_pty_open(os_cwd(), 80, 24)
+    if handle <= 0 {
+        print("skip no pty backend" + unescape("\n"))
+        return
+    }
+    let v = view_create("terminal input test", 200, 200)
+    g_terminal_open = true
+    g_terminal_focus = true
+    g_terminal_handle = handle
+    g_terminal_exited = false
+    g_terminal_error = ""
+    g_term_cols = 80
+    g_term_rows = 24
+    term_full_reset()
+
+    // Let the shell finish its startup files and print its first prompt.
+    read_for(2.0)
+
+    // The typed line contains OK and MARK separately; only a shell that runs
+    // it can produce the contiguous marker.
+    let command = "printf ok; printf mark"
+    for i in 0 to command.len {
+        type_char(v, (command[i] as i32) & 255)
+    }
+    view_on_key_action(v, 257, 0)
+    lens_menu_keys(v)
+    view_on_key_action(v, 257, 1)
+    view_input_reset(v)
+
+    let deadline = os_time() + 5.0
+    loop os_time() < deadline {
+        terminal_poll()
+        if screen_has("okmark") {
+            break
+        }
+        sleep(20)
+    }
+
+    let ok = screen_has("okmark")
+    os_pty_close(handle)
+    g_terminal_handle = 0
+    view_close(v)
+    assert ok
+    print("terminal input: passed" + unescape("\n"))
+}

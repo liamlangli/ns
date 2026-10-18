@@ -189,7 +189,24 @@ ref fn os_patch_version() i32
 // has none, or no patch runs.
 ref fn os_patch_label() str
 ref fn os_make_dirs(path: str) i32
+// Rename or move a file or directory. Returns 1 on success and 0 on failure;
+// an existing target is never replaced.
+ref fn os_rename_path(from_path: str, to_path: str) i32
 ref fn os_launch_ns_project(folder: str, entry: str) i32
+
+// Interactive shell over a pseudo-terminal, rooted at `folder`. os_pty_open
+// starts the user's $SHELL as a login shell with the given size and returns a
+// handle above zero, or 0 when this platform has no terminal. os_pty_read
+// returns up to `capacity` bytes of output (empty when none arrived) and
+// os_pty_write sends input; both are non-blocking. os_pty_running is 1 while
+// the shell runs. os_pty_resize updates the size the shell sees, and
+// os_pty_close hangs up the shell and releases the handle.
+ref fn os_pty_open(folder: str, cols: i32, rows: i32) i32
+ref fn os_pty_read(handle: i32, capacity: i32) str
+ref fn os_pty_write(handle: i32, data: str) i32
+ref fn os_pty_resize(handle: i32, cols: i32, rows: i32) i32
+ref fn os_pty_running(handle: i32) i32
+ref fn os_pty_close(handle: i32)
 
 // Live profiling: start `<exe> profile --live-port <port> [entry]` with
 // `folder` as the child working directory, so a viewer that owns the TCP

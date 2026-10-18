@@ -5,6 +5,9 @@ use os
 use editor
 
 let g_workspace_streaming = false
+// Whether the outline's expanded folders are loaded from and saved to the
+// project's bin/ns_lens/outline. Tests that scan the real project disable it.
+let g_workspace_state = true
 let g_workspace_root = "nscode/ns_lens"
 let g_native_entry = ""
 let g_workspace_generation: i32 = 0
@@ -170,6 +173,135 @@ fn workspace_join_root(name: str) str {
     return g_workspace_root + "/" + name
 }
 
+fn workspace_state_path() str {
+    return workspace_join_root("bin/ns_lens/outline")
+}
+
+// Project-relative folder path with '/' separators, or "" when `path` is the
+// root itself or outside it.
+fn workspace_relative_path(path: str) str {
+    let root = g_workspace_root
+    let root_len = root.len
+    loop root_len > 1 {
+        let c = (root[root_len - 1] as i32) & 255
+        if c != 47 && c != 92 {
+            break
+        }
+        root_len = root_len - 1
+    }
+    if path.len <= root_len {
+        return ""
+    }
+    for i in 0 to root_len {
+        if ((path[i] as i32) & 255) != ((root[i] as i32) & 255) {
+            return ""
+        }
+    }
+    let sep = (path[root_len] as i32) & 255
+    if sep != 47 && sep != 92 {
+        return ""
+    }
+    // A root that arrived with a trailing separator makes the scan produce a
+    // doubled separator after it; the relative path starts at the name.
+    let first = root_len + 1
+    loop first < path.len {
+        let c = (path[first] as i32) & 255
+        if c != 47 && c != 92 {
+            break
+        }
+        first = first + 1
+    }
+    let out = ""
+    for i in first to path.len {
+        let c = (path[i] as i32) & 255
+        if c == 92 {
+            out = out + "/"
+        } else {
+            out = out + substr(path, i, 1)
+        }
+    }
+    return out
+}
+
+// One expanded folder per line, relative to the project root. An empty file is
+// a fully folded tree, which is also the state of a project with no file yet.
+fn workspace_save_expanded() {
+    if g_workspace_state == false {
+        return
+    }
+    let text = ""
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 && g_workspace_expanded[i] != 0 {
+            let relative = workspace_relative_path(os_entry_path(i))
+            if relative != "" {
+                text = text + relative + "\n"
+            }
+        }
+    }
+    if os_make_dirs(workspace_join_root("bin/ns_lens")) == 0 {
+        return
+    }
+    os_write_file_atomic(workspace_state_path(), text)
+}
+
+fn workspace_expand_matching(relative: str) {
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 && workspace_relative_path(os_entry_path(i)) == relative {
+            g_workspace_expanded[i] = 1
+            return
+        }
+    }
+}
+
+fn workspace_load_expanded() {
+    if g_workspace_state == false {
+        return
+    }
+    let text = os_read_file(workspace_state_path())
+    if text == "" {
+        return
+    }
+    let start: i32 = 0
+    for i in 0 to text.len + 1 {
+        let c: i32 = 10
+        if i < text.len {
+            c = (text[i] as i32) & 255
+        }
+        if i == text.len || c == 10 {
+            let len = i - start
+            if len > 0 {
+                let keep = len
+                if ((text[start + len - 1] as i32) & 255) == 13 {
+                    keep = len - 1
+                }
+                if keep > 0 {
+                    workspace_expand_matching(substr(text, start, keep))
+                }
+            }
+            start = i + 1
+        }
+    }
+}
+
+fn workspace_set_expanded(index: i32, open: bool) {
+    if index < 0 || index >= g_workspace_count {
+        return
+    }
+    if os_entry_is_dir(index) == 0 {
+        return
+    }
+    let value: i32 = 0
+    if open {
+        value = 1
+    }
+    if g_workspace_expanded[index] == value {
+        return
+    }
+    g_workspace_expanded[index] = value
+    workspace_mark_visibility_dirty()
+    workspace_save_expanded()
+}
+
 fn workspace_unique_path(stem: str, suffix: str) str {
     let name = stem + suffix
     let path = workspace_join_root(name)
@@ -226,16 +358,13 @@ fn workspace_rebuild_visible() {
 }
 
 fn workspace_toggle_entry(index: i32) {
-    if index >= 0 && index < g_workspace_count {
-        if os_entry_is_dir(index) != 0 {
-            if g_workspace_expanded[index] == 0 {
-                g_workspace_expanded[index] = 1
-            } else {
-                g_workspace_expanded[index] = 0
-            }
-            workspace_mark_visibility_dirty()
-        }
+    if index < 0 || index >= g_workspace_count {
+        return
     }
+    if os_entry_is_dir(index) == 0 {
+        return
+    }
+    workspace_set_expanded(index, g_workspace_expanded[index] == 0)
 }
 
 fn workspace_store_active() {
@@ -345,11 +474,12 @@ fn workspace_init() {
     g_workspace_generation = g_workspace_generation + 1
     g_workspace_count = os_dir_scan(g_workspace_root)
     g_workspace_root_expanded = true
+    // Folders start closed; only the folders remembered in bin/ns_lens/outline
+    // open again.
     for i in 0 to g_workspace_count {
-        if os_entry_is_dir(i) != 0 {
-            g_workspace_expanded[i] = 1
-        }
+        g_workspace_expanded[i] = 0
     }
+    workspace_load_expanded()
     workspace_mark_visibility_dirty()
 
     let main_index = workspace_find("main.ns")
@@ -411,11 +541,6 @@ fn workspace_refresh_from_disk() {
         g_workspace_expanded[i] = 0
         g_workspace_opened[i] = 0
         g_workspace_tabs[i] = 0
-    }
-    for i in 0 to g_workspace_count {
-        if os_entry_is_dir(i) != 0 {
-            g_workspace_expanded[i] = 1
-        }
     }
     for pos in 0 to old_dir_count {
         let index = workspace_find_path(g_refresh_dir_path[pos])
@@ -508,6 +633,7 @@ fn workspace_collapse_all() {
         }
     }
     workspace_mark_visibility_dirty()
+    workspace_save_expanded()
 }
 
 fn workspace_open_root(path: str) bool {

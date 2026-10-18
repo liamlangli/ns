@@ -1,0 +1,246 @@
+use std
+use os
+use editor
+use workspace
+
+fn check(name: str, ok: bool) {
+    if ok {
+        print("ok   " + name + unescape("\n"))
+    } else {
+        print("FAIL " + name + unescape("\n"))
+        assert false
+    }
+}
+
+fn outline_test_root() str {
+    let stamp = os_time_us() % 1000000000
+    return "/tmp/ns_lens_outline_" + itos(stamp as i32)
+}
+
+fn state_line(text: str, line: str) bool {
+    let start: i32 = 0
+    for i in 0 to text.len + 1 {
+        let c: i32 = 10
+        if i < text.len {
+            c = (text[i] as i32) & 255
+        }
+        if i == text.len || c == 10 {
+            let len = i - start
+            if len > 0 {
+                let keep = len
+                if ((text[start + len - 1] as i32) & 255) == 13 {
+                    keep = len - 1
+                }
+                if keep > 0 && substr(text, start, keep) == line {
+                    return true
+                }
+            }
+            start = i + 1
+        }
+    }
+    return false
+}
+
+fn main() {
+    // Both floating panels share the 80% background alpha.
+    check("outline background is 80% opaque", (col_outline_bg() >> 24) == 0xccu)
+    check("outline hover layers stay translucent", (col_outline_hi() >> 24) < (col_outline_bg() >> 24))
+
+    let root = outline_test_root()
+    assert os_make_dirs(root + "/src/nested") != 0
+    assert os_write_file_atomic(root + "/src/keep.ns", "keep") != 0
+    assert os_write_file_atomic(root + "/src/nested/deep.ns", "deep") != 0
+    assert os_write_file_atomic(root + "/top.ns", "top") != 0
+
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    workspace_rebuild_visible()
+    assert g_workspace_visible_count > 0
+
+    // Folders start closed, and the outline remembers what the user opens.
+    let any_expanded = false
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 && workspace_entry_expanded(i) {
+            any_expanded = true
+        }
+    }
+    check("folders start collapsed", any_expanded == false)
+    let state_path = root + "/bin/ns_lens/outline"
+    check("no outline state file on first open", os_file_size(state_path) < 0)
+
+    let state_src = workspace_find("src")
+    assert state_src >= 0
+    workspace_toggle_entry(state_src)
+    check("disclosure expands a folder", workspace_entry_expanded(state_src))
+    let state_text = os_read_file(state_path)
+    check("expanded folder is stored in bin", state_line(state_text, "src"))
+    check("folded children are not stored", state_line(state_text, "src/nested") == false)
+
+    assert workspace_open_root(root)
+    let reopened_src = workspace_find("src")
+    check("expansion is restored after reopening", workspace_entry_expanded(reopened_src))
+    check("folded folders stay folded after reopening", workspace_entry_expanded(workspace_find("nested")) == false)
+
+    workspace_toggle_entry(reopened_src)
+    check("disclosure collapses a folder", workspace_entry_expanded(reopened_src) == false)
+    state_text = os_read_file(state_path)
+    check("collapsed folder is removed from bin state", state_line(state_text, "src") == false)
+
+    assert workspace_open_root(root)
+    check("collapse is restored after reopening", workspace_entry_expanded(workspace_find("src")) == false)
+
+    outline_show()
+    let src = workspace_find("src")
+    assert src >= 0
+    outline_select(src)
+    assert g_outline_selected_path == root + "/src"
+
+    // Creating a file lands in the selected folder.
+    outline_begin_prompt(OUTLINE_PROMPT_FILE)
+    assert outline_prompt_active()
+    g_outline_prompt_text = "created.ns"
+    outline_prompt_submit()
+    check("outline creates a file in the selected folder", os_file_size(root + "/src/created.ns") >= 0)
+    check("outline selects the created file", g_outline_selected_path == root + "/src/created.ns")
+    assert workspace_find_path(root + "/src/created.ns") >= 0
+
+    // Creating a folder also lands there.
+    outline_begin_prompt(OUTLINE_PROMPT_FOLDER)
+    g_outline_prompt_text = "made"
+    outline_prompt_submit()
+    check("outline creates a folder in the selected folder", os_file_size(root + "/src/made") >= 0)
+    check("outline selects the created folder", g_outline_selected_path == root + "/src/made")
+
+    // Renaming the selected folder keeps the tree and the selection in step.
+    outline_begin_prompt(OUTLINE_PROMPT_RENAME)
+    assert g_outline_prompt_fresh
+    g_outline_prompt_text = "made_again"
+    outline_prompt_submit()
+    check("outline renames a folder", os_file_size(root + "/src/made_again") >= 0 && os_file_size(root + "/src/made") < 0)
+    check("outline follows the renamed folder", g_outline_selected_path == root + "/src/made_again")
+
+    // A selected file renames in its own folder; the parent does not move.
+    let created = workspace_find_path(root + "/src/created.ns")
+    assert created >= 0
+    outline_select(created)
+    outline_begin_prompt(OUTLINE_PROMPT_RENAME)
+    g_outline_prompt_text = "renamed.ns"
+    outline_prompt_submit()
+    check("outline renames a file", os_file_size(root + "/src/renamed.ns") >= 0 && os_file_size(root + "/src/created.ns") < 0)
+    check("outline keeps the file's parent", outline_dir_of(root + "/src/renamed.ns") == root + "/src")
+
+    // Invalid and duplicate names keep the prompt open for correction.
+    outline_begin_prompt(OUTLINE_PROMPT_FILE)
+    g_outline_prompt_text = "bad/name"
+    outline_prompt_submit()
+    check("outline rejects a path separator", outline_prompt_active() && g_outline_prompt_error != "")
+    g_outline_prompt_text = "keep.ns"
+    outline_prompt_submit()
+    check("outline rejects an existing name", outline_prompt_active() && g_outline_prompt_error != "")
+    g_outline_prompt_text = ".."
+    outline_prompt_submit()
+    check("outline rejects a dot entry", outline_prompt_active())
+    outline_prompt_close()
+    check("outline prompt closes", outline_prompt_active() == false)
+
+    // Name and path helpers.
+    check("outline validates plain names", outline_name_valid("notes.ns") && outline_name_valid("a b"))
+    check("outline rejects empty names", outline_name_valid("") == false)
+    check("outline rejects separators", outline_name_valid("a\\b") == false && outline_name_valid("a/b") == false)
+    check("outline joins a folder and a child", outline_join("/tmp/project", "src") == "/tmp/project/src")
+    check("outline join keeps an existing separator", outline_join("/tmp/project/", "src") == "/tmp/project/src")
+    check("outline finds a parent folder", outline_dir_of("/tmp/project/src/main.ns") == "/tmp/project/src")
+    check("outline recognizes descendants", outline_path_under("/tmp/project/src/main.ns", "/tmp/project/src"))
+    check("outline rejects sibling prefixes", outline_path_under("/tmp/project/srcc/main.ns", "/tmp/project/src") == false)
+
+    // Scoping the map to a folder keeps that folder's descendants only.
+    let src_now = workspace_find_path(root + "/src")
+    lens_scope_set(src_now)
+    check("scope records the folder path", g_lens_scope_path == root + "/src")
+    let deep = workspace_find_path(root + "/src/nested/deep.ns")
+    let top = workspace_find_path(root + "/top.ns")
+    assert deep >= 0 && top >= 0
+    check("scope includes descendants", lens_scope_contains(deep))
+    check("scope excludes siblings", lens_scope_contains(top) == false)
+    check("scoped map only counts scoped files", lens_file_count() == 3)
+    lens_scope_clear()
+    check("scope clears", g_lens_scope_path == "" && g_lens_scope < 0)
+    check("cleared scope includes the whole project", lens_scope_contains(top))
+
+    // A rename rebases an active scope instead of losing it.
+    let src_scope = workspace_find_path(root + "/src")
+    if workspace_entry_expanded(src_scope) == false {
+        workspace_toggle_entry(src_scope)
+    }
+    lens_scope_set(src_scope)
+    outline_select(src_scope)
+    outline_begin_prompt(OUTLINE_PROMPT_RENAME)
+    g_outline_prompt_text = "source"
+    outline_prompt_submit()
+    check("scope follows a renamed folder", g_lens_scope_path == root + "/source")
+    lens_rebuild()
+    check("scope resolves after the rescan", g_lens_scope >= 0 && os_entry_path(g_lens_scope) == root + "/source")
+    check("renamed folder keeps its open state", workspace_entry_expanded(workspace_find_path(root + "/source")))
+
+    // Renaming the active file keeps it open under its new path.
+    let keep = workspace_find_path(root + "/source/keep.ns")
+    assert keep >= 0
+    assert lens_open(keep)
+    let kept_text = g_doc
+    outline_select(keep)
+    outline_begin_prompt(OUTLINE_PROMPT_RENAME)
+    g_outline_prompt_text = "kept.ns"
+    outline_prompt_submit()
+    check("renamed active file stays open", g_lens_editing && g_workspace_active >= 0)
+    check("active tab follows the renamed file", os_entry_path(g_workspace_active) == root + "/source/kept.ns")
+    check("renamed active file keeps its text", g_doc == kept_text)
+
+    // An unsaved buffer blocks the rename instead of being discarded.
+    insert_str("!")
+    outline_begin_prompt(OUTLINE_PROMPT_RENAME)
+    g_outline_prompt_text = "dirty.ns"
+    outline_prompt_submit()
+    check("rename is blocked by an unsaved file", outline_prompt_active() && g_outline_prompt_error != "")
+    check("blocked rename leaves the file alone", os_file_size(root + "/source/kept.ns") >= 0 && os_file_size(root + "/source/dirty.ns") < 0)
+    outline_prompt_close()
+    assert workspace_save_active()
+
+    // Creating inside a folded folder opens that folder so the new row shows.
+    let source = workspace_find_path(root + "/source")
+    assert source >= 0
+    g_workspace_expanded[source] = 0
+    workspace_mark_visibility_dirty()
+    outline_select(source)
+    outline_begin_prompt(OUTLINE_PROMPT_FILE)
+    g_outline_prompt_text = "inside.ns"
+    outline_prompt_submit()
+    check("creating inside a folded folder opens it", workspace_entry_expanded(source))
+    workspace_rebuild_visible()
+    let inside_visible = false
+    for i in 0 to g_workspace_visible_count {
+        if os_entry_path(g_workspace_visible[i]) == root + "/source/inside.ns" {
+            inside_visible = true
+        }
+    }
+    check("the new entry is visible in the tree", inside_visible)
+
+    // Revealing a deep file expands every folder above it.
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 {
+            g_workspace_expanded[i] = 0
+        }
+    }
+    outline_reveal(root + "/source/nested/deep.ns")
+    workspace_rebuild_visible()
+    let deep_visible = false
+    for i in 0 to g_workspace_visible_count {
+        if os_entry_path(g_workspace_visible[i]) == root + "/source/nested/deep.ns" {
+            deep_visible = true
+        }
+    }
+    check("outline reveals a deep entry", deep_visible)
+
+    os_watch_stop()
+    print("outline: passed" + unescape("\n"))
+}

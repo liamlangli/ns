@@ -22,7 +22,12 @@
 #include <dirent.h>
 #include <regex.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 #endif
 
@@ -592,6 +597,16 @@ i32 os_make_dirs(const char *path) {
     return 0;
 }
 
+// Rename a file or directory, refusing to replace an existing target.
+i32 os_rename_path(const char *from_path, const char *to_path) {
+    if (!from_path || !from_path[0] || !to_path || !to_path[0]) return 0;
+#ifdef NS_WIN
+    return MoveFileExA(from_path, to_path, MOVEFILE_WRITE_THROUGH) ? 1 : 0;
+#else
+    return rename(from_path, to_path) == 0 ? 1 : 0;
+#endif
+}
+
 static i32 os_glob_match(const char *pattern, const char *text) {
     while (*pattern) {
         if (*pattern == '*') {
@@ -999,6 +1014,281 @@ i32 os_process_stop(i32 pid) {
 
 #if !defined(__APPLE__)
 i32 os_share_file(const char *path) { ns_unused(path); return 0; }
+#endif
+
+// ---------------------------------------------------------------------------
+// Interactive shell over a pseudo-terminal.
+//
+// The window backends only carry keyboard input; a real shell needs a tty for
+// its line editor, job control and full-screen programs. Each slot owns a pty
+// master plus the shell it started, so a viewer can read output and write key
+// bytes without blocking a frame. Only desktop POSIX hosts offer this; other
+// targets return a zero handle so callers can hide the feature.
+
+#define OS_PTY_SLOTS 4
+#define OS_PTY_READ_MAX 65536
+
+#if defined(NS_WIN) || (defined(__APPLE__) && (TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)))
+
+i32 os_pty_open(const char *folder, i32 cols, i32 rows) {
+    ns_unused(folder);
+    ns_unused(cols);
+    ns_unused(rows);
+    return 0;
+}
+
+const char *os_pty_read(i32 handle, i32 capacity) {
+    ns_unused(handle);
+    ns_unused(capacity);
+    return "";
+}
+
+i32 os_pty_write(i32 handle, const char *data) {
+    ns_unused(handle);
+    ns_unused(data);
+    return -1;
+}
+
+i32 os_pty_resize(i32 handle, i32 cols, i32 rows) {
+    ns_unused(handle);
+    ns_unused(cols);
+    ns_unused(rows);
+    return 0;
+}
+
+i32 os_pty_running(i32 handle) {
+    ns_unused(handle);
+    return 0;
+}
+
+void os_pty_close(i32 handle) { ns_unused(handle); }
+
+#else
+
+#if defined(__linux__)
+// glibc hides the XSI pty helpers behind feature macros the project does not
+// set, so declare the libc symbols this implementation uses explicitly.
+extern int posix_openpt(int oflag);
+extern int grantpt(int fd);
+extern int unlockpt(int fd);
+extern char *ptsname(int fd);
+#endif
+
+typedef struct os_pty_slot {
+    int fd;
+    pid_t pid;
+    i32 alive;
+} os_pty_slot;
+
+static os_pty_slot os_ptys[OS_PTY_SLOTS] = {
+    { -1, 0, 0 }, { -1, 0, 0 }, { -1, 0, 0 }, { -1, 0, 0 }
+};
+static _Thread_local char os_pty_text[OS_PTY_READ_MAX + 1];
+
+static os_pty_slot *os_pty_at(i32 handle) {
+    if (handle <= 0 || handle > OS_PTY_SLOTS) return NULL;
+    os_pty_slot *slot = &os_ptys[handle - 1];
+    return slot->fd >= 0 ? slot : NULL;
+}
+
+// Reap the shell the moment it exits. The master can still hold its final
+// output; the reader drains that before it closes the handle.
+static void os_pty_check(os_pty_slot *slot) {
+    if (!slot || !slot->alive || slot->pid <= 0) return;
+    int status = 0;
+    pid_t done = waitpid(slot->pid, &status, WNOHANG);
+    if (done == slot->pid || (done < 0 && errno == ECHILD)) slot->alive = 0;
+}
+
+i32 os_pty_open(const char *folder, i32 cols, i32 rows) {
+    if (cols < 2) cols = 2;
+    if (rows < 2) rows = 2;
+    if (cols > 1000) cols = 1000;
+    if (rows > 1000) rows = 1000;
+
+    int master = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master < 0) return 0;
+    if (grantpt(master) != 0 || unlockpt(master) != 0) {
+        close(master);
+        return 0;
+    }
+    // ptsname returns a static buffer; it is read before fork and only the UI
+    // thread ever opens a terminal.
+    const char *slave_name = ptsname(master);
+    if (!slave_name) {
+        close(master);
+        return 0;
+    }
+
+    struct winsize size;
+    memset(&size, 0, sizeof(size));
+    size.ws_col = (unsigned short)cols;
+    size.ws_row = (unsigned short)rows;
+    ioctl(master, TIOCSWINSZ, &size);
+
+    const char *shell = getenv("SHELL");
+    if (!shell || !shell[0]) {
+#if defined(__APPLE__)
+        shell = "/bin/zsh";
+#else
+        shell = "/bin/sh";
+#endif
+    }
+    const char *dir = (folder && folder[0]) ? folder : ".";
+    long open_max = sysconf(_SC_OPEN_MAX);
+    int close_limit = open_max > 3 && open_max < 4096 ? (int)open_max : 4096;
+
+    // Build the child's environment before forking: setenv is not safe between
+    // fork and exec in a host that runs search and Git workers.
+    extern char **environ;
+    char *child_env[1024];
+    int child_env_count = 0;
+    for (char **entry = environ; entry && *entry && child_env_count < 1020; entry++) {
+        if (strncmp(*entry, "TERM=", 5) == 0) continue;
+        if (strncmp(*entry, "COLORTERM=", 10) == 0) continue;
+        child_env[child_env_count++] = *entry;
+    }
+    static char term_env[] = "TERM=xterm-256color";
+    static char color_env[] = "COLORTERM=truecolor";
+    child_env[child_env_count++] = term_env;
+    child_env[child_env_count++] = color_env;
+    child_env[child_env_count] = NULL;
+    char *child_argv[3];
+    child_argv[0] = (char *)shell;
+    child_argv[1] = (char *)"-l";
+    child_argv[2] = NULL;
+    char *fallback_argv[3];
+    fallback_argv[0] = (char *)"/bin/sh";
+    fallback_argv[1] = (char *)"-l";
+    fallback_argv[2] = NULL;
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(master);
+        return 0;
+    }
+    if (pid == 0) {
+        // The child is a session leader with the pty as its controlling
+        // terminal, so job control and SIGWINCH work normally.
+        setsid();
+        int slave = open(slave_name, O_RDWR);
+        if (slave < 0) _exit(127);
+        ioctl(slave, TIOCSCTTY, 0);
+        dup2(slave, STDIN_FILENO);
+        dup2(slave, STDOUT_FILENO);
+        dup2(slave, STDERR_FILENO);
+        if (slave > STDERR_FILENO) close(slave);
+        close(master);
+        // GUI hosts keep many descriptors open; none belong to the shell.
+        for (int fd = 3; fd < close_limit; fd++) close(fd);
+        if (chdir(dir) != 0) _exit(127);
+        execve(shell, child_argv, child_env);
+        execve("/bin/sh", fallback_argv, child_env);
+        _exit(127);
+    }
+
+    int flags = fcntl(master, F_GETFL, 0);
+    if (flags >= 0) fcntl(master, F_SETFL, flags | O_NONBLOCK);
+    for (i32 i = 0; i < OS_PTY_SLOTS; i++) {
+        if (os_ptys[i].fd >= 0) continue;
+        os_ptys[i].fd = master;
+        os_ptys[i].pid = pid;
+        os_ptys[i].alive = 1;
+        return i + 1;
+    }
+    close(master);
+    kill(-pid, SIGKILL);
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return 0;
+}
+
+const char *os_pty_read(i32 handle, i32 capacity) {
+    os_pty_slot *slot = os_pty_at(handle);
+    if (!slot) return "";
+    if (capacity < 1) capacity = 1;
+    if (capacity > OS_PTY_READ_MAX) capacity = OS_PTY_READ_MAX;
+    ssize_t got = read(slot->fd, os_pty_text, (size_t)capacity);
+    if (got > 0) {
+        os_pty_text[got] = '\0';
+        return os_pty_text;
+    }
+    os_pty_text[0] = '\0';
+    if (got == 0) {
+        slot->alive = 0;
+        return "";
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+        os_pty_check(slot);
+        return "";
+    }
+    // EIO on macOS and EOF on Linux both mean the slave side is gone.
+    slot->alive = 0;
+    return "";
+}
+
+i32 os_pty_write(i32 handle, const char *data) {
+    os_pty_slot *slot = os_pty_at(handle);
+    if (!slot || !data) return -1;
+    size_t length = strlen(data);
+    if (length == 0) return 0;
+    size_t written = 0;
+    for (int attempt = 0; attempt < 64 && written < length; attempt++) {
+        ssize_t got = write(slot->fd, data + written, length - written);
+        if (got > 0) {
+            written += (size_t)got;
+            continue;
+        }
+        if (got < 0 && (errno == EINTR)) continue;
+        if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+        break;
+    }
+    return (i32)written;
+}
+
+i32 os_pty_resize(i32 handle, i32 cols, i32 rows) {
+    os_pty_slot *slot = os_pty_at(handle);
+    if (!slot) return 0;
+    if (cols < 2) cols = 2;
+    if (rows < 2) rows = 2;
+    if (cols > 1000) cols = 1000;
+    if (rows > 1000) rows = 1000;
+    struct winsize size;
+    memset(&size, 0, sizeof(size));
+    size.ws_col = (unsigned short)cols;
+    size.ws_row = (unsigned short)rows;
+    return ioctl(slot->fd, TIOCSWINSZ, &size) == 0 ? 1 : 0;
+}
+
+i32 os_pty_running(i32 handle) {
+    os_pty_slot *slot = os_pty_at(handle);
+    if (!slot) return 0;
+    os_pty_check(slot);
+    return slot->alive ? 1 : 0;
+}
+
+void os_pty_close(i32 handle) {
+    os_pty_slot *slot = os_pty_at(handle);
+    if (!slot) return;
+    pid_t pid = slot->pid;
+    close(slot->fd);
+    slot->fd = -1;
+    slot->pid = 0;
+    slot->alive = 0;
+    if (pid <= 0) return;
+    // Reap first: after a child is gone its pid may belong to another process
+    // group, so a signal must not be sent in its name.
+    int status = 0;
+    if (waitpid(pid, &status, WNOHANG) != 0) return;
+    // Hang up the whole session, then make sure it is reaped: a zombie shell
+    // outlives the window otherwise.
+    kill(-pid, SIGHUP);
+    if (waitpid(pid, &status, WNOHANG) == 0) {
+        kill(-pid, SIGKILL);
+        waitpid(pid, &status, 0);
+    }
+}
+
 #endif
 
 // Bounded native services used by code atlases and other local tools.

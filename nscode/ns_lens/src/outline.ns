@@ -1,0 +1,923 @@
+// The View > Outline floating panel. A tree of the workspace snapshot with a
+// disclosure button per folder, a scope selector for the treemap, and inline
+// rename / create actions. The panel is one flat list: expanded folders decide
+// which entries are visible, and the row list is rebuilt from the shared
+// workspace snapshot after every rescan.
+use std
+use os
+use view
+use ui
+
+lit OUTLINE_TITLE_H = 30.0
+lit OUTLINE_TOOL_H = 28.0
+lit OUTLINE_ROW_H = 20.0
+lit OUTLINE_TOOLBAR_H = 36.0
+lit OUTLINE_FOOTER_H = 22.0
+lit OUTLINE_PROMPT_H = 118.0
+lit OUTLINE_MIN_W = 300.0
+lit OUTLINE_MIN_H = 220.0
+lit OUTLINE_RESIZE = 14.0
+
+// Prompt kinds.
+lit OUTLINE_PROMPT_NONE = 0
+lit OUTLINE_PROMPT_RENAME = 1
+lit OUTLINE_PROMPT_FILE = 2
+lit OUTLINE_PROMPT_FOLDER = 3
+
+// The panel shares the floating-panel 80% background; hover and selection are
+// translucent tints so they do not turn those rows opaque.
+fn col_outline_bg() u32 {
+    return lens_float_color(col_editor_panel())
+}
+
+fn col_outline_hi() u32 {
+    return (col_editor_panel_hi() & 0x00ffffffu) | 0x66000000u
+}
+
+fn col_outline_prompt_bg() u32 {
+    return lens_float_color(col_editor_bg())
+}
+
+let g_outline_open = false
+let g_outline_ready = false
+let g_outline_x: f64 = 16.0
+let g_outline_y: f64 = 44.0
+let g_outline_w: f64 = 320.0
+let g_outline_h: f64 = 480.0
+let g_outline_selected: i32 = -1
+let g_outline_selected_path = ""
+let g_outline_scroll: i32 = 0
+let g_outline_generation: i32 = -1
+let g_outline_dragging = false
+let g_outline_resizing = false
+let g_outline_grab_x: f64 = 0.0
+let g_outline_grab_y: f64 = 0.0
+let g_outline_grab_w: f64 = 0.0
+let g_outline_grab_h: f64 = 0.0
+let g_outline_prompt = OUTLINE_PROMPT_NONE
+let g_outline_prompt_text = ""
+let g_outline_prompt_fresh = false
+let g_outline_prompt_error = ""
+let g_outline_prompt_dir = ""
+let g_outline_prompt_path = ""
+let g_outline_prompt_title = ""
+
+fn outline_trim(text: str) str {
+    let start: i32 = 0
+    let end = text.len
+    loop start < end {
+        let c = (text[start] as i32) & 255
+        if c != 32 && c != 9 {
+            break
+        }
+        start = start + 1
+    }
+    loop end > start {
+        let c = (text[end - 1] as i32) & 255
+        if c != 32 && c != 9 {
+            break
+        }
+        end = end - 1
+    }
+    return substr(text, start, end - start)
+}
+
+fn outline_path_under(path: str, prefix: str) bool {
+    if prefix == "" || path == prefix {
+        return path == prefix
+    }
+    if path.len <= prefix.len {
+        return false
+    }
+    for i in 0 to prefix.len {
+        if ((path[i] as i32) & 255) != ((prefix[i] as i32) & 255) {
+            return false
+        }
+    }
+    let c = (path[prefix.len] as i32) & 255
+    return c == 47 || c == 92
+}
+
+// Absolute path of the folder an entry lives in.
+fn outline_dir_of(path: str) str {
+    let cut = path.len
+    loop cut > 1 {
+        let c = (path[cut - 1] as i32) & 255
+        if c == 47 || c == 92 {
+            break
+        }
+        cut = cut - 1
+    }
+    if cut <= 1 {
+        return ""
+    }
+    return substr(path, 0, cut - 1)
+}
+
+fn outline_base_name(path: str) str {
+    return workspace_root_name(path)
+}
+
+fn outline_join(dir: str, name: str) str {
+    if dir == "" || name == "" {
+        return dir + name
+    }
+    let last = (dir[dir.len - 1] as i32) & 255
+    if last == 47 || last == 92 {
+        return dir + name
+    }
+    return dir + "/" + name
+}
+
+// A new entry name is one path component: no separators, no dot entries.
+fn outline_name_valid(name: str) bool {
+    if name == "" || name == "." || name == ".." {
+        return false
+    }
+    if name.len > 200 {
+        return false
+    }
+    for i in 0 to name.len {
+        let c = (name[i] as i32) & 255
+        if c == 47 || c == 92 || c == 0 {
+            return false
+        }
+    }
+    return true
+}
+
+fn outline_exists(path: str) bool {
+    return os_file_size(path) >= 0
+}
+
+// The folder new entries are created in: the selected folder, the selected
+// file's folder, the scoped folder, or the project root.
+fn outline_target_dir() str {
+    let index = g_outline_selected
+    if index >= 0 && index < g_workspace_count {
+        if os_entry_is_dir(index) != 0 {
+            return os_entry_path(index)
+        }
+        let parent = os_entry_parent(index)
+        if parent >= 0 {
+            return os_entry_path(parent)
+        }
+        return g_workspace_root
+    }
+    if g_lens_scope_path != "" {
+        return g_lens_scope_path
+    }
+    return g_workspace_root
+}
+
+fn outline_relative(path: str) str {
+    return lens_relative_path(path)
+}
+
+fn outline_relative_dir(path: str) str {
+    if path == g_workspace_root {
+        return "."
+    }
+    return lens_relative_path(path)
+}
+
+// Open every folder above `path`, and optionally `path` itself when it is a
+// folder. Following a selection must not expand the selected folder: that
+// would undo the disclosure button the user just pressed.
+fn outline_expand(path: str, include_self: bool) {
+    let index = workspace_find_path(path)
+    if index < 0 {
+        return
+    }
+    let changed = false
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) == 0 {
+            continue
+        }
+        let dir_path = os_entry_path(i)
+        let opens = false
+        if include_self && path == dir_path {
+            opens = true
+        }
+        if path.len > dir_path.len && outline_path_under(path, dir_path) {
+            opens = true
+        }
+        if opens && g_workspace_expanded[i] == 0 {
+            g_workspace_expanded[i] = 1
+            changed = true
+        }
+    }
+    workspace_mark_visibility_dirty()
+    if changed {
+        workspace_save_expanded()
+    }
+}
+
+fn outline_reveal(path: str) {
+    outline_expand(path, true)
+}
+
+fn outline_reveal_parents(path: str) {
+    outline_expand(path, false)
+}
+
+fn outline_sync() {
+    workspace_rebuild_visible()
+    if g_outline_generation != g_workspace_generation {
+        g_outline_generation = g_workspace_generation
+        g_outline_selected = workspace_find_path(g_outline_selected_path)
+        if g_outline_selected < 0 {
+            g_outline_selected_path = ""
+        }
+        g_outline_scroll = clamp_i(g_outline_scroll, 0, clamp_i(g_workspace_visible_count - 1, 0, 4096))
+    }
+    if g_outline_selected >= 0 {
+        g_outline_selected_path = os_entry_path(g_outline_selected)
+    }
+}
+
+fn outline_reset() {
+    g_outline_selected = -1
+    g_outline_selected_path = ""
+    g_outline_scroll = 0
+    g_outline_generation = -1
+    g_outline_prompt = OUTLINE_PROMPT_NONE
+    g_outline_prompt_error = ""
+    g_outline_dragging = false
+    g_outline_resizing = false
+}
+
+fn outline_show() {
+    g_outline_open = true
+    g_lens_input_dirty = true
+    if g_outline_ready == false {
+        g_outline_ready = true
+        g_outline_x = 16.0
+        g_outline_y = LENS_TOP_BAR_H + 12.0
+        g_outline_w = 320.0
+        g_outline_h = 480.0
+    }
+}
+
+fn outline_hide() {
+    g_outline_open = false
+    g_outline_prompt = OUTLINE_PROMPT_NONE
+    g_outline_dragging = false
+    g_outline_resizing = false
+    g_lens_input_dirty = true
+}
+
+fn outline_open() bool {
+    return g_outline_open
+}
+
+fn outline_toggle() {
+    if g_outline_open {
+        outline_hide()
+    } else {
+        outline_show()
+    }
+}
+
+// The terminal keeps keyboard focus when the outline only takes pointer input.
+fn outline_blocks_pointer(v: ref view) bool {
+    if g_outline_open == false {
+        return false
+    }
+    return raw_hit(v, g_outline_x, g_outline_y, g_outline_w, g_outline_h)
+}
+
+fn outline_clamp(w: f64, h: f64) {
+    g_outline_w = clamp(g_outline_w, OUTLINE_MIN_W, clamp(w - 16.0, OUTLINE_MIN_W, 900.0))
+    g_outline_h = clamp(g_outline_h, OUTLINE_MIN_H, clamp(h - 48.0, OUTLINE_MIN_H, 1000.0))
+    g_outline_x = clamp(g_outline_x, 4.0, clamp(w - g_outline_w - 4.0, 4.0, 10000.0))
+    let min_y = LENS_TOP_BAR_H + 4.0
+    let max_y = clamp(h - STATUS_BAR_H - g_outline_h - 8.0, min_y, 10000.0)
+    g_outline_y = clamp(g_outline_y, min_y, max_y)
+}
+
+fn outline_list_y() f64 {
+    return g_outline_y + OUTLINE_TOOLBAR_H + OUTLINE_TOOL_H
+}
+
+fn outline_list_h() f64 {
+    return clamp(g_outline_h - OUTLINE_TOOLBAR_H - OUTLINE_TOOL_H - OUTLINE_FOOTER_H, OUTLINE_ROW_H, 10000.0)
+}
+
+fn outline_visible_rows() i32 {
+    return clamp_i((outline_list_h() / OUTLINE_ROW_H) as i32, 1, 4096)
+}
+
+fn outline_scroll_max() i32 {
+    return clamp_i(g_workspace_visible_count - outline_visible_rows(), 0, 4096)
+}
+
+fn outline_row_index(y: f64) i32 {
+    let n = ((y - outline_list_y()) / OUTLINE_ROW_H) as i32
+    if n < 0 {
+        return -1
+    }
+    if n >= outline_visible_rows() {
+        return -1
+    }
+    let index = g_outline_scroll + n
+    if index < 0 || index >= g_workspace_visible_count {
+        return -1
+    }
+    return g_workspace_visible[index]
+}
+
+fn outline_row_y(row: i32) f64 {
+    return outline_list_y() + (row as f64) * OUTLINE_ROW_H
+}
+
+fn outline_select(index: i32) {
+    g_outline_selected = index
+    if index >= 0 {
+        g_outline_selected_path = os_entry_path(index)
+    } else {
+        g_outline_selected_path = ""
+    }
+}
+
+// Keep the selected row inside the list, expanding ancestors when needed.
+fn outline_follow_selection() {
+    if g_outline_selected < 0 {
+        return
+    }
+    outline_reveal_parents(g_outline_selected_path)
+    workspace_rebuild_visible()
+    for n in 0 to g_workspace_visible_count {
+        if g_workspace_visible[n] == g_outline_selected {
+            if n < g_outline_scroll {
+                g_outline_scroll = n
+            }
+            if n >= g_outline_scroll + outline_visible_rows() {
+                g_outline_scroll = n - outline_visible_rows() + 1
+            }
+            g_outline_scroll = clamp_i(g_outline_scroll, 0, outline_scroll_max())
+            return
+        }
+    }
+}
+
+fn outline_toggle_folder(index: i32) {
+    if index < 0 || index >= g_workspace_count {
+        return
+    }
+    if os_entry_is_dir(index) == 0 {
+        return
+    }
+    workspace_toggle_entry(index)
+    g_outline_scroll = clamp_i(g_outline_scroll, 0, outline_scroll_max())
+}
+
+// Any open tab with unsaved edits below `path` blocks a rename.
+fn outline_dirty_under(path: str) bool {
+    for i in 0 to g_workspace_tab_count {
+        let index = g_workspace_tabs[i]
+        if outline_path_under(os_entry_path(index), path) && workspace_entry_dirty(index) {
+            return true
+        }
+    }
+    return false
+}
+
+fn outline_rebase(path: str, old_path: str, new_path: str) str {
+    if path == old_path {
+        return new_path
+    }
+    if outline_path_under(path, old_path) {
+        return new_path + substr(path, old_path.len, path.len - old_path.len)
+    }
+    return path
+}
+
+fn outline_prompt_close() {
+    g_outline_prompt = OUTLINE_PROMPT_NONE
+    g_outline_prompt_text = ""
+    g_outline_prompt_error = ""
+    g_outline_prompt_fresh = false
+}
+
+fn outline_begin_prompt(kind: i32) {
+    if kind == OUTLINE_PROMPT_RENAME {
+        let index = g_outline_selected
+        if index < 0 || index >= g_workspace_count {
+            g_lens_message = "Select a file or folder to rename"
+            return
+        }
+        let path = os_entry_path(index)
+        g_outline_prompt_path = path
+        g_outline_prompt_dir = outline_dir_of(path)
+        g_outline_prompt_text = outline_base_name(path)
+        let label = "file"
+        if os_entry_is_dir(index) != 0 {
+            label = "folder"
+        }
+        g_outline_prompt_title = "Rename " + label
+        g_outline_prompt_fresh = true
+    } else {
+        g_outline_prompt_dir = outline_target_dir()
+        g_outline_prompt_path = ""
+        g_outline_prompt_text = ""
+        g_outline_prompt_fresh = false
+        let label = "file"
+        if kind == OUTLINE_PROMPT_FOLDER {
+            label = "folder"
+        }
+        g_outline_prompt_title = "New " + label + " in " + outline_relative_dir(g_outline_prompt_dir)
+    }
+    g_outline_prompt = kind
+    g_outline_prompt_error = ""
+    g_lens_input_dirty = true
+}
+
+// Apply the prompt to disk. The prompt stays open on a failure so the name can
+// be corrected without retyping it.
+fn outline_prompt_submit() {
+    let kind = g_outline_prompt
+    if kind == OUTLINE_PROMPT_NONE {
+        return
+    }
+    let name = outline_trim(g_outline_prompt_text)
+    if outline_name_valid(name) == false {
+        g_outline_prompt_error = "Enter one name without / or \\"
+        return
+    }
+    let target = outline_join(g_outline_prompt_dir, name)
+    if kind == OUTLINE_PROMPT_RENAME {
+        let source = g_outline_prompt_path
+        if target == source {
+            outline_prompt_close()
+            return
+        }
+        if outline_exists(target) {
+            g_outline_prompt_error = "A file or folder with that name exists"
+            return
+        }
+        if outline_dirty_under(source) {
+            g_outline_prompt_error = "Save edited files before renaming"
+            return
+        }
+        let was_open = workspace_find_path(source)
+        let keep_open = was_open >= 0 && g_workspace_opened[was_open] != 0
+        let was_expanded = was_open >= 0 && workspace_entry_expanded(was_open)
+        if os_rename_path(source, target) == 0 {
+            g_outline_prompt_error = "Could not rename"
+            return
+        }
+        let old_scope = g_lens_scope_path
+        if old_scope != "" {
+            let rebound = outline_rebase(old_scope, source, target)
+            if rebound != old_scope {
+                g_lens_scope_path = rebound
+                g_lens_scope = -1
+            }
+        }
+        g_lens_selected_path = outline_rebase(g_lens_selected_path, source, target)
+        workspace_refresh_from_disk()
+        let index = workspace_find_path(target)
+        if index >= 0 {
+            // Keep the renamed folder's own open state; only its parents must
+            // be open for the row to stay visible. The state file is rewritten
+            // with the new path below.
+            outline_reveal_parents(target)
+            if was_expanded && os_entry_is_dir(index) != 0 {
+                g_workspace_expanded[index] = 1
+                workspace_mark_visibility_dirty()
+                workspace_save_expanded()
+            }
+            outline_select(index)
+            if keep_open && workspace_entry_editable(index) {
+                lens_open(index)
+            }
+            g_lens_message = "Renamed to " + outline_relative(target)
+        }
+    } else {
+        if outline_exists(target) {
+            g_outline_prompt_error = "A file or folder with that name exists"
+            return
+        }
+        if kind == OUTLINE_PROMPT_FOLDER {
+            if os_make_dirs(target) == 0 {
+                g_outline_prompt_error = "Could not create folder"
+                return
+            }
+        } else {
+            if os_write_file_atomic(target, "") == 0 {
+                g_outline_prompt_error = "Could not create file"
+                return
+            }
+        }
+        workspace_refresh_from_disk()
+        let index = workspace_find_path(target)
+        if index >= 0 {
+            // Show the folder the entry was created in even when it had been
+            // folded; the new entry itself is selected but not force-opened.
+            outline_reveal(outline_dir_of(target))
+            outline_select(index)
+            g_lens_message = "Created " + outline_relative(target)
+        }
+    }
+    outline_prompt_close()
+    outline_follow_selection()
+    // The snapshot changed under the map; rebuild it now so this frame draws
+    // the new tree rather than waiting for the next generation check.
+    lens_rebuild()
+    g_lens_input_dirty = true
+}
+
+// The prompt borrows the same one-line editing path as the search box, but a
+// prefilled rename name is replaced by the first typed character.
+fn outline_prompt_keys(v: ref view) {
+    if key_edge(v, 256) {
+        outline_prompt_close()
+        return
+    }
+    if key_edge(v, 257) || key_edge(v, 335) {
+        outline_prompt_submit()
+        return
+    }
+    // A prefilled rename starts selected. An arrow or Home/End keeps the text
+    // and makes the next character append, which is how a suffix is added.
+    if key_edge(v, 262) || key_edge(v, 263) || key_edge(v, 268) || key_edge(v, 269) {
+        g_outline_prompt_fresh = false
+    }
+    if key_edge(v, 259) {
+        if g_outline_prompt_fresh {
+            g_outline_prompt_fresh = false
+            g_outline_prompt_text = ""
+        } else {
+            let value = g_outline_prompt_text
+            if value.len > 0 {
+                let cut = value.len - 1
+                loop cut > 0 && (lens_byte(value, cut) & 192) == 128 {
+                    cut = cut - 1
+                }
+                g_outline_prompt_text = substr(value, 0, cut)
+            }
+        }
+    }
+    for k in 32 to 97 {
+        if key_edge(v, k) {
+            if key_event_cmd() {
+                if k == 86 {
+                    let clip = lens_one_line(view_get_clipboard(v))
+                    if clip != "" {
+                        if g_outline_prompt_fresh {
+                            g_outline_prompt_text = ""
+                            g_outline_prompt_fresh = false
+                        }
+                        g_outline_prompt_text = g_outline_prompt_text + clip
+                    }
+                }
+            } else {
+                let c = key_char(k, key_event_shift())
+                if c != "" {
+                    if g_outline_prompt_fresh {
+                        g_outline_prompt_text = ""
+                        g_outline_prompt_fresh = false
+                    }
+                    g_outline_prompt_text = g_outline_prompt_text + c
+                }
+            }
+        }
+    }
+    g_outline_prompt_error = ""
+}
+
+fn outline_prompt_active() bool {
+    return g_outline_open && g_outline_prompt != OUTLINE_PROMPT_NONE
+}
+
+// Buttons of the toolbar, left to right: new file, new folder, rename, all.
+fn outline_tool_button_x(i: i32) f64 {
+    if i == 0 {
+        return g_outline_x + 10.0
+    }
+    if i == 1 {
+        return g_outline_x + 76.0
+    }
+    if i == 2 {
+        return g_outline_x + 150.0
+    }
+    return g_outline_x + g_outline_w - 54.0
+}
+
+fn outline_prompt_x() f64 { return g_outline_x + 12.0 }
+
+fn outline_prompt_y() f64 { return g_outline_y + OUTLINE_TOOLBAR_H + 4.0 }
+
+fn outline_prompt_w() f64 { return g_outline_w - 24.0 }
+
+fn outline_mouse(v: ref view, w: f64, h: f64) {
+    if g_outline_open == false {
+        return
+    }
+    outline_sync()
+    outline_clamp(w, h)
+    let inside = raw_hit(v, g_outline_x, g_outline_y, g_outline_w, g_outline_h)
+    if g_outline_prompt != OUTLINE_PROMPT_NONE {
+        if v.mouse_pressed && inside == false {
+            // A click elsewhere means the name edit is over. The click still
+            // reaches the terminal or the map.
+            outline_prompt_close()
+            return
+        }
+        if v.mouse_pressed {
+            let px = outline_prompt_x()
+            let py = outline_prompt_y()
+            let pw = outline_prompt_w()
+            if raw_hit(v, px + pw - 178.0, py + OUTLINE_PROMPT_H - 34.0, 74.0, 24.0) {
+                outline_prompt_close()
+            } else if raw_hit(v, px + pw - 94.0, py + OUTLINE_PROMPT_H - 34.0, 82.0, 24.0) {
+                outline_prompt_submit()
+            } else if inside && raw_hit(v, px, py, pw, OUTLINE_PROMPT_H) == false {
+                outline_prompt_close()
+            }
+            if inside {
+                v.mouse_pressed = false
+                v.mouse_right_pressed = false
+                v.scroll_y = 0.0
+            }
+            return
+        }
+        if inside {
+            v.scroll_y = 0.0
+            v.mouse_right_pressed = false
+        }
+        return
+    }
+    let title_y = g_outline_y
+    if v.mouse_pressed {
+        // Close.
+        if raw_hit(v, g_outline_x + g_outline_w - 28.0, title_y + 6.0, 20.0, 18.0) {
+            outline_hide()
+            v.mouse_pressed = false
+            return
+        }
+        // Resize the bottom-right corner.
+        if raw_hit(v, g_outline_x + g_outline_w - OUTLINE_RESIZE, g_outline_y + g_outline_h - OUTLINE_RESIZE, OUTLINE_RESIZE, OUTLINE_RESIZE) {
+            g_outline_resizing = true
+            g_outline_grab_x = g_mouse_x
+            g_outline_grab_y = g_mouse_y
+            g_outline_grab_w = g_outline_w
+            g_outline_grab_h = g_outline_h
+            v.mouse_pressed = false
+            return
+        }
+        // Toolbar.
+        let ty = g_outline_y + OUTLINE_TOOLBAR_H
+        if raw_hit(v, outline_tool_button_x(0), ty + 4.0, 62.0, 24.0) {
+            outline_begin_prompt(OUTLINE_PROMPT_FILE)
+            v.mouse_pressed = false
+            return
+        }
+        if raw_hit(v, outline_tool_button_x(1), ty + 4.0, 70.0, 24.0) {
+            outline_begin_prompt(OUTLINE_PROMPT_FOLDER)
+            v.mouse_pressed = false
+            return
+        }
+        if raw_hit(v, outline_tool_button_x(2), ty + 4.0, 62.0, 24.0) {
+            outline_begin_prompt(OUTLINE_PROMPT_RENAME)
+            v.mouse_pressed = false
+            return
+        }
+        if raw_hit(v, outline_tool_button_x(3), ty + 4.0, 44.0, 24.0) {
+            lens_scope_clear()
+            v.mouse_pressed = false
+            return
+        }
+        // Title bar drag.
+        if raw_hit(v, g_outline_x, title_y, g_outline_w, OUTLINE_TITLE_H) {
+            g_outline_dragging = true
+            g_outline_grab_x = g_mouse_x - g_outline_x
+            g_outline_grab_y = g_mouse_y - g_outline_y
+            v.mouse_pressed = false
+            return
+        }
+        // A tree row.
+        if raw_hit(v, g_outline_x + 2.0, outline_list_y(), g_outline_w - 4.0, outline_list_h()) {
+            let index = outline_row_index(g_mouse_y)
+            if index >= 0 {
+                let row = g_outline_scroll + ((g_mouse_y - outline_list_y()) / OUTLINE_ROW_H) as i32
+                let indent = outline_indent(index)
+                let button_x = g_outline_x + 6.0 + indent
+                let hit_button = raw_hit(v, button_x, outline_row_y(row) + 2.0, 16.0, 16.0)
+                outline_select(index)
+                if os_entry_is_dir(index) != 0 && hit_button {
+                    outline_toggle_folder(index)
+                } else if os_entry_is_dir(index) != 0 {
+                    if g_lens_scope == index {
+                        lens_scope_clear()
+                    } else {
+                        lens_scope_set(index)
+                    }
+                }
+                outline_follow_selection()
+            }
+            v.mouse_pressed = false
+            v.mouse_right_pressed = false
+            v.scroll_y = 0.0
+            return
+        }
+        if inside {
+            v.mouse_pressed = false
+            v.mouse_right_pressed = false
+            v.scroll_y = 0.0
+            return
+        }
+    }
+    if v.mouse_right_pressed && inside {
+        let index = outline_row_index(g_mouse_y)
+        if index >= 0 && g_mouse_y >= outline_list_y() {
+            outline_select(index)
+            outline_begin_prompt(OUTLINE_PROMPT_RENAME)
+        }
+        v.mouse_right_pressed = false
+        return
+    }
+    if inside && v.scroll_y != 0.0 {
+        let step: i32 = 3
+        if v.scroll_y > 0.0 {
+            step = -3
+        }
+        g_outline_scroll = clamp_i(g_outline_scroll + step, 0, outline_scroll_max())
+        v.scroll_y = 0.0
+    }
+    if g_outline_dragging && v.mouse_down {
+        g_outline_x = g_mouse_x - g_outline_grab_x
+        g_outline_y = g_mouse_y - g_outline_grab_y
+        outline_clamp(w, h)
+        return
+    }
+    if g_outline_resizing && v.mouse_down {
+        g_outline_w = g_outline_grab_w + (g_mouse_x - g_outline_grab_x)
+        g_outline_h = g_outline_grab_h + (g_mouse_y - g_outline_grab_y)
+        outline_clamp(w, h)
+        return
+    }
+    if v.mouse_released || !v.mouse_down {
+        g_outline_dragging = false
+        g_outline_resizing = false
+    }
+}
+
+// Indent in pixels: one small step per folder level, capped so deep trees keep
+// most of the row for their names.
+fn outline_indent(index: i32) f64 {
+    let depth = os_entry_depth(index)
+    return clamp((depth as f64) * 12.0, 0.0, clamp(g_outline_w * 0.4, 0.0, 200.0))
+}
+
+fn outline_draw_close(r: ref ui_renderer, v: ref view) {
+    let x = g_outline_x + g_outline_w - 28.0
+    let y = g_outline_y + 6.0
+    if raw_hit(v, x, y, 20.0, 18.0) {
+        ui_fill_round_rect(r, x, y, 20.0, 18.0, 3.0, col_outline_hi(), 0.0)
+    }
+    draw_centered_text(r, x, y, 20.0, 18.0, "x", small_px(), col_text())
+}
+
+fn outline_draw_toolbar(r: ref ui_renderer, v: ref view) {
+    let y = g_outline_y + OUTLINE_TOOLBAR_H + 4.0
+    lens_draw_button(r, v, outline_tool_button_x(0), y, 62.0, 24.0, "+ file", false)
+    lens_draw_button(r, v, outline_tool_button_x(1), y, 70.0, 24.0, "+ folder", false)
+    lens_draw_button(r, v, outline_tool_button_x(2), y, 62.0, 24.0, "rename", false)
+    if g_lens_scope_path != "" {
+        lens_draw_button(r, v, outline_tool_button_x(3), y, 44.0, 24.0, "all", true)
+    }
+}
+
+fn outline_draw_scrollbar(r: ref ui_renderer) {
+    let max = outline_scroll_max()
+    if max <= 0 {
+        return
+    }
+    let x = g_outline_x + g_outline_w - 6.0
+    let y = outline_list_y()
+    let h = outline_list_h()
+    let span = (g_workspace_visible_count as f64) * OUTLINE_ROW_H
+    let thumb_h = clamp(h * (h / clamp(span, 1.0, 100000.0)), 18.0, h)
+    let travel = clamp(h - thumb_h, 0.0, 100000.0)
+    let fraction = (g_outline_scroll as f64) / (max as f64)
+    ui_fill_rect(r, x, y, 2.0, h, col_editor_sel(), 0.0)
+    ui_fill_rect(r, x, y + travel * clamp(fraction, 0.0, 1.0), 2.0, thumb_h, col_muted(), 0.0)
+}
+
+fn outline_draw_row(r: ref ui_renderer, v: ref view, index: i32, row: i32) {
+    let y = outline_row_y(row)
+    let x = g_outline_x
+    let indent = outline_indent(index)
+    let is_dir = os_entry_is_dir(index) != 0
+    let hovered = raw_hit(v, x + 2.0, y, g_outline_w - 4.0, OUTLINE_ROW_H)
+    if index == g_outline_selected || hovered {
+        ui_fill_rect(r, x + 2.0, y, g_outline_w - 8.0, OUTLINE_ROW_H, col_outline_hi(), 0.0)
+    }
+    if index == g_lens_scope {
+        ui_fill_rect(r, x + 2.0, y, 2.0, OUTLINE_ROW_H, col_accent(), 0.0)
+    }
+    let button_x = x + 6.0 + indent
+    if is_dir {
+        let expanded = workspace_entry_expanded(index)
+        if hovered {
+            ui_fill_round_rect(r, button_x, y + 2.0, 16.0, 16.0, 2.0, col_outline_hi(), 0.0)
+        }
+        let caret = ">"
+        if expanded {
+            caret = "v"
+        }
+        draw_centered_text(r, button_x, y + 2.0, 16.0, 16.0, caret, small_px(), col_accent())
+    } else {
+        ui_fill_rect(r, button_x + 6.0, y + 9.0, 3.0, 3.0, col_muted(), 0.0)
+    }
+    let name = os_entry_name(index)
+    if is_dir {
+        name = name + "/"
+    }
+    let color = col_text()
+    if is_dir == false {
+        color = col_muted()
+    }
+    if index == g_outline_selected {
+        color = col_accent()
+    } else if index == g_lens_scope {
+        color = col_accent()
+    }
+    draw_text_clipped(r, button_x + 20.0, ui_text_v_center_y(r, y, OUTLINE_ROW_H, small_px(), FONT_MONO()), g_outline_w - (button_x - x) - 30.0, OUTLINE_ROW_H, name, small_px(), color)
+}
+
+fn outline_draw_prompt(r: ref ui_renderer, v: ref view) {
+    let x = outline_prompt_x()
+    let y = outline_prompt_y()
+    let w = outline_prompt_w()
+    ui_fill_round_rect(r, x, y, w, OUTLINE_PROMPT_H, 3.0, col_outline_prompt_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, w, OUTLINE_PROMPT_H, 3.0, 1.0, col_accent(), 0.0)
+    draw_text_clipped(r, x + 12.0, y + 10.0, w - 24.0, 20.0, g_outline_prompt_title, small_px(), col_text())
+    lens_draw_field(r, x + 12.0, y + 34.0, w - 24.0, 28.0, g_outline_prompt_text, "name")
+    let note = g_outline_prompt_error
+    if note == "" {
+        note = "enter  apply     esc  cancel"
+    }
+    draw_text_clipped(r, x + 12.0, y + 68.0, w - 24.0, 18.0, note, small_px(), col_muted())
+    let label = "Apply"
+    if g_outline_prompt == OUTLINE_PROMPT_RENAME {
+        label = "Rename"
+    } else {
+        label = "Create"
+    }
+    lens_draw_button(r, v, x + w - 178.0, y + OUTLINE_PROMPT_H - 34.0, 74.0, 24.0, "Cancel", false)
+    lens_draw_button(r, v, x + w - 94.0, y + OUTLINE_PROMPT_H - 34.0, 82.0, 24.0, label, true)
+}
+
+fn outline_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    if g_outline_open == false {
+        return
+    }
+    outline_sync()
+    outline_clamp(w, h)
+    ui_fill_round_rect(r, g_outline_x, g_outline_y, g_outline_w, g_outline_h, 4.0, col_outline_bg(), 0.0)
+    ui_stroke_round_rect(r, g_outline_x, g_outline_y, g_outline_w, g_outline_h, 4.0, 1.0, col_muted(), 0.0)
+    // A hairline marks the title; a second fill would compound the alpha.
+    ui_fill_rect(r, g_outline_x + 1.0, g_outline_y + OUTLINE_TITLE_H - 1.0, g_outline_w - 2.0, 1.0, col_editor_sel(), 0.0)
+    let ty = ui_text_v_center_y(r, g_outline_y, OUTLINE_TITLE_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, g_outline_x + 12.0, ty, g_outline_w - 52.0, OUTLINE_TITLE_H, "Outline", small_px(), col_text())
+    if g_lens_scope_path != "" {
+        let scope = outline_relative(g_lens_scope_path)
+        let sw = ui_text_width(r, scope, small_px(), FONT_MONO())
+        let sx = g_outline_x + g_outline_w - 38.0 - sw
+        if sx > g_outline_x + 80.0 {
+            draw_text_clipped(r, sx, ty, sw, OUTLINE_TITLE_H, scope, small_px(), col_muted())
+        }
+    }
+    outline_draw_close(r, v)
+    if g_outline_prompt != OUTLINE_PROMPT_NONE {
+        outline_draw_prompt(r, v)
+        return
+    }
+    outline_draw_toolbar(r, v)
+    let rows = outline_visible_rows()
+    g_outline_scroll = clamp_i(g_outline_scroll, 0, outline_scroll_max())
+    ui_push_clip(r, g_outline_x, outline_list_y(), g_outline_w, outline_list_h())
+    for n in 0 to rows {
+        let pos = g_outline_scroll + n
+        if pos < g_workspace_visible_count {
+            outline_draw_row(r, v, g_workspace_visible[pos], n)
+        }
+    }
+    ui_pop_clip(r)
+    outline_draw_scrollbar(r)
+    let hint = ""
+    if g_workspace_visible_count == 0 {
+        hint = "No files"
+    } else {
+        let selected = g_outline_selected
+        if selected >= 0 && selected < g_workspace_count {
+            hint = outline_relative(os_entry_path(selected))
+        } else {
+            hint = itos(g_workspace_visible_count) + " entries"
+        }
+    }
+    draw_text_clipped(r, g_outline_x + 12.0, g_outline_y + g_outline_h - OUTLINE_FOOTER_H + 4.0, g_outline_w - 24.0, 18.0, hint, small_px(), col_muted())
+}

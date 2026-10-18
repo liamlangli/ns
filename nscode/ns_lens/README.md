@@ -24,9 +24,9 @@ snaps back to orthographic.
 
 - The interface is monochrome. Syntax highlighting and Git change backgrounds
   use color; leaf outlines are rounded rectangles with a 3-point radius.
-- The map covers the whole window and is drawn first. The top bar (the **File**
-  and map menus) and the status bar float over it on translucent panels;
-  pointer input over them never reaches the map.
+- The map covers the whole window and is drawn first. The top bar (the **File**,
+  **View**, and map menus) and the status bar float over it on translucent
+  panels; pointer input over them never reaches the map.
 - Minimap bars keep their syntax colours. A bar runs across gaps under four
   blanks and ends where the colour changes for more than two characters; a
   shorter run of another colour joins the bar before it. In every leaf, rows
@@ -70,6 +70,33 @@ snaps back to orthographic.
   already knows). **change** shows files Git reports as staged, unstaged, or
   untracked in the opened folder. **full** shows every scanned file. A file
   that is not text is a name tile; a deleted file has no leaf.
+- **View** (right of the map menu) opens two floating panels, each of which can
+  be dragged by its title bar, resized from its bottom-right corner, and closed
+  with its **x**. **Outline** and **Terminal** are independent toggles. Both
+  float over the map with an 80% opaque background, so the code behind them
+  stays faintly visible.
+  - **Outline** is a tree of every scanned folder and file. Every folder starts
+    folded; the button left of a folder unfolds and folds it. The open folders
+    are remembered in the project's `bin/ns_lens/outline` (one
+    project-relative folder path per line), so reopening the project restores
+    the tree; deleting that file returns to all folders folded. Clicking a
+    folder's name scopes the map to that folder's contents, and clicking it
+    again (or **all**) returns to the whole project. The scoped folder is
+    marked in the panel and named in its title bar. **+ file** and **+ folder**
+    create an entry in the selected folder (or the selected file's folder), and
+    **rename** renames the selected entry. A right click on a row starts a
+    rename. Names cannot contain a path separator, and a rename never replaces
+    an existing entry or discards unsaved editor text.
+  - **Terminal** runs the user's `$SHELL` as a login shell in the opened
+    project root through a pseudo-terminal. It renders the shell's VT output
+    (colours, cursor addressing, erase, scroll regions, alternate screens,
+    wide characters) and sends keys back, so prompts, `vim`, `less` and build
+    commands work. Click the panel to give it the keyboard; Cmd+V pastes,
+    Cmd+K clears, and the wheel scrolls the retained scrollback. **restart**
+    starts a new shell, and closing the panel keeps the running shell alive so
+    a build continues while the panel is hidden. Reopen it from **View**. The
+    panel's size is sent to the shell, so terminal-aware programs reflow.
+    Windows hosts have no terminal backend and report that in the panel.
 - **ref**, immediately below **code**, shows the selected source file between
   two sets of columns: files that reference it on the left, and files it
   references on the right. Dependencies continue rightward and callers continue

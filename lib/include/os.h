@@ -95,7 +95,24 @@ i32 os_patch_version(void);
 // NS_PATCH_LABEL as published by the host, "" when unset.
 const char *os_patch_label(void);
 i32 os_make_dirs(const char *path);
+// Rename or move a file or directory without replacing an existing target.
+// Returns 1 on success, 0 on failure.
+i32 os_rename_path(const char *from_path, const char *to_path);
 i32 os_launch_ns_project(const char *folder, const char *entry);
+
+// Interactive shell over a pseudo-terminal, rooted at `folder`.
+// os_pty_open starts the user's $SHELL as a login shell and returns a handle
+// above zero, or 0 when no terminal can be created on this platform.
+// os_pty_read returns up to `capacity` bytes of output as a string (empty when
+// none arrived), and os_pty_write sends input. Both are non-blocking.
+// os_pty_running reports 1 while the shell runs and 0 after it exits.
+// os_pty_resize changes the reported rows/columns; os_pty_close ends the shell.
+i32 os_pty_open(const char *folder, i32 cols, i32 rows);
+const char *os_pty_read(i32 handle, i32 capacity);
+i32 os_pty_write(i32 handle, const char *data);
+i32 os_pty_resize(i32 handle, i32 cols, i32 rows);
+i32 os_pty_running(i32 handle);
+void os_pty_close(i32 handle);
 
 // Start `<exe> profile --live-port <port> [entry]` in `folder`. Returns the
 // child process id, or 0 when the process could not be started.

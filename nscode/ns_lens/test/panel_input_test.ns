@@ -1,0 +1,186 @@
+// Panel pointer and keyboard routing: fold a folder with its disclosure button
+// and click the terminal body to focus it, then type through the real key path.
+use std
+use os
+use view
+use task
+use editor
+use workspace
+
+fn find_text(text: str, needle: str) i32 {
+    if needle.len == 0 || text.len < needle.len {
+        return -1
+    }
+    for i in 0 to text.len - needle.len + 1 {
+        let hit = true
+        for j in 0 to needle.len {
+            if ((text[i + j] as i32) & 255) != ((needle[j] as i32) & 255) {
+                hit = false
+                break
+            }
+        }
+        if hit {
+            return i
+        }
+    }
+    return -1
+}
+
+fn screen_has(needle: str) bool {
+    for row in 0 to g_term_rows {
+        let line = ""
+        for col in 0 to g_term_cols {
+            let cp = g_term_chars[term_cell(row, col)]
+            if cp >= 32 && cp < 127 {
+                line = line + chr(cp)
+            } else {
+                line = line + " "
+            }
+        }
+        if find_text(line, needle) >= 0 {
+            return true
+        }
+    }
+    return false
+}
+
+fn key_for_char(c: i32) i32 {
+    if c >= 97 && c <= 122 {
+        return c - 32
+    }
+    if c == 32 || c == 59 || (c >= 48 && c <= 57) || c == 39 {
+        return c
+    }
+    return -1
+}
+
+fn type_char(v: ref view, c: i32) {
+    let key = key_for_char(c)
+    if key < 0 {
+        return
+    }
+    view_on_key_action(v, key, 0)
+    lens_menu_keys(v)
+    view_on_key_action(v, key, 1)
+    view_input_reset(v)
+}
+
+fn poll_for(seconds: f64) {
+    let deadline = os_time() + seconds
+    loop os_time() < deadline {
+        terminal_poll()
+        sleep(10)
+    }
+}
+
+fn type_command(v: ref view, command: str) {
+    for i in 0 to command.len {
+        type_char(v, (command[i] as i32) & 255)
+    }
+    view_on_key_action(v, 257, 0)
+    lens_menu_keys(v)
+    view_on_key_action(v, 257, 1)
+    view_input_reset(v)
+}
+
+fn wait_for(needle: str, seconds: f64) bool {
+    let deadline = os_time() + seconds
+    loop os_time() < deadline {
+        terminal_poll()
+        if screen_has(needle) {
+            return true
+        }
+        sleep(20)
+    }
+    return screen_has(needle)
+}
+
+fn outline_row_of(index: i32) i32 {
+    for n in 0 to g_workspace_visible_count {
+        if g_workspace_visible[n] == index {
+            return n
+        }
+    }
+    return -1
+}
+
+fn click(v: ref view, x: f64, y: f64) {
+    g_mouse_x = x
+    g_mouse_y = y
+    v.mouse_pressed = true
+    // Same order as render_lens: the terminal is above the outline.
+    terminal_mouse(v, 1280.0, 800.0)
+    outline_mouse(v, 1280.0, 800.0)
+    v.mouse_pressed = false
+}
+
+fn main() {
+    let stamp = os_time_us() % 1000000000
+    let root = "/tmp/ns_lens_panel_input_" + itos(stamp as i32)
+    assert os_make_dirs(root + "/src/nested") != 0
+    assert os_write_file_atomic(root + "/src/main.ns", "fn main() {\n}\n") != 0
+    assert os_write_file_atomic(root + "/src/nested/part.ns", "let x = 1\n") != 0
+    assert os_write_file_atomic(root + "/top.ns", "let y = 2\n") != 0
+
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    g_lens_view_w = 1280.0
+    g_lens_canvas_h = 800.0
+    outline_show()
+    terminal_show()
+    if g_terminal_handle <= 0 {
+        outline_hide()
+        terminal_hide()
+        os_watch_stop()
+        print("skip no pty backend" + unescape("\n"))
+        return
+    }
+    // Opening the panel already gives it the keyboard; no click is required.
+    assert g_terminal_focus
+    let v = view_create("panel input test", 200, 200)
+    poll_for(2.5)
+    type_command(v, "printf h; printf i")
+    assert wait_for("hi", 5.0)
+
+    workspace_rebuild_visible()
+    let src = workspace_find("src")
+    assert src >= 0
+    let row = outline_row_of(src)
+    assert row >= 0
+    g_outline_scroll = 0
+
+    // The disclosure button sits at the row's left edge.
+    let button_x = g_outline_x + 6.0 + outline_indent(src) + 8.0
+    let button_y = outline_list_y() + (row as f64) * 20.0 + 10.0
+    assert workspace_entry_expanded(src) == false
+    let before = g_workspace_visible_count
+    click(v, button_x, button_y)
+    assert workspace_entry_expanded(src)
+    assert g_workspace_visible_count > before
+
+    // The same button folds it again, and the children leave the row list.
+    click(v, button_x, button_y)
+    assert workspace_entry_expanded(src) == false
+    assert g_workspace_visible_count == before
+
+    // Clicking the outline cleared the terminal focus. Typing with no editor
+    // open must reclaim it, without a second click on the terminal.
+    assert g_terminal_focus == false
+    type_command(v, "printf ok; printf mark")
+    let typed = wait_for("okmark", 5.0)
+    assert g_terminal_focus
+
+    // Clicking the body still focuses it explicitly.
+    g_terminal_focus = false
+    click(v, g_terminal_x + 40.0, g_terminal_y + 110.0)
+    assert g_terminal_focus
+    os_pty_close(g_terminal_handle)
+    g_terminal_handle = 0
+    terminal_hide()
+    outline_hide()
+    os_watch_stop()
+    view_close(v)
+    assert typed
+    print("panel input: passed" + unescape("\n"))
+}

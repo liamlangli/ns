@@ -1,0 +1,129 @@
+use std
+use editor
+
+fn check(name: str, ok: bool) {
+    if ok {
+        print("ok   " + name + unescape("\n"))
+    } else {
+        print("FAIL " + name + unescape("\n"))
+        assert false
+    }
+}
+
+fn terminal_feed(s: str) {
+    term_feed_text(s)
+}
+
+fn main() {
+    term_palette_init()
+    check("palette has default colours", term_color(TERM_FG_DEFAULT) == col_text() && term_color(TERM_BG_DEFAULT) == col_editor_bg())
+    check("terminal background uses the shared 80% alpha", (col_terminal_bg() >> 24) == 0xccu)
+    let default_cell = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
+    check("default cells leave the panel background", terminal_attr_bg_color(default_cell) == 0u)
+    let coloured_cell = term_attr_pack(TERM_FG_DEFAULT, 4, 0)
+    check("SGR background cells paint a colour", terminal_attr_bg_color(coloured_cell) != 0u)
+    check("palette maps the base colours", term_color(1) != term_color(2))
+
+    g_term_cols = 20
+    g_term_rows = 5
+    term_full_reset()
+    check("reset empties the grid", g_term_chars[term_cell(0, 0)] == 32)
+    terminal_feed("hello")
+    check("characters land in the grid", g_term_chars[term_cell(0, 0)] == 104 && g_term_chars[term_cell(0, 4)] == 111)
+    check("printing advances the cursor", g_term_cur_col == 5 && g_term_cur_row == 0)
+    terminal_feed("\r\nworld")
+    check("CR LF starts a new row", g_term_cur_row == 1 && g_term_cur_col == 5)
+    check("second row text", g_term_chars[term_cell(1, 0)] == 119)
+    terminal_feed("\u{1b}[3;5H")
+    check("cursor address sets both axes", g_term_cur_row == 2 && g_term_cur_col == 4)
+    terminal_feed("Z")
+    check("cursor address writes at the target", g_term_chars[term_cell(2, 4)] == 90)
+
+    // SGR colours and a reset.
+    terminal_feed("\u{1b}[31mR")
+    let red = g_term_attrs[term_cell(2, 5)]
+    check("SGR sets the foreground", term_attr_fg(red) == 1)
+    terminal_feed("\u{1b}[0mN")
+    let plain = g_term_attrs[term_cell(2, 6)]
+    check("SGR reset restores the default foreground", term_attr_fg(plain) == TERM_FG_DEFAULT)
+    terminal_feed("\u{1b}[44mB")
+    check("SGR sets the background", term_attr_bg(g_term_attrs[term_cell(2, 7)]) == 4)
+    terminal_feed("\u{1b}[0m")
+    terminal_feed("\u{1b}[7mI")
+    check("SGR reverse is recorded", (term_attr_flags(g_term_attrs[term_cell(2, 8)]) & TERM_REVERSE) != 0)
+    terminal_feed("\u{1b}[27m")
+
+    // Erasing and cursor movement.
+    terminal_feed("\u{1b}[2J")
+    check("erase display clears the grid", g_term_chars[term_cell(0, 0)] == 32 && g_term_chars[term_cell(2, 5)] == 32)
+    terminal_feed("\u{1b}[2;3Habc\u{1b}[2D\u{1b}[K")
+    check("cursor left and erase line", g_term_chars[term_cell(1, 2)] == 97 && g_term_chars[term_cell(1, 3)] == 32)
+    terminal_feed("\u{1b}[2J")
+
+    // A full screen scrolls into the scrollback ring.
+    term_full_reset()
+    terminal_feed("one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix")
+    check("full screen scrolls once", g_term_hist_count == 1)
+    check("oldest history line is the first row", terminal_hist_char(0, 0) == 111 && terminal_hist_char(0, 1) == 110)
+    check("screen kept the newer rows", g_term_chars[term_cell(0, 0)] == 116)
+    g_term_offset = 1
+    check("scrollback view reaches history", terminal_hist_char(0, 0) == 111)
+    g_term_offset = 0
+
+    // Wide characters occupy two cells; the continuation is marked.
+    term_full_reset()
+    terminal_feed("\u{4e2d}")
+    check("wide character starts a cell", g_term_chars[term_cell(0, 0)] == 0x4e2d)
+    check("wide character marks its tail", g_term_chars[term_cell(0, 1)] == -1)
+    check("wide character advances two cells", g_term_cur_col == 2)
+    terminal_feed("x")
+    check("text after a wide character", g_term_chars[term_cell(0, 2)] == 120)
+
+    // Alternate screen preserves the main grid.
+    term_full_reset()
+    terminal_feed("main")
+    terminal_feed("\u{1b}[?1049h")
+    check("alternate screen starts clear", g_term_chars[term_cell(0, 0)] == 32)
+    terminal_feed("alt")
+    check("alternate screen holds its text", g_term_chars[term_cell(0, 0)] == 97)
+    terminal_feed("\u{1b}[?1049l")
+    check("leaving alternate restores the main grid", g_term_chars[term_cell(0, 0)] == 109 && g_term_cur_row == 0)
+
+    // Cursor visibility and scroll regions.
+    terminal_feed("\u{1b}[?25l")
+    check("cursor can be hidden", g_term_cursor_visible == false)
+    terminal_feed("\u{1b}[?25h")
+    check("cursor can be shown", g_term_cursor_visible)
+    terminal_feed("\u{1b}[2;4r")
+    check("scroll region is set", g_term_scroll_top == 1 && g_term_scroll_bottom == 3)
+    terminal_feed("\u{1b}[r")
+
+    // Columns that wrap and backspace.
+    term_full_reset()
+    terminal_feed("abcdefghijklmnopqrstuvwxyz")
+    check("20-column rows wrap", g_term_cur_row == 1 && g_term_cur_col == 6)
+    terminal_feed("\u{8}\u{8}")
+    check("backspace moves left", g_term_cur_col == 4)
+
+    // Resize keeps the old cells and reports the new size.
+    term_full_reset()
+    terminal_feed("keep")
+    term_resize(30, 8)
+    check("resize updates the grid", g_term_cols == 30 && g_term_rows == 8)
+    check("resize keeps content", g_term_chars[term_cell(0, 0)] == 107)
+    check("resize restores a full scroll region", g_term_scroll_top == 0 && g_term_scroll_bottom == 7)
+
+    // Input translation.
+    check("control letter maps to a byte", terminal_control_byte(67) == 3 && terminal_control_byte(68) == 4)
+    check("control space maps to NUL", terminal_control_byte(32) == 0)
+    check("control question maps to DEL", terminal_control_byte(47) == 127)
+    check("unbound control key is dropped", terminal_control_byte(49) < 0)
+    check("arrow sequence follows the cursor mode", terminal_arrow("A") == "\u{1b}[A")
+    g_term_app_cursor = true
+    check("application arrows use the SS3 form", terminal_arrow("A") == "\u{1b}OA")
+    g_term_app_cursor = false
+    check("escape and control characters round-trip", terminal_cp_str(27) == "\u{1b}" && terminal_cp_str(65) == "A")
+    check("unicode characters encode", terminal_cp_str(0x4e2d) == "\u{4e2d}")
+
+    print("terminal: passed" + unescape("\n"))
+}

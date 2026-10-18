@@ -17,12 +17,32 @@ fn check(name: str, ok: bool) {
 fn main() i32 {
     check("workspace root label uses folder name", workspace_root_name("nscode/ns_lens/src") == "src")
     check("workspace root label ignores trailing slash", workspace_root_name("/tmp/project/") == "project")
+    let saved_root = g_workspace_root
+    g_workspace_root = "/tmp/project/"
+    check("state path handles a trailing root separator", workspace_relative_path("/tmp/project//src/lib") == "src/lib")
+    g_workspace_root = saved_root
+    // Scan the real project without reading or writing its outline state.
+    g_workspace_state = false
     load_str("edited main")
     workspace_init()
     let main_index = workspace_find("main.ns")
     let editor_index = workspace_find("editor.ns")
     check("workspace scans main.ns", main_index >= 0)
     check("workspace scans editor.ns", editor_index >= 0)
+    let any_expanded = false
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 && workspace_entry_expanded(i) {
+            any_expanded = true
+        }
+    }
+    check("folders start collapsed", any_expanded == false)
+    // The visibility cache test wants every folder open.
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 {
+            g_workspace_expanded[i] = 1
+        }
+    }
+    workspace_mark_visibility_dirty()
     workspace_rebuild_visible()
     check("expanded workspace caches visible entries", g_workspace_visible_count == g_workspace_count)
     g_workspace_root_expanded = false

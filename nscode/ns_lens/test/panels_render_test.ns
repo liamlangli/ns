@@ -1,0 +1,68 @@
+// Exercise the floating panels through a real renderer: the outline tree, its
+// scope marks and the terminal grid all go through ui text and rectangle calls,
+// so a frame here catches layout or palette mistakes that pure state tests miss.
+use std
+use os
+use view
+use gpu
+use ui
+use editor
+use workspace
+
+fn main() {
+    let stamp = os_time_us() % 1000000000
+    let root = "/tmp/ns_lens_panels_" + itos(stamp as i32)
+    assert os_make_dirs(root + "/src/nested") != 0
+    assert os_write_file_atomic(root + "/src/main.ns", "use std\n\nfn main() {\n    print(\"hello\")\n}\n") != 0
+    assert os_write_file_atomic(root + "/src/nested/part.ns", "let value = 1\n") != 0
+    assert os_write_file_atomic(root + "/README.md", "# demo\n") != 0
+
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+
+    let v = view_create("panels render test", 1280, 800)
+    if !gpu_request_device(v) {
+        view_close(v)
+        return
+    }
+    let r = ui_renderer_create(v)
+
+    g_mouse_x = -100.0
+    g_mouse_y = -100.0
+    outline_show()
+    let src = workspace_find("src")
+    assert src >= 0
+    outline_select(src)
+    lens_scope_set(src)
+
+    // A terminal-shaped screen without a shell process.
+    g_terminal_open = true
+    g_terminal_ready = true
+    g_terminal_handle = 0
+    g_terminal_exited = false
+    g_terminal_error = ""
+    g_term_cols = 60
+    g_term_rows = 18
+    term_full_reset()
+    term_feed_text("$ printf '\u{1b}[1;32mgreen\u{1b}[0m'\r\ngreen\r\n$ \u{1b}[4munder\u{1b}[0m")
+    g_term_offset = 1
+
+    for n in 0 to 2 {
+        ui_begin_frame(r)
+        render_lens(r, v, 1280, 800)
+        ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+    }
+
+    assert outline_open()
+    assert terminal_open()
+    assert g_lens_scope_path == root + "/src"
+    assert lens_file_count() == 2
+
+    outline_hide()
+    terminal_hide()
+    os_watch_stop()
+    ui_renderer_destroy(r)
+    view_close(v)
+    print("panels: passed" + unescape("\n"))
+}
