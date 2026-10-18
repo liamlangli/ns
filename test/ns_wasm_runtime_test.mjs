@@ -200,6 +200,10 @@ assert.equal(runtime.view().getFloat64(runtime.viewImport('view_gesture', [canva
 runtime.viewImport('view_input_reset', [canvasView]);
 assert.equal(runtime.view().getFloat64(runtime.viewImport('view_gesture', [canvasView]) + 16, true), 1);
 assert.equal(runtime.gpu('gpu_caps', []), 6);
+assert.equal(runtime.gpu('gpu_fx_supported', [1]), 0);
+assert.equal(runtime.gpu('gpu_fx_create', [1, 1, 0, 0, 2]), 0);
+assert.equal(runtime.gpu('gpu_fx_encode', [1, 1, 0, 0, 0, 2, 0]), 0);
+assert.equal(runtime.gpu('gpu_fx_destroy', [1]), undefined);
 assert.equal(runtime.gpu('gpu_storage_slot_count', []), 8);
 assert.equal(runtime.gpu('gpu_malloc', [32n, 0, runtime.writeString('')]), 0n);
 const buffer = runtime.gpu('gpu_malloc', [32n, 0, runtime.writeString('wasm test storage')]);

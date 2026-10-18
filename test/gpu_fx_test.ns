@@ -1,0 +1,111 @@
+use std
+use simd
+use gpu
+use shader
+use view
+
+fn fx_probe() void {
+    let x = shader_global_id_x()
+    let y = shader_global_id_y()
+    let color = shader_read_texture(x, y)
+    let width = shader_root_f32(4) as i32
+    shader_buffer_store_i32(0, y * width + x, (color.x * 1000.0) as i32)
+}
+
+fn fx_texture(size: i32, format: i32, usage: i32, name: str) u32 {
+    return gpu_texture_create(size, size, 1, format, usage as u32, 1, GPU_TEXTURE_2D, name)
+}
+
+fn fx_clear(color: u32, depth: u32, red: f64) {
+    gpu_pass_begin("MetalFX test clear input", color, 0u, 0u, 0u, depth, 0u, red, red, red, 1.0, 0.5)
+    gpu_pass_end()
+}
+
+fn main() {
+    assert !gpu_fx_supported(0) && !gpu_fx_supported(4)
+    assert !gpu_fx_supported(GPU_FX_SPATIAL)
+    assert gpu_fx_create(GPU_FX_SPATIAL, 1u, 0u, 0u, 2u) == 0u
+    let frame = gpu_fx_frame_default()
+    assert !gpu_fx_encode(1u, 1u, 0u, 0u, 0u, 2u, ref frame)
+    gpu_fx_destroy(0u)
+    let v = view_create("MetalFX test", 64, 64)
+    if !gpu_request_device(v) {
+        print("MetalFX: no GPU, skipped\n")
+        return
+    }
+    if !gpu_fx_supported(GPU_FX_SPATIAL) && !gpu_fx_supported(GPU_FX_TEMPORAL) && !gpu_fx_supported(GPU_FX_FRAME_INTERPOLATION) {
+        gpu_destroy_device()
+        print("MetalFX: unavailable on this backend, skipped\n")
+        return
+    }
+    let shader = gpu_shader_compute(fx_probe).resource_id
+    assert shader != 0u
+    let read_usage = GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_RENDER_TARGET
+    let color = fx_texture(64, GPU_PIXELFORMAT_RGBA16F, read_usage, "MetalFX test current color")
+    let previous = fx_texture(64, GPU_PIXELFORMAT_RGBA16F, read_usage, "MetalFX test previous color")
+    let depth = fx_texture(64, GPU_PIXELFORMAT_DEPTH, read_usage, "MetalFX test reverse depth")
+    let motion = fx_texture(64, GPU_PIXELFORMAT_RG16F, read_usage, "MetalFX test stationary motion")
+    assert color != 0u && previous != 0u && depth != 0u && motion != 0u
+    fx_clear(color, depth, 0.25)
+    fx_clear(previous, 0u, 0.25)
+    fx_clear(motion, 0u, 0.0)
+    gpu_commit()
+    let tested = 0
+    for kind in GPU_FX_SPATIAL to GPU_FX_FRAME_INTERPOLATION + 1 {
+        if !gpu_fx_supported(kind) {
+            print(`MetalFX kind {kind}: unsupported, skipped\n`)
+            continue
+        }
+        let size = 128
+        if kind == GPU_FX_FRAME_INTERPOLATION { size = 64 }
+        let output = fx_texture(size, GPU_PIXELFORMAT_RGBA16F, read_usage | GPU_TEXTURE_USAGE_WRITE, "MetalFX test generated output")
+        let effect = gpu_fx_create(kind, color, depth, motion, output)
+        assert effect != 0u
+        assert gpu_fx_create(kind, color, depth, motion, color) == 0u
+        assert !gpu_fx_encode(effect, color, depth, motion, previous, color, ref frame)
+        let readback = gpu_malloc((size * size * 4) as u64, GPU_MEM_SHARED, "MetalFX test pixel readback")
+        let root = [f32](8)
+        root[0] = output as f32
+        root[4] = size as f32
+        frame.aspect_ratio = 1.0
+        // Record the readback once, then submit three empty FX frames. Starting
+        // the fourth command buffer waits for the first readback's completion;
+        // no later dispatch writes its memory while the CPU inspects it.
+        for i in 0 to 4 {
+            frame.reset = 0
+            if i == 0 { frame.reset = 1 }
+            assert gpu_fx_encode(effect, color, depth, motion, previous, output, ref frame)
+            if i == 0 {
+                gpu_set_shader(shader)
+                gpu_set_root_data(root, 32)
+                gpu_set_storage(readback)
+                gpu_dispatch("MetalFX test sample generated pixels", size, size, 1)
+            }
+            gpu_commit()
+        }
+        let pixels = [i32](size * size)
+        assert gpu_read(readback, pixels, (size * size * 4) as u64)
+        // The center of a uniform linear HDR input must stay at 0.25. Do not
+        // accept a successful call that merely leaves an empty output texture.
+        let center = pixels[(size / 2) * size + size / 2]
+        print(`MetalFX kind {kind}: center {center}\n`)
+        assert center > 200 && center < 300
+        gpu_fx_destroy(effect)
+        assert !gpu_fx_encode(effect, color, depth, motion, previous, output, ref frame)
+        // A newly allocated effect must not revive an old handle.
+        let replacement = gpu_fx_create(kind, color, depth, motion, output)
+        assert replacement != 0u && replacement != effect
+        assert !gpu_fx_encode(effect, color, depth, motion, previous, output, ref frame)
+        gpu_fx_destroy(replacement)
+        gpu_free(readback)
+        gpu_texture_destroy(output)
+        tested = tested + 1
+    }
+    gpu_shader_destroy(shader)
+    gpu_texture_destroy(color)
+    gpu_texture_destroy(previous)
+    gpu_texture_destroy(depth)
+    gpu_texture_destroy(motion)
+    gpu_destroy_device()
+    print(`MetalFX: {tested} effects verified\n`)
+}

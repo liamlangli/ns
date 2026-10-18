@@ -402,6 +402,8 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ns_patch_test
 	$(NS_BINDIR)/ui_triangle_test
 	$(NS_BINDIR)/gpu_cooked_test
+	$(NS_BINDIR)/gpu_fx_test
+	$(CURDIR)/$(TARGET)$(NS_SUFFIX) run test/gpu_fx_test.ns
 	python3 test/ns_cook_test.py
 	sh nscode/ns_lens/test/batch_native_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_project_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -436,6 +438,10 @@ $(NS_BINDIR)/ui_triangle_test: test/ui_triangle_test.c lib/src/ui.c $(NS_HEADERS
 
 test: $(NS_BINDIR)/gpu_cooked_test
 $(NS_BINDIR)/gpu_cooked_test: test/gpu_cooked_test.c lib/include/gpu.h lib/include/gpu_const.h $(NS_HEADERS) $(NS_LIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) $(NS_LDFLAGS) $(NS_UI_TEST_LDFLAGS)
+
+test: $(NS_BINDIR)/gpu_fx_test
+$(NS_BINDIR)/gpu_fx_test: test/gpu_fx_test.c lib/include/gpu.h $(NS_HEADERS) $(NS_LIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB)
 	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) $(NS_LDFLAGS) $(NS_UI_TEST_LDFLAGS)
 
 include sample/c/Makefile

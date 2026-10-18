@@ -433,6 +433,7 @@ static id<MTLTexture> immersive_depth;
 static bool immersive_frame;
 static u32 immersive_slice;
 static const gpu_v2_ops _mtl_v2_ops;
+static void mtl_v2_fx_destroy_all(void);
 static void mtl_v2_ensure_frame(void);
 static void mtl_v2_label_encoder(id<MTLCommandEncoder> encoder, const char *label);
 
@@ -638,6 +639,7 @@ void gpu_destroy_device() {
             dispatch_semaphore_signal(_state.semaphore);
         }
     }
+    mtl_v2_fx_destroy_all();
     gpu_v2_set_backend(NULL, 0, 0);
     for (i32 i = 0; i < GPU_RESOURCE_POOL_SIZE; ++i) {
 #ifndef ENABLE_ARC
@@ -1071,6 +1073,7 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
     // texture does not reliably reproduce on iOS devices; using one path on
     // macOS too keeps it the path that is tested.
     if (block_compressed && !transient_render_target) resource_options = MTLResourceStorageModePrivate;
+    if (usage & TEXTURE_USAGE_WRITE) resource_options = MTLResourceStorageModePrivate;
     desc.resourceOptions = resource_options;
     desc.usage = 0;
     if (usage == TEXTURE_USAGE_DEFAULT || (usage & TEXTURE_USAGE_READ)) desc.usage |= MTLTextureUsageShaderRead;
@@ -1908,7 +1911,242 @@ static void mtl_v2_dispatch_indirect(const char *label, u32 slot, u64 offset) {
     [encoder endEncoding];
 }
 
+// MetalFX is loaded only by the feature dylib. The interpreter and generated
+// projects do not gain a mandatory framework dependency; older OSes fall back.
+#if __has_include(<MetalFX/MetalFX.h>) && !(defined(TARGET_OS_VISION) && TARGET_OS_VISION)
+#import <MetalFX/MetalFX.h>
+#include <math.h>
+#define GPU_MTL_FX_COUNT 64
+
+typedef struct {
+    NSUInteger width, height;
+    MTLPixelFormat format;
+    MTLTextureUsage usage;
+} gpu_mtl_fx_texture;
+typedef struct {
+    u32 handle;
+    i32 kind;
+    id effect;
+    gpu_mtl_fx_texture color, depth, motion, output;
+    bool history;
+} gpu_mtl_fx;
+static gpu_mtl_fx mtl_fx[GPU_MTL_FX_COUNT];
+static u32 mtl_fx_serial;
+
+static Class mtl_fx_class(i32 kind) {
+    static void *framework;
+    if (!framework) framework = dlopen("/System/Library/Frameworks/MetalFX.framework/MetalFX", RTLD_LAZY | RTLD_LOCAL);
+    if (!framework) return Nil;
+    switch (kind) {
+        case GPU_FX_SPATIAL: return NSClassFromString(@"MTLFXSpatialScalerDescriptor");
+        case GPU_FX_TEMPORAL: return NSClassFromString(@"MTLFXTemporalScalerDescriptor");
+        case GPU_FX_FRAME_INTERPOLATION: return NSClassFromString(@"MTLFXFrameInterpolatorDescriptor");
+        default: return Nil;
+    }
+}
+
+static ns_bool mtl_v2_fx_supported(i32 kind) {
+    if (!_state.valid || !_state.device.device) return false;
+    Class cls = mtl_fx_class(kind);
+    if (!cls || ![cls respondsToSelector:@selector(supportsDevice:)]) return false;
+    if (@available(macOS 13.0, iOS 16.0, *)) {
+        return [cls supportsDevice:_state.device.device];
+    }
+    return false;
+}
+
+static id<MTLTexture> mtl_fx_texture(u32 index) {
+    if (!index || index >= _state.texture_count) return nil;
+    id<MTLTexture> texture = _state.textures[index].texture;
+    if (texture.textureType != MTLTextureType2D || texture.sampleCount != 1 ||
+        texture.storageMode == MTLStorageModeMemoryless) return nil;
+    return texture;
+}
+
+static bool mtl_fx_shape(id<MTLTexture> a, id<MTLTexture> b) {
+    return a && b && a.width == b.width && a.height == b.height;
+}
+static gpu_mtl_fx_texture mtl_fx_key(id<MTLTexture> t, MTLTextureUsage usage) {
+    return (gpu_mtl_fx_texture){t.width, t.height, t.pixelFormat, usage};
+}
+static bool mtl_fx_match(id<MTLTexture> t, gpu_mtl_fx_texture key) {
+    return t && t.width == key.width && t.height == key.height && t.pixelFormat == key.format &&
+           (t.usage & key.usage) == key.usage;
+}
+static bool mtl_fx_usage(id<MTLTexture> t, MTLTextureUsage usage) {
+    return t && (t.usage & usage) == usage;
+}
+
+static u32 mtl_v2_fx_create(i32 kind, u32 color, u32 depth, u32 motion, u32 output) {
+    if (!mtl_v2_fx_supported(kind)) return 0;
+    id<MTLTexture> c = mtl_fx_texture(color), o = mtl_fx_texture(output);
+    id<MTLTexture> d = mtl_fx_texture(depth), m = mtl_fx_texture(motion);
+    if (!c || !o || c == o || o.storageMode != MTLStorageModePrivate ||
+        o.width < c.width || o.height < c.height) return 0;
+    if (kind == GPU_FX_FRAME_INTERPOLATION && !mtl_fx_shape(c, o)) return 0;
+    if (kind == GPU_FX_TEMPORAL && !mtl_fx_shape(c, d)) return 0;
+    if (kind != GPU_FX_SPATIAL && (!d || !m || !mtl_fx_shape(d, m) ||
+        d.width > c.width || d.height > c.height ||
+        (m.pixelFormat != MTLPixelFormatRG16Float && m.pixelFormat != MTLPixelFormatRG32Float) ||
+        (d.pixelFormat != MTLPixelFormatDepth32Float && d.pixelFormat != MTLPixelFormatR32Float))) return 0;
+    gpu_mtl_fx *slot = NULL;
+    for (u32 i = 0; i < GPU_MTL_FX_COUNT; i++) if (!mtl_fx[i].handle) { slot = &mtl_fx[i]; break; }
+    if (!slot || mtl_fx_serial == UINT32_MAX) return 0;
+    id effect = nil;
+    MTLTextureUsage cu = 0, du = 0, mu = 0, ou = 0;
+    if (@available(macOS 13.0, iOS 16.0, *)) {
+        if (kind == GPU_FX_SPATIAL) {
+            MTLFXSpatialScalerDescriptor *desc = [mtl_fx_class(kind) new];
+            desc.inputWidth = c.width; desc.inputHeight = c.height;
+            desc.outputWidth = o.width; desc.outputHeight = o.height;
+            desc.colorTextureFormat = c.pixelFormat; desc.outputTextureFormat = o.pixelFormat;
+            desc.colorProcessingMode = MTLFXSpatialScalerColorProcessingModeHDR;
+            id<MTLFXSpatialScaler> fx = [desc newSpatialScalerWithDevice:_state.device.device];
+            effect = fx;
+            cu = fx.colorTextureUsage; ou = fx.outputTextureUsage;
+#ifndef ENABLE_ARC
+            [desc release];
+#endif
+        } else if (kind == GPU_FX_TEMPORAL) {
+            MTLFXTemporalScalerDescriptor *desc = [mtl_fx_class(kind) new];
+            desc.inputWidth = c.width; desc.inputHeight = c.height;
+            desc.outputWidth = o.width; desc.outputHeight = o.height;
+            desc.colorTextureFormat = c.pixelFormat; desc.outputTextureFormat = o.pixelFormat;
+            desc.depthTextureFormat = d.pixelFormat; desc.motionTextureFormat = m.pixelFormat;
+            desc.autoExposureEnabled = YES;
+            id<MTLFXTemporalScaler> fx = [desc newTemporalScalerWithDevice:_state.device.device];
+            effect = fx;
+            cu = fx.colorTextureUsage; du = fx.depthTextureUsage; mu = fx.motionTextureUsage; ou = fx.outputTextureUsage;
+#ifndef ENABLE_ARC
+            [desc release];
+#endif
+        }
+    }
+#if __has_include(<MetalFX/MTLFXFrameInterpolator.h>)
+    if (@available(macOS 26.0, iOS 26.0, *)) {
+        if (kind == GPU_FX_FRAME_INTERPOLATION) {
+            MTLFXFrameInterpolatorDescriptor *desc = [mtl_fx_class(kind) new];
+            desc.inputWidth = d.width; desc.inputHeight = d.height;
+            desc.outputWidth = o.width; desc.outputHeight = o.height;
+            desc.colorTextureFormat = c.pixelFormat; desc.outputTextureFormat = o.pixelFormat;
+            desc.depthTextureFormat = d.pixelFormat; desc.motionTextureFormat = m.pixelFormat;
+            id<MTLFXFrameInterpolator> fx = [desc newFrameInterpolatorWithDevice:_state.device.device];
+            effect = fx;
+            cu = fx.colorTextureUsage; du = fx.depthTextureUsage; mu = fx.motionTextureUsage; ou = fx.outputTextureUsage;
+#ifndef ENABLE_ARC
+            [desc release];
+#endif
+        }
+    }
+#endif
+    if (!effect || !mtl_fx_usage(c, cu) || !mtl_fx_usage(o, ou) ||
+        (kind != GPU_FX_SPATIAL && (!mtl_fx_usage(d, du) || !mtl_fx_usage(m, mu)))) {
+#ifndef ENABLE_ARC
+        [effect release];
+#endif
+        return 0;
+    }
+    // Keep scalar keys: encodes may replace all bound textures, and destroying
+    // an input must not leave a dangling template pointer in this record.
+    *slot = (gpu_mtl_fx){ .handle = ++mtl_fx_serial, .kind = kind, .effect = effect,
+                         .color = mtl_fx_key(c, cu), .depth = mtl_fx_key(d, du),
+                         .motion = mtl_fx_key(m, mu), .output = mtl_fx_key(o, ou) };
+    return slot->handle;
+}
+
+static void mtl_v2_fx_destroy(u32 handle) {
+    for (u32 i = 0; i < GPU_MTL_FX_COUNT; i++) if (mtl_fx[i].handle == handle) {
+#ifndef ENABLE_ARC
+        [mtl_fx[i].effect release];
+#endif
+        memset(&mtl_fx[i], 0, sizeof(mtl_fx[i]));
+        return;
+    }
+}
+static void mtl_v2_fx_destroy_all(void) {
+    for (u32 i = 0; i < GPU_MTL_FX_COUNT; i++) if (mtl_fx[i].handle) mtl_v2_fx_destroy(mtl_fx[i].handle);
+}
+
+static ns_bool mtl_v2_fx_encode(u32 handle, u32 color, u32 depth, u32 motion,
+                               u32 previous, u32 output, const gpu_fx_frame *p) {
+    gpu_mtl_fx *slot = NULL;
+    for (u32 i = 0; i < GPU_MTL_FX_COUNT; i++) if (mtl_fx[i].handle == handle) { slot = &mtl_fx[i]; break; }
+    if (!slot || _state.cmd_encoder || !_state.valid) return false;
+    id<MTLTexture> c = mtl_fx_texture(color), o = mtl_fx_texture(output);
+    id<MTLTexture> d = mtl_fx_texture(depth), m = mtl_fx_texture(motion), prev = mtl_fx_texture(previous);
+    // Honor the exact usage requirements returned by this effect instance.
+    if (!mtl_fx_match(c, slot->color) ||
+        !mtl_fx_match(o, slot->output) ||
+        o.storageMode != MTLStorageModePrivate || c == o || o == d || o == m || o == prev) return false;
+    if (slot->kind != GPU_FX_SPATIAL &&
+        (!mtl_fx_match(d, slot->depth) ||
+         !mtl_fx_match(m, slot->motion) ||
+         !isfinite(p->jitter_x) || !isfinite(p->jitter_y) ||
+         !isfinite(p->motion_scale_x) || !isfinite(p->motion_scale_y))) return false;
+    if (slot->kind == GPU_FX_FRAME_INTERPOLATION &&
+        (!mtl_fx_match(prev, slot->color) || prev == c ||
+         !isfinite(p->delta_time) || p->delta_time <= 0 ||
+         !isfinite(p->near_plane) || p->near_plane <= 0 ||
+         !isfinite(p->far_plane) || p->far_plane <= p->near_plane ||
+         !isfinite(p->field_of_view) || p->field_of_view <= 0 || p->field_of_view >= 180 ||
+         !isfinite(p->aspect_ratio) || p->aspect_ratio <= 0)) return false;
+    mtl_v2_ensure_frame();
+    if (!_state.cmd_buffer) return false;
+    if (_state.blit_encoder) mtl_v2_mem_copy_end();
+    bool reset = p->reset || !slot->history;
+    if (@available(macOS 13.0, iOS 16.0, *)) {
+        if (slot->kind == GPU_FX_SPATIAL) {
+            id<MTLFXSpatialScaler> fx = slot->effect;
+            fx.colorTexture = c; fx.outputTexture = o;
+            fx.inputContentWidth = c.width; fx.inputContentHeight = c.height;
+            [_state.cmd_buffer pushDebugGroup:@"MetalFX HDR spatial upscale"];
+            [fx encodeToCommandBuffer:_state.cmd_buffer];
+            [_state.cmd_buffer popDebugGroup];
+        } else if (slot->kind == GPU_FX_TEMPORAL) {
+            id<MTLFXTemporalScaler> fx = slot->effect;
+            fx.colorTexture = c; fx.depthTexture = d; fx.motionTexture = m; fx.outputTexture = o;
+            fx.inputContentWidth = c.width; fx.inputContentHeight = c.height;
+            fx.jitterOffsetX = p->jitter_x; fx.jitterOffsetY = p->jitter_y;
+            fx.motionVectorScaleX = p->motion_scale_x; fx.motionVectorScaleY = p->motion_scale_y;
+            fx.depthReversed = YES; fx.reset = reset; fx.preExposure = 1.0f;
+            [_state.cmd_buffer pushDebugGroup:@"MetalFX temporal upscale"];
+            [fx encodeToCommandBuffer:_state.cmd_buffer];
+            [_state.cmd_buffer popDebugGroup];
+        }
+    }
+#if __has_include(<MetalFX/MTLFXFrameInterpolator.h>)
+    if (@available(macOS 26.0, iOS 26.0, *)) {
+        if (slot->kind == GPU_FX_FRAME_INTERPOLATION) {
+            id<MTLFXFrameInterpolator> fx = slot->effect;
+            fx.colorTexture = c; fx.prevColorTexture = prev; fx.outputTexture = o;
+            fx.depthTexture = d; fx.motionTexture = m;
+            fx.jitterOffsetX = p->jitter_x; fx.jitterOffsetY = p->jitter_y;
+            fx.motionVectorScaleX = p->motion_scale_x; fx.motionVectorScaleY = p->motion_scale_y;
+            fx.deltaTime = p->delta_time; fx.nearPlane = p->near_plane; fx.farPlane = p->far_plane;
+            fx.fieldOfView = p->field_of_view; fx.aspectRatio = p->aspect_ratio;
+            fx.depthReversed = YES; fx.shouldResetHistory = reset;
+            [_state.cmd_buffer pushDebugGroup:@"MetalFX midpoint frame interpolation"];
+            [fx encodeToCommandBuffer:_state.cmd_buffer];
+            [_state.cmd_buffer popDebugGroup];
+        }
+    }
+#endif
+    slot->history = true;
+    return true;
+}
+#else
+static ns_bool mtl_v2_fx_supported(i32 kind) { ns_unused(kind); return false; }
+static u32 mtl_v2_fx_create(i32 kind, u32 c, u32 d, u32 m, u32 o) { return 0; }
+static ns_bool mtl_v2_fx_encode(u32 h, u32 c, u32 d, u32 m, u32 p, u32 o, const gpu_fx_frame *f) { return false; }
+static void mtl_v2_fx_destroy(u32 handle) { ns_unused(handle); }
+static void mtl_v2_fx_destroy_all(void) {}
+#endif
+
 static const gpu_v2_ops _mtl_v2_ops = {
+    .fx_supported = mtl_v2_fx_supported,
+    .fx_create = mtl_v2_fx_create,
+    .fx_encode = mtl_v2_fx_encode,
+    .fx_destroy = mtl_v2_fx_destroy,
     .mem_create = mtl_v2_mem_create,
     .mem_destroy = mtl_v2_mem_destroy,
     .mem_write = mtl_v2_mem_write,

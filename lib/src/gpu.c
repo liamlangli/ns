@@ -959,3 +959,26 @@ done:
 u32 gpu_texture_load_cooked(const char *path) {
     return gpu_texture_load_cooked_info(path, NULL, NULL);
 }
+
+ns_bool gpu_fx_supported(i32 kind) {
+    return kind >= GPU_FX_SPATIAL && kind <= GPU_FX_FRAME_INTERPOLATION &&
+           _v2.ops && _v2.ops->fx_supported && _v2.ops->fx_supported(kind);
+}
+
+u32 gpu_fx_create(i32 kind, u32 color, u32 depth, u32 motion, u32 output) {
+    if (!color || !output || color == output || !gpu_fx_supported(kind) || !_v2.ops->fx_create) return 0;
+    if (kind != GPU_FX_SPATIAL && (!depth || !motion)) return 0;
+    return _v2.ops->fx_create(kind, color, depth, motion, output);
+}
+
+ns_bool gpu_fx_encode(u32 effect, u32 color, u32 depth, u32 motion,
+                      u32 previous, u32 output, const gpu_fx_frame *frame) {
+    if (!effect || !color || !output || color == output || previous == output || !frame ||
+        !_v2.ops || !_v2.ops->fx_encode) return false;
+    gpu_v2_flush_uploads();
+    return _v2.ops->fx_encode(effect, color, depth, motion, previous, output, frame);
+}
+
+void gpu_fx_destroy(u32 effect) {
+    if (effect && _v2.ops && _v2.ops->fx_destroy) _v2.ops->fx_destroy(effect);
+}

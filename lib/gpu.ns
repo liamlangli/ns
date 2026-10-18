@@ -18,6 +18,7 @@ lit GPU_PIXELFORMAT_NONE = 1
 lit GPU_PIXELFORMAT_R8 = 2
 lit GPU_PIXELFORMAT_R16F = 10
 lit GPU_PIXELFORMAT_R32F = 17
+lit GPU_PIXELFORMAT_RG16F = 22
 lit GPU_PIXELFORMAT_RGBA8 = 23
 lit GPU_PIXELFORMAT_BGRA8 = 28
 lit GPU_PIXELFORMAT_RG11B10F = 30
@@ -482,3 +483,39 @@ fn gpu_pass_begin_target(label: str, color: gpu_texture, depth: gpu_texture, loa
 // Prefer a bundle's compressed sidecar. Returns 0 if absent, invalid, or unsupported.
 // Keep source image loading as the development fallback. No RGBA decode occurs.
 ref fn gpu_texture_load_cooked(path: str) u32
+
+// MetalFX: capability-query before allocating; other backends return false/0.
+// Spatial scaling takes linear HDR color. Temporal scaling and interpolation
+// require current-to-previous motion vectors (pixels after motion_scale).
+// Encode between passes, then sample the output in a normal render pass.
+lit GPU_FX_SPATIAL = 1
+lit GPU_FX_TEMPORAL = 2
+lit GPU_FX_FRAME_INTERPOLATION = 3
+
+struct gpu_fx_frame {
+    jitter_x: f32,
+    jitter_y: f32,
+    motion_scale_x: f32,
+    motion_scale_y: f32,
+    delta_time: f32,
+    near_plane: f32,
+    far_plane: f32,
+    field_of_view: f32,
+    aspect_ratio: f32,
+    reset: i32
+}
+
+fn gpu_fx_frame_default() gpu_fx_frame {
+    return gpu_fx_frame { 0.0, 0.0, 1.0, 1.0, 0.016666667, 0.1, 1000.0, 60.0, 1.0, 0 }
+}
+
+ref fn gpu_fx_supported(kind: i32) bool
+// Template textures set dimensions/formats. Output needs READ|WRITE (private
+// on Metal); input color/depth/motion need READ. A failure returns 0.
+ref fn gpu_fx_create(kind: i32, color: u32, depth: u32, motion: u32, output: u32) u32
+// previous is the previous real color for interpolation, 0 otherwise. Set reset
+// on cuts, first frame and discontinuities. Reverse-Z depth only. Interpolation
+// generates the midpoint; the caller schedules midpoint then current, with UI
+// composited separately at display rate. This call does not present or simulate.
+ref fn gpu_fx_encode(effect: u32, color: u32, depth: u32, motion: u32, previous: u32, output: u32, frame: ref gpu_fx_frame) bool
+ref fn gpu_fx_destroy(effect: u32)

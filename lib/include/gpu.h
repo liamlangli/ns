@@ -79,6 +79,24 @@ u32  gpu_sampler_create(i32 min_filter, i32 mag_filter, i32 mip_filter,
                         i32 compare_func, i32 max_anisotropy);
 void gpu_sampler_destroy(u32 smp);
 
+// MetalFX effects. Unsupported devices/backends return false/0. Spatial input
+// is linear HDR. All textures are single-sample 2D; output is private READ|WRITE.
+enum { GPU_FX_SPATIAL = 1, GPU_FX_TEMPORAL = 2, GPU_FX_FRAME_INTERPOLATION = 3 };
+typedef struct gpu_fx_frame {
+    f32 jitter_x, jitter_y;
+    f32 motion_scale_x, motion_scale_y;
+    f32 delta_time, near_plane, far_plane, field_of_view, aspect_ratio;
+    i32 reset;
+} gpu_fx_frame;
+ns_bool gpu_fx_supported(i32 kind);
+u32 gpu_fx_create(i32 kind, u32 color, u32 depth, u32 motion, u32 output);
+// Current-to-previous motion in pixels after scaling. Reverse-Z is mandatory.
+// previous is required only for frame interpolation and must be the last color.
+// Encode between passes. This writes a texture; presentation stays with caller.
+ns_bool gpu_fx_encode(u32 effect, u32 color, u32 depth, u32 motion,
+                      u32 previous, u32 output, const gpu_fx_frame *frame);
+void gpu_fx_destroy(u32 effect);
+
 // ---- shaders and render state ----------------------------------------------
 u32  gpu_shader_graphics_create(const char *vs_src, const char *fs_src,
                                 const char *vs_entry, const char *fs_entry);
@@ -231,6 +249,11 @@ typedef struct gpu_v2_ops {
     void (*dispatch_indirect)(const char *label, u32 args_slot, u64 args_offset);
     void (*signal_after)(u32 slot, u64 offset, u64 value);
     void (*wait_before)(u32 slot, u64 offset, u64 value);
+    ns_bool (*fx_supported)(i32 kind);
+    u32 (*fx_create)(i32 kind, u32 color, u32 depth, u32 motion, u32 output);
+    ns_bool (*fx_encode)(u32 effect, u32 color, u32 depth, u32 motion,
+                         u32 previous, u32 output, const gpu_fx_frame *frame);
+    void (*fx_destroy)(u32 effect);
 } gpu_v2_ops;
 
 void gpu_v2_set_backend(const gpu_v2_ops *ops, u32 caps, u32 storage_slot_count);

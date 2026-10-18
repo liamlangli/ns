@@ -698,3 +698,78 @@ internally to `RGBA16F` when the feature is unavailable.
   flag or transparent dual-pool allocation — leaning transparent.
 - Whether pass attachments beyond 4 colors matter for ns programs before
   Vulkan lands.
+
+## MetalFX upscaling and frame interpolation
+
+The Metal backend exposes three optional effects through the same scalar-ID API:
+
+| Kind | Purpose | Minimum Apple OS |
+| --- | --- | --- |
+| `GPU_FX_SPATIAL` | Upscale linear HDR color without history | macOS 13 / iOS 16 |
+| `GPU_FX_TEMPORAL` | Temporal antialiasing and upscaling | macOS 13 / iOS 16 |
+| `GPU_FX_FRAME_INTERPOLATION` | Generate a midpoint between consecutive real frames | macOS 26 / iOS 26 |
+
+Always query `gpu_fx_supported(kind)` on the active device. OS version alone
+is insufficient. Vulkan, DX12, the browser, visionOS, an old Apple SDK, and
+headless execution without a device return false; create returns 0 and encode
+returns false. MetalFX is dynamically loaded by the GPU feature library, so
+it adds no mandatory framework dependency to `bin/ns` or generated projects.
+
+`gpu_fx_create(kind, color, depth, motion, output)` uses texture dimensions and
+formats as its immutable configuration. Spatial scaling ignores depth and
+motion (pass 0). Inputs need `GPU_TEXTURE_USAGE_READ`; rendered inputs also need
+`GPU_TEXTURE_USAGE_RENDER_TARGET`. Outputs should use `READ | WRITE |
+RENDER_TARGET`: Metal allocates shader-writable textures in private storage,
+which MetalFX requires for outputs. Resource creation checks the actual texture
+usage requested by each effect. Single-sample 2D textures only. RGBA16F is a
+portable HDR choice; spatial scaling also accepts the scene's RG11B10F input
+when supported by the device. Motion is RG16F or RG32F. Depth is floating-point
+reverse-Z (Depth32F or R32F); transient or memoryless depth is unsuitable.
+
+For temporal scaling, color, motion and depth have the same dimensions. Output
+is at least as large as input. For frame interpolation, both color frames are
+at output resolution, and depth/motion can have lower matching dimensions.
+Each successful creation owns persistent MetalFX state; reuse it across frames
+and destroy it with `gpu_fx_destroy(effect)` on a resize or shutdown. A destroyed
+handle never becomes valid when another effect is allocated.
+
+```ns
+let effect = gpu_fx_create(GPU_FX_SPATIAL, scene, 0u, 0u, full_resolution)
+let frame = gpu_fx_frame_default()
+// End the scene render pass first. MetalFX records into the frame's existing
+// command buffer, before the pass that samples its output.
+if effect != 0u && gpu_fx_encode(effect, scene, 0u, 0u, 0u, full_resolution, ref frame) {
+    // Composite full_resolution, then render UI at display resolution.
+}
+```
+
+`gpu_fx_frame` is a concrete 40-byte FFI record. `jitter_x/y` are subpixel
+projection jitter in input pixel units. Motion vectors point from the current
+pixel to its previous location, with the origin at the top left: an object
+moving 10 pixels right/down needs (-10,-10). `motion_scale_x/y` converts stored
+vectors to pixel units; use input width/height for normalized UV displacement.
+Motion must describe camera motion and animated objects, exclude projection
+jitter, and correspond to the depth buffer. Zero motion is correct only for
+stationary pixels. Both temporal effects use reverse-Z. Set `reset = 1` on cuts,
+teleports and history discontinuities; a new effect resets its first encode
+automatically. Temporal scaling uses automatic exposure and preExposure 1.
+
+For interpolation, also supply positive `delta_time` in seconds, positive camera
+`near_plane`, finite `far_plane > near_plane`, vertical `field_of_view` in degrees,
+and `aspect_ratio`. `previous` must be a distinct texture containing the color
+from the previous successful interpolation call; current/previous color may
+alternate between ping-pong textures. Inputs and outputs must not alias.
+
+Encoding interpolation **does not present an additional frame**. It writes the
+midpoint texture. The application must pace and present that midpoint followed
+by the current real frame at separate display refreshes. Keep simulation/input
+updates tied to real elapsed time and composite UI separately at display rate.
+This requires frame buffering and introduces latency. Do not count generated
+frames as simulation frames or enable interpolation by passing dummy motion.
+An upscaler alone also does not recover detail that was never sampled; temporal
+AA needs jittered rendering and correct motion to improve fine edge stability.
+
+`test/gpu_fx_test.ns` checks all supported effects on a real GPU, samples their
+output back into host memory, exercises history reset and stale handles, and
+runs interpreted or as a native executable. Unsupported backends skip cleanly.
+`test/gpu_fx_test.c` covers dispatch, FFI layout and unsupported backend fallback.
