@@ -18,6 +18,10 @@ lit LENS_JOB_SWITCH = 6
 lit LENS_JOB_BRANCH = 7
 lit LENS_JOB_DELETE = 8
 lit LENS_JOB_REMOTE = 9
+// The commit dialog's other modes: append the ticked files to the last
+// commit, and commit then push once the commit lands.
+lit LENS_JOB_AMEND = 10
+lit LENS_JOB_COMMIT_PUSH = 11
 // Seconds between background fetches.
 lit LENS_FETCH_INTERVAL = 300.0
 // Seconds between status reads, so a branch switched outside Lens shows up.
@@ -63,13 +67,19 @@ let g_lens_sync_up_w: f64 = 0.0
 // Jobs the user asked for: queued behind a running job, shown with progress
 // and reported when they end.
 fn lens_job_user(kind: i32) bool {
-    return kind >= LENS_JOB_COMMIT && kind <= LENS_JOB_REMOTE
+    return kind >= LENS_JOB_COMMIT
+}
+
+// Jobs that write a commit, so the work tree's states change after them.
+fn lens_job_commits(kind: i32) bool {
+    return kind == LENS_JOB_COMMIT || kind == LENS_JOB_AMEND || kind == LENS_JOB_COMMIT_PUSH
 }
 
 fn lens_job_label(kind: i32) str {
-    if kind == LENS_JOB_COMMIT {
+    if kind == LENS_JOB_COMMIT || kind == LENS_JOB_COMMIT_PUSH {
         return "commit"
     }
+    if kind == LENS_JOB_AMEND { return "append" }
     if kind == LENS_JOB_PUSH {
         return "push"
     }
@@ -115,13 +125,35 @@ fn lens_one_line(text: str) str {
     return out
 }
 
+// The commit command ahead of its paths. Appending amends the last commit
+// with only the given paths, so changes staged for other paths stay out and
+// no path at all rewords it; an empty message keeps the last commit's.
+fn lens_commit_command(message: str, amend: bool) str {
+    let line = lens_one_line(message)
+    if amend == false {
+        return "commit\n-q\n-m\n" + line
+    }
+    if line == "" {
+        return "commit\n-q\n--amend\n--only\n--no-edit"
+    }
+    return "commit\n-q\n--amend\n--only\n-m\n" + line
+}
+
 // Every change under the workspace root, untracked files included: what the
 // change view shows is what gets committed.
-fn lens_commit_steps(message: str) [str] {
+fn lens_commit_tree_steps(command: str) [str] {
     let steps = [str](2)
     steps[0] = "add\n-A\n--\n."
-    steps[1] = "commit\n-q\n-m\n" + lens_one_line(message) + "\n--\n."
+    steps[1] = command + "\n--\n."
     return steps
+}
+
+fn lens_commit_steps(message: str) [str] {
+    return lens_commit_tree_steps(lens_commit_command(message, false))
+}
+
+fn lens_amend_steps(message: str) [str] {
+    return lens_commit_tree_steps(lens_commit_command(message, true))
 }
 
 // Only the files ticked in the commit dialog. A partial commit takes paths
@@ -129,8 +161,8 @@ fn lens_commit_steps(message: str) [str] {
 // each chosen path as it is in the work tree, renames and deletions included,
 // and leaves every other change as it was. `added` and `chosen` hold one
 // "\n<path>" per file, matched literally rather than as patterns.
-fn lens_commit_paths_steps(message: str, added: str, chosen: str) [str] {
-    let commit = "--literal-pathspecs\ncommit\n-q\n-m\n" + lens_one_line(message) + "\n--" + chosen
+fn lens_commit_chosen_steps(command: str, added: str, chosen: str) [str] {
+    let commit = "--literal-pathspecs\n" + command + "\n--" + chosen
     if added == "" {
         let steps = [str](1)
         steps[0] = commit
@@ -142,8 +174,12 @@ fn lens_commit_paths_steps(message: str, added: str, chosen: str) [str] {
     return steps
 }
 
-fn lens_commit_paths(message: str, added: str, chosen: str) {
-    lens_job_start(LENS_JOB_COMMIT, lens_commit_paths_steps(message, added, chosen))
+fn lens_commit_paths_steps(message: str, added: str, chosen: str) [str] {
+    return lens_commit_chosen_steps(lens_commit_command(message, false), added, chosen)
+}
+
+fn lens_amend_paths_steps(message: str, added: str, chosen: str) [str] {
+    return lens_commit_chosen_steps(lens_commit_command(message, true), added, chosen)
 }
 
 // A branch without an upstream is published to origin under its own name.
@@ -372,13 +408,18 @@ fn lens_job_poll() {
         }
     }
     // A delete that switched branches but could not delete moved files too.
-    if kind == LENS_JOB_SWITCH || kind == LENS_JOB_DELETE || ((kind == LENS_JOB_COMMIT || kind == LENS_JOB_PULL) && status == 0) {
+    if kind == LENS_JOB_SWITCH || kind == LENS_JOB_DELETE || ((lens_job_commits(kind) || kind == LENS_JOB_PULL) && status == 0) {
         // A commit cleans files; a pull or a branch switch moves HEAD and
         // files: refresh the change view, the leaves' patches and the open
         // file's diff against the new HEAD now rather than at the next poll.
         g_lens_change_poll = 0.0
         g_lens_git_poll = 0.0
         g_lens_patch_wanted = true
+    }
+    // Commit & Push pushes once its commit lands, ahead of a queued job, with
+    // the upstream state the commit job just read.
+    if kind == LENS_JOB_COMMIT_PUSH && status == 0 && g_lens_job_root == g_workspace_root {
+        lens_push()
     }
     if g_lens_job_queued != 0 {
         let queued = g_lens_job_queued

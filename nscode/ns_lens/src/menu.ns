@@ -1,6 +1,7 @@
 // The File menu and its shortcuts (Cmd+O open, Cmd+P search, Cmd+Enter
 // commit; Open Recent and Push have none), Open Recent's submenu, the commit
-// message dialog, the search box, and the bottom-left hints and activity row
+// message dialog with its Commit, Commit Append and Commit & Push modes, the
+// search box, and the bottom-left hints and activity row
 // above the status bar. Input and drawing for the status bar's branch menu
 // and its dialogs (branch.ns) are routed through here too.
 use std
@@ -39,6 +40,16 @@ lit LENS_COMMIT_LIST_Y = 84.0
 lit LENS_COMMIT_ROW_H = 22.0
 lit LENS_COMMIT_ROWS = 12
 lit LENS_COMMIT_FILES = 4096
+// The Commit button runs one of these modes; the arrow beside it opens a menu
+// of them, which drops below the button.
+lit LENS_COMMIT_MODES = 3
+lit LENS_COMMIT_PLAIN = 0
+lit LENS_COMMIT_APPEND = 1
+lit LENS_COMMIT_PUSH = 2
+lit LENS_COMMIT_BUTTON_W = 124.0
+lit LENS_COMMIT_ARROW_W = 24.0
+lit LENS_COMMIT_BUTTON_H = 26.0
+lit LENS_COMMIT_MENU_W = 190.0
 lit LENS_HINT_LINE_H = 15.0
 lit LENS_HINT_COUNT = 8
 lit LENS_ACTIVITY_H = 22.0
@@ -60,6 +71,9 @@ let g_lens_commit_path = [str](4096)
 let g_lens_commit_kind = [i32](4096)
 let g_lens_commit_checked = [bool](4096)
 let g_lens_commit_scroll: i32 = 0
+// The mode the Commit button and Enter run, kept for the session.
+let g_lens_commit_mode: i32 = 0
+let g_lens_commit_menu_open = false
 
 fn lens_file_item_label(i: i32) str {
     if i == LENS_FILE_OPEN {
@@ -201,6 +215,7 @@ fn lens_commit_show() {
     g_lens_search_open = false
     g_lens_file_open = false
     g_lens_commit_message = ""
+    g_lens_commit_menu_open = false
     // The change view's worker lists the files; its poll fills the list.
     g_lens_commit_changes = -1
     g_lens_commit_scroll = 0
@@ -254,22 +269,47 @@ fn lens_commit_toggle(i: i32) {
     }
 }
 
+fn lens_commit_mode_label(mode: i32) str {
+    if mode == LENS_COMMIT_APPEND { return "Commit Append" }
+    if mode == LENS_COMMIT_PUSH { return "Commit & Push" }
+    return "Commit"
+}
+
+fn lens_commit_mode_job(mode: i32) i32 {
+    if mode == LENS_COMMIT_APPEND { return LENS_JOB_AMEND }
+    if mode == LENS_COMMIT_PUSH { return LENS_JOB_COMMIT_PUSH }
+    return LENS_JOB_COMMIT
+}
+
 // With every listed file ticked the commit takes the whole work tree, as it
-// did before the list arrived; otherwise only the ticked paths.
+// did before the list arrived; otherwise only the ticked paths. Commit Append
+// amends the last commit: an empty message keeps its message, and no ticked
+// file only rewords it.
 fn lens_commit_submit() {
+    let append = g_lens_commit_mode == LENS_COMMIT_APPEND
     let message = lens_one_line(g_lens_commit_message)
-    if message == "" {
+    let ticked = lens_commit_ticked()
+    if append {
+        if message == "" && g_lens_commit_changes >= 0 && ticked == 0 {
+            g_lens_message = "Enter a message or tick the files to append"
+            return
+        }
+    } else if message == "" {
         g_lens_message = "Enter a commit message"
         return
-    }
-    let ticked = lens_commit_ticked()
-    if g_lens_commit_changes > 0 && ticked == 0 {
+    } else if g_lens_commit_changes > 0 && ticked == 0 {
         g_lens_message = "Tick the files to commit"
         return
     }
     g_lens_commit_open = false
+    g_lens_commit_menu_open = false
+    let kind = lens_commit_mode_job(g_lens_commit_mode)
     if g_lens_commit_changes <= 0 || ticked == g_lens_commit_changes {
-        lens_commit(message)
+        if append {
+            lens_job_start(kind, lens_amend_steps(message))
+        } else {
+            lens_job_start(kind, lens_commit_steps(message))
+        }
         return
     }
     let added = ""
@@ -282,7 +322,11 @@ fn lens_commit_submit() {
             }
         }
     }
-    lens_commit_paths(message, added, chosen)
+    if append {
+        lens_job_start(kind, lens_amend_paths_steps(message, added, chosen))
+    } else {
+        lens_job_start(kind, lens_commit_paths_steps(message, added, chosen))
+    }
 }
 
 fn lens_file_action(i: i32) {
@@ -359,13 +403,27 @@ fn lens_menu_keys(v: ref view) {
         return
     }
     if g_lens_commit_open {
+        // Escape closes the mode menu first; while it is open the arrow keys
+        // move the mode Enter runs.
         if key_edge(v, 256) {
-            g_lens_commit_open = false
+            if g_lens_commit_menu_open {
+                g_lens_commit_menu_open = false
+            } else {
+                g_lens_commit_open = false
+            }
             return
         }
         if key_edge(v, 257) || key_edge(v, 335) {
             lens_commit_submit()
             return
+        }
+        if g_lens_commit_menu_open {
+            if key_edge(v, 264) {
+                g_lens_commit_mode = clamp_i(g_lens_commit_mode + 1, 0, LENS_COMMIT_MODES - 1)
+            }
+            if key_edge(v, 265) {
+                g_lens_commit_mode = clamp_i(g_lens_commit_mode - 1, 0, LENS_COMMIT_MODES - 1)
+            }
         }
         g_lens_commit_message = lens_field_edit(v, g_lens_commit_message)
         return
@@ -466,6 +524,42 @@ fn lens_commit_y(h: f64) f64 {
     return clamp((h - lens_commit_h()) * 0.5, LENS_TOP_BAR_H + 4.0, 100000.0)
 }
 
+// The buttons' row: Cancel, then the Commit split button (the mode's label and
+// its arrow) ending 16 px in from the dialog's right edge.
+fn lens_commit_button_y(h: f64) f64 {
+    return lens_commit_y(h) + lens_commit_h() - 42.0
+}
+
+fn lens_commit_button_x(w: f64) f64 {
+    return lens_commit_x(w) + LENS_COMMIT_W - 16.0 - LENS_COMMIT_ARROW_W - LENS_COMMIT_BUTTON_W
+}
+
+fn lens_commit_arrow_x(w: f64) f64 {
+    return lens_commit_button_x(w) + LENS_COMMIT_BUTTON_W
+}
+
+fn lens_commit_cancel_x(w: f64) f64 {
+    return lens_commit_button_x(w) - 92.0
+}
+
+// The mode menu lines up with the split button's right edge.
+fn lens_commit_menu_x(w: f64) f64 {
+    return lens_commit_arrow_x(w) + LENS_COMMIT_ARROW_W - LENS_COMMIT_MENU_W
+}
+
+fn lens_commit_menu_h() f64 {
+    return LENS_MODE_ITEM * (LENS_COMMIT_MODES as f64)
+}
+
+// Below the button, or above it when the status bar leaves no room below.
+fn lens_commit_menu_y(h: f64) f64 {
+    let below = lens_commit_button_y(h) + LENS_COMMIT_BUTTON_H + 2.0
+    if below + lens_commit_menu_h() <= h - STATUS_BAR_H {
+        return below
+    }
+    return lens_commit_button_y(h) - 2.0 - lens_commit_menu_h()
+}
+
 // Pointer input for the File menu, the search box, the commit dialog and the
 // branch menu, ahead of the map. A click outside an open popup closes it.
 fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
@@ -510,11 +604,25 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     if g_lens_commit_open {
         let x = lens_commit_x(w)
         let y = lens_commit_y(h)
-        let dialog_h = lens_commit_h()
         let list_y = y + LENS_COMMIT_LIST_Y
-        if raw_hit(v, x + LENS_COMMIT_W - 196.0, y + dialog_h - 42.0, 84.0, 26.0) {
+        let button_y = lens_commit_button_y(h)
+        if g_lens_commit_menu_open {
+            // The open mode menu takes the click: a row picks its mode and
+            // runs it, anywhere else only closes the menu.
+            g_lens_commit_menu_open = false
+            let menu_y = lens_commit_menu_y(h)
+            if raw_hit(v, lens_commit_menu_x(w), menu_y, LENS_COMMIT_MENU_W, lens_commit_menu_h()) {
+                g_lens_commit_mode = clamp_i(((g_mouse_y - menu_y) / LENS_MODE_ITEM) as i32, 0, LENS_COMMIT_MODES - 1)
+                lens_commit_submit()
+            }
+            v.mouse_pressed = false
+            return
+        }
+        if raw_hit(v, lens_commit_cancel_x(w), button_y, 84.0, LENS_COMMIT_BUTTON_H) {
             g_lens_commit_open = false
-        } else if raw_hit(v, x + LENS_COMMIT_W - 104.0, y + dialog_h - 42.0, 88.0, 26.0) {
+        } else if raw_hit(v, lens_commit_arrow_x(w), button_y, LENS_COMMIT_ARROW_W, LENS_COMMIT_BUTTON_H) {
+            g_lens_commit_menu_open = true
+        } else if raw_hit(v, lens_commit_button_x(w), button_y, LENS_COMMIT_BUTTON_W, LENS_COMMIT_BUTTON_H) {
             lens_commit_submit()
         } else if g_lens_commit_changes > 0 && raw_hit(v, x + 8.0, y + 10.0, 30.0, 28.0) {
             lens_commit_tick_all()
@@ -908,12 +1016,66 @@ fn lens_draw_commit(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         title_x = x + 40.0
     }
     draw_text_clipped(r, title_x, y + 14.0, x + LENS_COMMIT_W - 16.0 - title_x, 20.0, lens_commit_title(), small_px(), col_text())
-    lens_draw_field(r, x + 16.0, y + 42.0, LENS_COMMIT_W - 32.0, 30.0, g_lens_commit_message, "Commit message")
+    let placeholder = "Commit message"
+    if g_lens_commit_mode == LENS_COMMIT_APPEND {
+        placeholder = "Commit message, or empty to keep the last one"
+    }
+    lens_draw_field(r, x + 16.0, y + 42.0, LENS_COMMIT_W - 32.0, 30.0, g_lens_commit_message, placeholder)
     let list_y = y + LENS_COMMIT_LIST_Y
     lens_draw_commit_list(r, v, x, list_y)
-    draw_text_clipped(r, x + 16.0, list_y + lens_commit_list_h() + 8.0, LENS_COMMIT_W - 32.0, 20.0, "enter  commit      esc  cancel      click  tick a file", small_px(), col_muted())
-    lens_draw_button(r, v, x + LENS_COMMIT_W - 196.0, y + dialog_h - 42.0, 84.0, 26.0, "Cancel", false)
-    lens_draw_button(r, v, x + LENS_COMMIT_W - 104.0, y + dialog_h - 42.0, 88.0, 26.0, "Commit", true)
+    let hint = "enter  " + lens_commit_mode_verb(g_lens_commit_mode) + "      esc  cancel      click  tick a file"
+    draw_text_clipped(r, x + 16.0, list_y + lens_commit_list_h() + 8.0, LENS_COMMIT_W - 32.0, 20.0, hint, small_px(), col_muted())
+    let button_y = lens_commit_button_y(h)
+    lens_draw_button(r, v, lens_commit_cancel_x(w), button_y, 84.0, LENS_COMMIT_BUTTON_H, "Cancel", false)
+    lens_draw_commit_button(r, v, lens_commit_button_x(w), button_y)
+    if g_lens_commit_menu_open {
+        lens_draw_commit_menu(r, v, lens_commit_menu_x(w), lens_commit_menu_y(h))
+    }
+}
+
+fn lens_commit_mode_verb(mode: i32) str {
+    if mode == LENS_COMMIT_APPEND { return "commit append" }
+    if mode == LENS_COMMIT_PUSH { return "commit & push" }
+    return "commit"
+}
+
+// The Commit split button: its label runs the chosen mode, and the arrow
+// beside it opens the mode menu. The atlas has no arrow glyphs, so the arrow
+// is a triangle, as on the status bar.
+fn lens_draw_commit_button(r: ref ui_renderer, v: ref view, x: f64, y: f64) {
+    let w = LENS_COMMIT_BUTTON_W + LENS_COMMIT_ARROW_W
+    let ax = x + LENS_COMMIT_BUTTON_W
+    ui_fill_round_rect(r, x, y, w, LENS_COMMIT_BUTTON_H, 3.0, col_editor_panel_hi(), 0.0)
+    ui_stroke_round_rect(r, x, y, w, LENS_COMMIT_BUTTON_H, 3.0, 1.0, col_accent(), 0.0)
+    ui_fill_rect(r, ax, y + 5.0, 1.0, LENS_COMMIT_BUTTON_H - 10.0, col_muted(), 0.0)
+    draw_centered_text(r, x, y, LENS_COMMIT_BUTTON_W, LENS_COMMIT_BUTTON_H, lens_commit_mode_label(g_lens_commit_mode), small_px(), col_text())
+    let arrow = col_muted()
+    if g_lens_commit_menu_open || raw_hit(v, ax, y, LENS_COMMIT_ARROW_W, LENS_COMMIT_BUTTON_H) {
+        arrow = col_accent()
+    }
+    let cx = ax + LENS_COMMIT_ARROW_W * 0.5
+    let cy = y + LENS_COMMIT_BUTTON_H * 0.5
+    ui_fill_triangle(r, cx - 4.0, cy - 2.0, cx + 4.0, cy - 2.0, cx, cy + 3.0, arrow, 0.5)
+}
+
+// One row per mode; the chosen one stays lit and names the key that runs it.
+fn lens_draw_commit_menu(r: ref ui_renderer, v: ref view, x: f64, y: f64) {
+    let menu_h = lens_commit_menu_h()
+    ui_fill_round_rect(r, x, y, LENS_COMMIT_MENU_W, menu_h, 3.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, LENS_COMMIT_MENU_W, menu_h, 3.0, 1.0, col_muted(), 0.0)
+    for i in 0 to LENS_COMMIT_MODES {
+        let iy = y + (i as f64) * LENS_MODE_ITEM
+        if i == g_lens_commit_mode || raw_hit(v, x, iy, LENS_COMMIT_MENU_W, LENS_MODE_ITEM) {
+            ui_fill_rect(r, x + 1.0, iy, LENS_COMMIT_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+        }
+        let ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
+        draw_text_clipped(r, x + 10.0, ty, LENS_COMMIT_MENU_W - 70.0, LENS_MODE_ITEM, lens_commit_mode_label(i), small_px(), col_text())
+        if i == g_lens_commit_mode {
+            let keys = "enter"
+            let kw = ui_text_width(r, keys, small_px(), FONT_MONO())
+            draw_text_clipped(r, x + LENS_COMMIT_MENU_W - 10.0 - kw, ty, kw, LENS_MODE_ITEM, keys, small_px(), col_muted())
+        }
+    }
 }
 
 // Controls, one per line, stacked above the activity row.

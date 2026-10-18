@@ -56,6 +56,20 @@ fn check_text_helpers() {
     let steps = lens_commit_steps("one\ntwo")
     assert steps[0] == "add\n-A\n--\n."
     assert steps[1] == "commit\n-q\n-m\none two\n--\n."
+    // Commit Append amends only the given paths; an empty message keeps the
+    // last commit's.
+    let amend = lens_amend_steps("one\ntwo")
+    assert amend[0] == "add\n-A\n--\n."
+    assert amend[1] == "commit\n-q\n--amend\n--only\n-m\none two\n--\n."
+    assert lens_amend_steps("")[1] == "commit\n-q\n--amend\n--only\n--no-edit\n--\n."
+    let amend_paths = lens_amend_paths_steps("", "\nnew.txt", "\nnew.txt\nold.txt")
+    assert amend_paths[0] == "--literal-pathspecs\nadd\n-A\n--\nnew.txt"
+    assert amend_paths[1] == "--literal-pathspecs\ncommit\n-q\n--amend\n--only\n--no-edit\n--\nnew.txt\nold.txt"
+    assert lens_amend_paths_steps("reword", "", "")[0] == "--literal-pathspecs\ncommit\n-q\n--amend\n--only\n-m\nreword\n--"
+    assert lens_job_user(LENS_JOB_AMEND) && lens_job_user(LENS_JOB_COMMIT_PUSH) && lens_job_user(LENS_JOB_FETCH) == false
+    assert lens_commit_mode_job(LENS_COMMIT_PLAIN) == LENS_JOB_COMMIT
+    assert lens_commit_mode_job(LENS_COMMIT_APPEND) == LENS_JOB_AMEND
+    assert lens_commit_mode_job(LENS_COMMIT_PUSH) == LENS_JOB_COMMIT_PUSH
     // Without a known upstream the branch is published to origin.
     assert lens_push_steps()[0] == "push\n--progress\n--set-upstream\norigin\nHEAD"
     g_lens_sync_upstream = true
@@ -452,6 +466,70 @@ fn check_partial_commit(base: str) {
     assert lens_commit_paths_steps("m", "", "\nkeep.txt").len == 1
 }
 
+// The Commit button's modes through the dialog: Commit Append amends the last
+// commit (keeping its message, or rewording it without the files), and
+// Commit & Push publishes the new commit once it lands.
+fn check_commit_modes(base: str) {
+    let remote = base + "/modes.git"
+    let root = base + "/modes"
+    git(base, "init\n-q\n--bare\nmodes.git")
+    make_repo(root)
+    git(root, "remote\nadd\norigin\n" + remote)
+    assert os_write_file_atomic(root + "/.gitignore", "bin/\n") != 0
+    assert os_write_file_atomic(root + "/a.ns", "fn a() {}\n") != 0
+    git(root, "add\n-A")
+    git(root, "commit\n-q\n-m\nbase")
+    g_workspace_root = root
+    g_lens_commit_mode = LENS_COMMIT_APPEND
+    // An empty message keeps the last commit's.
+    assert os_write_file_atomic(root + "/a.ns", "fn a() { 1 }\n") != 0
+    lens_commit_show()
+    finish_changes()
+    assert g_lens_commit_changes == 1
+    lens_commit_submit()
+    assert g_lens_commit_open == false
+    finish_job()
+    assert g_lens_message == "append done"
+    assert lens_last_line(git(root, "log\n-1\n--format=%s")) == "base"
+    assert lens_last_line(git(root, "rev-list\n--count\nHEAD")) == "1"
+    assert os_git_change_kinds(root) == ""
+    // A message with no file ticked rewords the commit and leaves the file.
+    assert os_write_file_atomic(root + "/b.ns", "fn b() {}\n") != 0
+    lens_commit_show()
+    finish_changes()
+    lens_commit_tick_all()
+    assert lens_commit_ticked() == 0
+    lens_commit_submit()
+    assert g_lens_commit_open && g_lens_message == "Enter a message or tick the files to append"
+    g_lens_commit_message = "reworded"
+    lens_commit_submit()
+    finish_job()
+    assert g_lens_message == "append done"
+    assert lens_last_line(git(root, "log\n-1\n--format=%s")) == "reworded"
+    assert lens_last_line(git(root, "rev-list\n--count\nHEAD")) == "1"
+    assert os_git_change_kinds(root) == "A b.ns\n"
+    // Commit & Push commits, then publishes the branch that had no upstream.
+    g_lens_commit_mode = LENS_COMMIT_PUSH
+    lens_commit_show()
+    finish_changes()
+    g_lens_commit_message = "pushed"
+    lens_commit_submit()
+    finish_job()
+    assert g_lens_message == "push done"
+    assert lens_last_line(git(root, "log\n-1\n--format=%s\n@{upstream}")) == "pushed"
+    assert g_lens_sync_upstream && g_lens_sync_ahead == 0 && g_lens_sync_behind == 0
+    assert os_git_change_kinds(root) == ""
+    // A failed commit pushes nothing.
+    lens_commit_show()
+    finish_changes()
+    assert g_lens_commit_changes == 0
+    g_lens_commit_message = "nothing"
+    lens_commit_submit()
+    finish_job()
+    assert substr(g_lens_message, 0, 13) == "commit failed"
+    g_lens_commit_mode = LENS_COMMIT_PLAIN
+}
+
 fn finish_head() {
     let deadline = os_time() + 20.0
     loop g_lens_head_running && os_time() < deadline {
@@ -787,6 +865,7 @@ fn main() {
     check_search_scan(base)
     check_change_list(base)
     check_partial_commit(base)
+    check_commit_modes(base)
     check_head(base)
     check_diff_seed(base)
     check_branches(base)

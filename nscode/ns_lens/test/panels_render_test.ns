@@ -95,6 +95,13 @@ fn main() {
     assert g_lens_commit_changes == 22
     lens_commit_toggle(3)
     g_lens_commit_scroll = 4
+    // The Commit button's mode menu drops below it, or opens above it when
+    // the status bar leaves no room.
+    g_lens_commit_mode = LENS_COMMIT_PUSH
+    g_lens_commit_menu_open = true
+    assert lens_commit_menu_y(800.0) == lens_commit_button_y(800.0) + LENS_COMMIT_BUTTON_H + 2.0
+    assert lens_commit_menu_y(470.0) == lens_commit_button_y(470.0) - 2.0 - lens_commit_menu_h()
+    assert lens_commit_menu_x(1280.0) + LENS_COMMIT_MENU_W == lens_commit_x(1280.0) + LENS_COMMIT_W - 16.0
     for n in 0 to 2 {
         ui_begin_frame(r)
         render_lens(r, v, 1280, 800)
@@ -103,6 +110,8 @@ fn main() {
     assert lens_commit_h() == LENS_COMMIT_LIST_Y + 12.0 * LENS_COMMIT_ROW_H + 76.0
     assert lens_commit_scroll_max() == 10
     g_lens_commit_open = false
+    g_lens_commit_menu_open = false
+    g_lens_commit_mode = LENS_COMMIT_PLAIN
 
     // Open Recent ends in a separator and Clear Recent.
     g_recent[0] = root
