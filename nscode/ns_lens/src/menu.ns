@@ -20,8 +20,8 @@ lit LENS_FILE_IGNORE = 5
 // Open Recent's submenu opens to the right of the File popup, level with its
 // row.
 lit LENS_RECENT_W = 420.0
-// The View menu follows File and the map mode menu in the top bar.
-lit LENS_VIEW_X = 172.0
+// The top bar reads File, View, then the map mode menu.
+lit LENS_VIEW_X = LENS_FILE_X + LENS_FILE_W + 8.0
 lit LENS_VIEW_W = 64.0
 lit LENS_VIEW_MENU_W = 150.0
 lit LENS_VIEW_ITEMS = 2

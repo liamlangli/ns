@@ -717,8 +717,8 @@ fn lens_open(index: i32) bool {
     return g_lens_editing
 }
 
-// The map menu sits just right of File.
-fn lens_mode_x() f64 { return LENS_FILE_X + LENS_FILE_W + 8.0 }
+// The map menu sits just right of View.
+fn lens_mode_x() f64 { return LENS_VIEW_X + LENS_VIEW_W + 8.0 }
 
 // Apply the panel state just loaded for a project: the outline follows its
 // saved open flag, and the shell is restarted in the new workspace root. A

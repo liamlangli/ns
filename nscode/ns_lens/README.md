@@ -83,14 +83,14 @@ snaps back to orthographic.
   the running search, commit or push with its progress, and the latest message.
 - The menu bar contains dropdown menus only; other controls belong in floating
   panels, dialogs, the canvas or the status area.
-- The menu right of **File** switches the map. **code** shows recognized
+- The menu right of **View** switches the map. **code** shows recognized
   source files (`.c`, `.h`, `.ns`, `.ts`, `.js`, and the other languages Lens
   already knows). **change** shows files Git reports as staged, unstaged, or
   untracked in the opened folder. **full** shows every scanned file. A file
   that is not text is a name tile; a deleted file has no leaf. Cmd+1, Cmd+2,
   Cmd+3 and Cmd+4 select **code**, **ref**, **change** and **full** directly;
   the dropdown labels each shortcut.
-- **View** (right of the map menu) opens two floating panels, each of which can
+- **View** (right of **File**) opens two floating panels, each of which can
   be dragged by its title bar, resized from every edge and corner (the grip in
   the lower-right corner marks it), and closed with its **x**. **Outline** and
   **Terminal** are independent toggles. Both float over the map on the shared
