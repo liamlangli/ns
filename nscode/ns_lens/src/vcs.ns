@@ -49,7 +49,8 @@ let g_lens_sync_root = ""
 let g_lens_fetch_next: f64 = 0.0
 let g_lens_status_next: f64 = 0.0
 // Status bar buttons as last drawn: the down arrow pulls, the up arrow
-// pushes. Zero width while the counts are unknown.
+// pushes. Zero width while no branch is checked out and the counts are
+// unknown.
 let g_lens_sync_y: f64 = 0.0
 let g_lens_sync_down_x: f64 = 0.0
 let g_lens_sync_down_w: f64 = 0.0
@@ -161,7 +162,13 @@ fn lens_pull_steps() [str] {
     return steps
 }
 
+// A branch without an upstream has nothing to pull; Git would only print
+// how to set one.
 fn lens_pull() {
+    if g_lens_sync_behind < 0 {
+        g_lens_message = "No upstream to pull from; the up arrow publishes this branch"
+        return
+    }
     lens_job_start(LENS_JOB_PULL, lens_pull_steps())
 }
 
@@ -408,13 +415,14 @@ fn lens_job_fraction() f64 {
 }
 
 // Status bar: a down arrow with the upstream commits not pulled yet, then an
-// up arrow with the local commits not pushed. Returns the width it used, 0
-// when the branch has no upstream.
+// up arrow with the local commits not pushed. A branch without an upstream
+// keeps both arrows, without counts, so the up arrow can publish it. Returns
+// the width it used, 0 outside a branch.
 fn lens_draw_sync(r: ref ui_renderer, x: f64, y: f64) f64 {
     g_lens_sync_y = y
     g_lens_sync_down_w = 0.0
     g_lens_sync_up_w = 0.0
-    if g_lens_sync_ahead < 0 || g_lens_sync_behind < 0 {
+    if (g_lens_sync_ahead < 0 || g_lens_sync_behind < 0) && g_lens_branch == "" {
         return 0.0
     }
     g_lens_sync_down_x = x
@@ -440,14 +448,18 @@ fn lens_sync_button_at(mx: f64, my: f64) i32 {
 }
 
 // One button, an arrow and its count, in a 28 px status bar at `y`; it
-// lights up under the pointer. The atlas has no arrow glyphs, so the arrow
-// is a stem and a triangle head.
+// lights up under the pointer. An unknown count (-1) shows the arrow alone,
+// the up arrow bright since it publishes. The atlas has no arrow glyphs, so
+// the arrow is a stem and a triangle head.
 fn lens_draw_sync_count(r: ref ui_renderer, x: f64, y: f64, count: i32, down: bool) f64 {
     let color = col_muted()
-    if count > 0 {
+    if count > 0 || (count < 0 && down == false) {
         color = col_text()
     }
-    let label = itos(count)
+    let label = ""
+    if count >= 0 {
+        label = itos(count)
+    }
     let label_w = ui_text_width(r, label, small_px(), FONT_MONO())
     let w = 11.0 + label_w + 10.0
     if g_mouse_x >= x - 4.0 && g_mouse_x < x - 4.0 + w && g_mouse_y >= y + 4.0 && g_mouse_y < y + 24.0 {

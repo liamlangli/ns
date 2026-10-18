@@ -22,6 +22,8 @@ lit LENS_BRANCH_ROW_REMOTE = -3
 lit LENS_BRANCH_ROW_DELETE = -4
 lit LENS_BRANCH_CREATE_W = 420.0
 lit LENS_BRANCH_CREATE_H = 150.0
+// The status bar shortens a longer branch name to this width.
+lit LENS_BRANCH_LABEL_W = 150.0
 
 // The checked-out branch, "" when HEAD is detached or the folder is not in a
 // repository; the detached commit's short hash, "" on a branch.
@@ -628,6 +630,35 @@ fn lens_remote_click() {
     }
 }
 
+// `text` within `room` px at the status bar's size. A longer one keeps its
+// start and its end around "...", cut at character boundaries: branch names
+// often share a prefix and differ only at their end.
+fn lens_fit_middle(r: ref ui_renderer, text: str, room: f64) str {
+    let full = ui_text_width(r, text, small_px(), FONT_MONO())
+    if full <= room {
+        return text
+    }
+    let dots = ui_text_width(r, "...", small_px(), FONT_MONO())
+    // Start from the share of bytes the width allows, then drop one at a time.
+    let keep = clamp_i(((text.len as f64) * (room - dots) / full) as i32 + 1, 0, text.len)
+    loop keep > 0 {
+        let head = (keep + 1) / 2
+        loop head > 0 && (lens_byte(text, head) & 192) == 128 {
+            head = head - 1
+        }
+        let tail = text.len - keep / 2
+        loop tail < text.len && (lens_byte(text, tail) & 192) == 128 {
+            tail = tail + 1
+        }
+        let cut = substr(text, 0, head) + "..." + substr(text, tail, text.len - tail)
+        if ui_text_width(r, cut, small_px(), FONT_MONO()) <= room {
+            return cut
+        }
+        keep = keep - 1
+    }
+    return "..."
+}
+
 // A branch: a trunk with a commit at each end, joined by a line from a
 // commit at the top right. The atlas has no branch glyph.
 fn lens_draw_branch_icon(r: ref ui_renderer, x: f64, cy: f64, color: u32) {
@@ -640,18 +671,19 @@ fn lens_draw_branch_icon(r: ref ui_renderer, x: f64, cy: f64, color: u32) {
 }
 
 // Status bar, in a 28 px bar at `y`: the branch icon, the branch name or the
-// detached commit, and a caret toward the menu above. It lights up under the
-// pointer and while the menu is open. Returns the width it used, 0 outside a
+// detached commit, shortened past LENS_BRANCH_LABEL_W (the menu shows it
+// whole), and a caret toward the menu above. It lights up under the pointer
+// and while the menu is open. Returns the width it used, 0 outside a
 // repository.
 fn lens_draw_branch(r: ref ui_renderer, x: f64, y: f64) f64 {
     g_lens_branch_x = x
     g_lens_branch_y = y
     g_lens_branch_w = 0.0
-    let label = lens_branch_label()
-    if label == "" {
+    if lens_branch_label() == "" {
         return 0.0
     }
-    let label_w = clamp(ui_text_width(r, label, small_px(), FONT_MONO()), 0.0, 240.0)
+    let label = lens_fit_middle(r, lens_branch_label(), LENS_BRANCH_LABEL_W)
+    let label_w = ui_text_width(r, label, small_px(), FONT_MONO())
     let w = label_w + 34.0
     g_lens_branch_w = w
     let color = col_text()

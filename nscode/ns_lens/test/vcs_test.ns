@@ -655,6 +655,11 @@ fn check_branches(base: str) {
     finish_job()
     assert g_lens_message == "created feature-one"
     assert g_lens_branch == "feature-one" && g_lens_branch_local_count == 2
+    // No upstream yet: the down arrow explains, and the up arrow publishes.
+    assert g_lens_sync_behind == -1 && g_lens_sync_ahead == -1
+    lens_pull()
+    assert g_lens_job_running == false
+    assert g_lens_message == "No upstream to pull from; the up arrow publishes this branch"
     assert lens_branch_has("feature-one") && lens_branch_has("main")
     // A taken name keeps the dialog open.
     lens_branch_create_show()

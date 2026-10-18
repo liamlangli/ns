@@ -202,9 +202,12 @@ snaps back to orthographic.
   background every five minutes, and after opening a project. Both are
   buttons: the down arrow runs `git fetch` then `git pull --rebase` (Git
   refuses while the work tree has uncommitted changes, and Lens shows why),
-  and the up arrow pushes.
+  and the up arrow pushes. On a branch without an upstream both arrows stay,
+  without counts: the up arrow publishes the branch to `origin`, and the down
+  arrow says there is nothing to pull from.
 - Right of the arrows, the branch button names the checked-out branch (or the
-  commit of a detached HEAD); Lens reads it again every five seconds and after
+  commit of a detached HEAD), shortening a long name in the middle so its
+  start and end stay readable; Lens reads it again every five seconds and after
   every Git command, so a switch made in a terminal shows up. Clicking it opens
   a menu above it:
   - **Create Branch...** asks for a name and creates the branch at HEAD,

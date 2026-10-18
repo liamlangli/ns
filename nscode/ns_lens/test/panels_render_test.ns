@@ -135,6 +135,22 @@ fn main() {
     }
     assert g_lens_branch_w > 0.0
     assert lens_branch_button_at(g_lens_branch_x + 2.0, g_lens_branch_y + 14.0)
+    // The folder has no upstream, yet a checked-out branch keeps both arrows,
+    // with the branch button right of them.
+    assert g_lens_sync_ahead == -1 && g_lens_sync_down_w > 0.0 && g_lens_sync_up_w > 0.0
+    assert g_lens_branch_x >= g_lens_sync_up_x + g_lens_sync_up_w
+    // A long name keeps its start and end within the label width.
+    assert lens_fit_middle(r, "main", LENS_BRANCH_LABEL_W) == "main"
+    let long = lens_fit_middle(r, "claude/kind-elbakyan-b294ee-and-more", LENS_BRANCH_LABEL_W)
+    assert ui_text_width(r, long, small_px(), FONT_MONO()) <= LENS_BRANCH_LABEL_W
+    let dots = lens_search_find(long, 0, long.len, "...", false)
+    assert dots >= 7 && substr(long, 0, 7) == "claude/"
+    assert substr(long, long.len - 4, 4) == "more"
+    let wide = lens_fit_middle(r, "\u{529f}\u{80fd}\u{5f88}\u{957f}\u{7684}\u{5206}\u{652f}\u{540d}\u{79f0}\u{5f88}\u{957f}\u{5f88}\u{957f}\u{5f88}\u{957f}\u{5f88}\u{957f}", 80.0)
+    let wide_dots = lens_search_find(wide, 0, wide.len, "...", false)
+    // Three-byte characters only, so whole ones leave both cuts at multiples
+    // of three.
+    assert wide_dots > 0 && (wide_dots % 3) == 0 && ((wide.len - wide_dots - 3) % 3) == 0
     lens_branch_show()
     settle_jobs()
     lens_branch_apply("feature/branch_3", "", branches + "main\n", remotes)
