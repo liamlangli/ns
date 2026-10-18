@@ -14,7 +14,7 @@ lit OUTLINE_ROW_H = 20.0
 lit OUTLINE_TOOLBAR_H = 36.0
 lit OUTLINE_FOOTER_H = 22.0
 lit OUTLINE_PROMPT_H = 118.0
-lit OUTLINE_MIN_W = 300.0
+lit OUTLINE_MIN_W = 150.0
 lit OUTLINE_MIN_H = 220.0
 // Pixels the list moves per unit of wheel travel, the code view's rate. A
 // macOS trackpad reports points, so the rows follow the fingers smoothly
@@ -309,11 +309,11 @@ fn outline_clamp(w: f64, h: f64) {
 }
 
 fn outline_list_y() f64 {
-    return g_outline_y + OUTLINE_TOOLBAR_H + OUTLINE_TOOL_H
+    return g_outline_y + OUTLINE_TOOLBAR_H + (outline_tool_rows() as f64) * OUTLINE_TOOL_H
 }
 
 fn outline_list_h() f64 {
-    return clamp(g_outline_h - OUTLINE_TOOLBAR_H - OUTLINE_TOOL_H - OUTLINE_FOOTER_H, OUTLINE_ROW_H, 10000.0)
+    return clamp(g_outline_h - OUTLINE_TOOLBAR_H - (outline_tool_rows() as f64) * OUTLINE_TOOL_H - OUTLINE_FOOTER_H, OUTLINE_ROW_H, 10000.0)
 }
 
 fn outline_scroll_max() f64 {
@@ -609,18 +609,58 @@ fn outline_prompt_active() bool {
     return g_outline_open && g_outline_prompt != OUTLINE_PROMPT_NONE
 }
 
-// Buttons of the toolbar, left to right: new file, new folder, rename, all.
-fn outline_tool_button_x(i: i32) f64 {
-    if i == 0 {
-        return g_outline_x + 10.0
+// Buttons of the toolbar, left to right: new file, new folder, rename, and
+// all while the map is scoped.
+fn outline_tool_label(i: i32) str {
+    if i == 0 { return "+ file" }
+    if i == 1 { return "+ folder" }
+    if i == 2 { return "rename" }
+    return "all"
+}
+
+fn outline_tool_w(i: i32) f64 {
+    if i == 1 { return 68.0 }
+    if i == 3 { return 40.0 }
+    return 56.0
+}
+
+// Where button `i` sits. The buttons flow left to right and wrap onto
+// another row when the panel is too narrow for them; all keeps to the right
+// end of the last row.
+fn outline_tool_rect(i: i32) panel_rect {
+    let left = g_outline_x + 10.0
+    let right = g_outline_x + g_outline_w - 10.0
+    let top = g_outline_y + OUTLINE_TOOLBAR_H + 4.0
+    let x = left
+    let row: i32 = 0
+    for k in 0 to 3 {
+        let bw = outline_tool_w(k)
+        if x > left && x + bw > right {
+            row = row + 1
+            x = left
+        }
+        if k == i {
+            return panel_rect(x, top + (row as f64) * OUTLINE_TOOL_H, bw, 24.0)
+        }
+        x = x + bw + 4.0
     }
-    if i == 1 {
-        return g_outline_x + 76.0
+    let bw = outline_tool_w(3)
+    if x + bw > right {
+        row = row + 1
     }
-    if i == 2 {
-        return g_outline_x + 150.0
+    return panel_rect(right - bw, top + (row as f64) * OUTLINE_TOOL_H, bw, 24.0)
+}
+
+fn outline_tool_count() i32 {
+    if g_lens_scope_path != "" {
+        return 4
     }
-    return g_outline_x + g_outline_w - 54.0
+    return 3
+}
+
+fn outline_tool_rows() i32 {
+    let last = outline_tool_rect(outline_tool_count() - 1)
+    return ((last.y - g_outline_y - OUTLINE_TOOLBAR_H) / OUTLINE_TOOL_H) as i32 + 1
 }
 
 fn outline_prompt_x() f64 { return g_outline_x + 12.0 }
@@ -628,6 +668,17 @@ fn outline_prompt_x() f64 { return g_outline_x + 12.0 }
 fn outline_prompt_y() f64 { return g_outline_y + OUTLINE_TOOLBAR_H + 4.0 }
 
 fn outline_prompt_w() f64 { return g_outline_w - 24.0 }
+
+// The prompt's cancel (0) and apply (1) buttons share its bottom row and
+// narrow with a narrow panel.
+fn outline_prompt_button(i: i32) panel_rect {
+    let bw = clamp((outline_prompt_w() - 32.0) * 0.5, 0.0, 78.0)
+    let x = outline_prompt_x() + outline_prompt_w() - 12.0 - bw
+    if i == 0 {
+        x = x - bw - 8.0
+    }
+    return panel_rect(x, outline_prompt_y() + OUTLINE_PROMPT_H - 34.0, bw, 24.0)
+}
 
 fn outline_mouse(v: ref view, w: f64, h: f64) {
     if g_outline_open == false {
@@ -647,9 +698,11 @@ fn outline_mouse(v: ref view, w: f64, h: f64) {
             let px = outline_prompt_x()
             let py = outline_prompt_y()
             let pw = outline_prompt_w()
-            if raw_hit(v, px + pw - 178.0, py + OUTLINE_PROMPT_H - 34.0, 74.0, 24.0) {
+            let cancel = outline_prompt_button(0)
+            let apply = outline_prompt_button(1)
+            if raw_hit(v, cancel.x, cancel.y, cancel.w, cancel.h) {
                 outline_prompt_close()
-            } else if raw_hit(v, px + pw - 94.0, py + OUTLINE_PROMPT_H - 34.0, 82.0, 24.0) {
+            } else if raw_hit(v, apply.x, apply.y, apply.w, apply.h) {
                 outline_prompt_submit()
             } else if inside && raw_hit(v, px, py, pw, OUTLINE_PROMPT_H) == false {
                 outline_prompt_close()
@@ -690,26 +743,21 @@ fn outline_mouse(v: ref view, w: f64, h: f64) {
             return
         }
         // Toolbar.
-        let ty = g_outline_y + OUTLINE_TOOLBAR_H
-        if raw_hit(v, outline_tool_button_x(0), ty + 4.0, 62.0, 24.0) {
-            outline_begin_prompt(OUTLINE_PROMPT_FILE)
-            v.mouse_pressed = false
-            return
-        }
-        if raw_hit(v, outline_tool_button_x(1), ty + 4.0, 70.0, 24.0) {
-            outline_begin_prompt(OUTLINE_PROMPT_FOLDER)
-            v.mouse_pressed = false
-            return
-        }
-        if raw_hit(v, outline_tool_button_x(2), ty + 4.0, 62.0, 24.0) {
-            outline_begin_prompt(OUTLINE_PROMPT_RENAME)
-            v.mouse_pressed = false
-            return
-        }
-        if raw_hit(v, outline_tool_button_x(3), ty + 4.0, 44.0, 24.0) {
-            lens_scope_clear()
-            v.mouse_pressed = false
-            return
+        for i in 0 to outline_tool_count() {
+            let b = outline_tool_rect(i)
+            if raw_hit(v, b.x, b.y, b.w, b.h) {
+                if i == 0 {
+                    outline_begin_prompt(OUTLINE_PROMPT_FILE)
+                } else if i == 1 {
+                    outline_begin_prompt(OUTLINE_PROMPT_FOLDER)
+                } else if i == 2 {
+                    outline_begin_prompt(OUTLINE_PROMPT_RENAME)
+                } else {
+                    lens_scope_clear()
+                }
+                v.mouse_pressed = false
+                return
+            }
         }
         // Title bar drag.
         if raw_hit(v, g_outline_x, title_y, g_outline_w, OUTLINE_TITLE_H) {
@@ -806,12 +854,9 @@ fn outline_draw_close(r: ref ui_renderer, v: ref view) {
 }
 
 fn outline_draw_toolbar(r: ref ui_renderer, v: ref view) {
-    let y = g_outline_y + OUTLINE_TOOLBAR_H + 4.0
-    lens_draw_button(r, v, outline_tool_button_x(0), y, 62.0, 24.0, "+ file", false)
-    lens_draw_button(r, v, outline_tool_button_x(1), y, 70.0, 24.0, "+ folder", false)
-    lens_draw_button(r, v, outline_tool_button_x(2), y, 62.0, 24.0, "rename", false)
-    if g_lens_scope_path != "" {
-        lens_draw_button(r, v, outline_tool_button_x(3), y, 44.0, 24.0, "all", true)
+    for i in 0 to outline_tool_count() {
+        let b = outline_tool_rect(i)
+        lens_draw_button(r, v, b.x, b.y, b.w, b.h, outline_tool_label(i), i == 3)
     }
 }
 
@@ -882,7 +927,7 @@ fn outline_draw_row(r: ref ui_renderer, v: ref view, index: i32, pos: i32) {
         let lw = ui_text_width(r, letter, small_px(), FONT_MONO())
         let lx = x + g_outline_w - 16.0 - lw
         draw_text_clipped(r, lx, ty, lw, OUTLINE_ROW_H, letter, small_px(), color)
-        name_w = lx - 8.0 - (button_x + 20.0)
+        name_w = clamp(lx - 8.0 - (button_x + 20.0), 0.0, 10000.0)
     }
     draw_text_clipped(r, button_x + 20.0, ty, name_w, OUTLINE_ROW_H, name, small_px(), color)
 }
@@ -906,8 +951,10 @@ fn outline_draw_prompt(r: ref ui_renderer, v: ref view) {
     } else {
         label = "Create"
     }
-    lens_draw_button(r, v, x + w - 178.0, y + OUTLINE_PROMPT_H - 34.0, 74.0, 24.0, "Cancel", false)
-    lens_draw_button(r, v, x + w - 94.0, y + OUTLINE_PROMPT_H - 34.0, 82.0, 24.0, label, true)
+    let cancel = outline_prompt_button(0)
+    let apply = outline_prompt_button(1)
+    lens_draw_button(r, v, cancel.x, cancel.y, cancel.w, cancel.h, "Cancel", false)
+    lens_draw_button(r, v, apply.x, apply.y, apply.w, apply.h, label, true)
 }
 
 fn outline_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {

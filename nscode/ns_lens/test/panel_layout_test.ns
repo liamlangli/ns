@@ -263,9 +263,31 @@ fn main() {
     g_outline_h = 400.0
     press_outline(v, g_outline_x + 3.0, g_outline_y + 200.0)
     drag_outline(v, g_outline_x + 1000.0, g_outline_y + 200.0)
-    check("resize stops at the minimum width", g_outline_w == 300.0)
+    check("resize stops at the minimum width", g_outline_w == 150.0)
     check("minimum width keeps the right edge fixed", g_outline_x + g_outline_w == 520.0)
     release_outline(v)
+
+    // At the minimum width the toolbar wraps onto a second row, every button
+    // stays inside the panel, and the list starts below the last row.
+    lens_scope_clear()
+    check("toolbar wraps at the minimum width", outline_tool_rows() == 2)
+    g_lens_scope_path = "/scoped"
+    check("scope button keeps two rows", outline_tool_rows() == 2)
+    for i in 0 to outline_tool_count() {
+        let b = outline_tool_rect(i)
+        check("toolbar button inside the narrow panel", b.x >= g_outline_x + 10.0 && b.x + b.w <= g_outline_x + g_outline_w - 10.0)
+        check("toolbar button above the list", b.y + b.h <= outline_list_y())
+    }
+    g_lens_scope_path = ""
+    let cancel = outline_prompt_button(0)
+    let apply = outline_prompt_button(1)
+    check("prompt buttons fit the narrow prompt", cancel.x >= outline_prompt_x() + 12.0 && apply.x + apply.w <= outline_prompt_x() + outline_prompt_w() - 12.0)
+    check("prompt buttons do not overlap", cancel.x + cancel.w < apply.x)
+    g_outline_w = 320.0
+    check("toolbar keeps one row when wide", outline_tool_rows() == 1)
+    g_lens_scope_path = "/scoped"
+    check("scope button fits the wide row", outline_tool_rows() == 1 && outline_tool_rect(3).x == g_outline_x + g_outline_w - 50.0)
+    g_lens_scope_path = ""
 
     // Pushing an edge past the view bounds stops at the margin without moving
     // the opposite edge.
