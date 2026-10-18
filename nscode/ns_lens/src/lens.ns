@@ -114,6 +114,8 @@ fn lens_float_color(color: u32) u32 {
     return (color & 0x00ffffffu) | ((LENS_FLOAT_ALPHA as u32) << 24)
 }
 lit LENS_MODE_W = 80.0
+// The dropdown is wider than the button so it can show each mode's shortcut.
+lit LENS_MODE_MENU_W = 112.0
 lit LENS_MODE_H = 20.0
 lit LENS_MODE_ITEM = 26.0
 let g_lens_view_mode: i32 = 0
@@ -715,6 +717,23 @@ fn lens_open(index: i32) bool {
 // The map menu sits just right of File.
 fn lens_mode_x() f64 { return LENS_FILE_X + LENS_FILE_W + 8.0 }
 
+// Apply the panel state just loaded for a project: the outline follows its
+// saved open flag, and the shell is restarted in the new workspace root. A
+// project without a saved layout keeps the panels as they are.
+fn lens_apply_panel_state() {
+    if g_outline_open {
+        outline_show()
+    } else {
+        outline_hide()
+    }
+    terminal_restart()
+    if g_terminal_open {
+        terminal_show()
+    } else {
+        terminal_hide()
+    }
+}
+
 // File > Open (Cmd+O): pick a folder and map it. An unsaved edit keeps the
 // current project open.
 fn lens_open_project() {
@@ -726,6 +745,9 @@ fn lens_open_project() {
     if root == "" {
         return
     }
+    // The panel layout belongs to the project being left; write it before the
+    // root changes, then adopt the new project's own layout.
+    panel_state_save()
     g_lens_editing = false
     g_lens_reading = false
     g_lens_selected_path = ""
@@ -733,8 +755,8 @@ fn lens_open_project() {
     g_lens_scope_path = ""
     outline_reset()
     workspace_open_root(root)
-    // The shell starts in the workspace root, so restart it after that changes.
-    terminal_restart()
+    panel_state_load()
+    lens_apply_panel_state()
     g_lens_target_x = 0.0
     g_lens_target_y = 0.0
     g_lens_target_distance = 1600.0
@@ -763,12 +785,41 @@ fn lens_mode_label(mode: i32) str {
     return "code"
 }
 
+fn lens_mode_key_label(mode: i32) str {
+    if mode == LENS_MODE_REF { return "cmd+2" }
+    if mode == LENS_MODE_CHANGE { return "cmd+3" }
+    if mode == LENS_MODE_FULL { return "cmd+4" }
+    return "cmd+1"
+}
+
+// Cmd+1..4 selects code, ref, change and full. The caller has already checked
+// that the command modifier is down, so a matching digit belongs to Lens.
+fn lens_mode_shortcut_keys(v: ref view) bool {
+    if key_edge(v, 49) {
+        lens_set_mode(LENS_MODE_CODE)
+        return true
+    }
+    if key_edge(v, 50) {
+        lens_set_mode(LENS_MODE_REF)
+        return true
+    }
+    if key_edge(v, 51) {
+        lens_set_mode(LENS_MODE_CHANGE)
+        return true
+    }
+    if key_edge(v, 52) {
+        lens_set_mode(LENS_MODE_FULL)
+        return true
+    }
+    return false
+}
+
 fn lens_mode_handle(v: ref view, w: f64) {
     let x = lens_mode_x()
     let y = lens_mode_y()
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * 4.0
-    g_lens_mode_block = g_lens_mode_open && raw_hit(v, x, pop_y, LENS_MODE_W, pop_h)
+    g_lens_mode_block = g_lens_mode_open && raw_hit(v, x, pop_y, LENS_MODE_MENU_W, pop_h)
     if v.mouse_pressed == false {
         return
     }
@@ -821,21 +872,24 @@ fn lens_draw_mode_menu(r: ref ui_renderer, v: ref view, w: f64) {
     }
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * 4.0
-    ui_fill_round_rect(r, x, pop_y, LENS_MODE_W, pop_h, 3.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, x, pop_y, LENS_MODE_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
+    ui_fill_round_rect(r, x, pop_y, LENS_MODE_MENU_W, pop_h, 3.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, pop_y, LENS_MODE_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
     for row in 0 to 4 {
         let i = lens_mode_at(row)
         let iy = pop_y + (row as f64) * LENS_MODE_ITEM
-        let hot = raw_hit(v, x, iy, LENS_MODE_W, LENS_MODE_ITEM)
+        let hot = raw_hit(v, x, iy, LENS_MODE_MENU_W, LENS_MODE_ITEM)
         if hot || i == g_lens_view_mode {
-            ui_fill_rect(r, x + 1.0, iy, LENS_MODE_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+            ui_fill_rect(r, x + 1.0, iy, LENS_MODE_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
         }
         let color = col_text()
         if i == g_lens_view_mode {
             color = col_accent()
         }
         let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
-        draw_text_clipped(r, x + 10.0, row_ty, LENS_MODE_W - 16.0, LENS_MODE_ITEM, lens_mode_label(i), small_px(), color)
+        let keys = lens_mode_key_label(i)
+        let kw = ui_text_width(r, keys, small_px(), FONT_MONO())
+        draw_text_clipped(r, x + 10.0, row_ty, clamp(LENS_MODE_MENU_W - 20.0 - kw, 20.0, 200.0), LENS_MODE_ITEM, lens_mode_label(i), small_px(), color)
+        draw_text_clipped(r, x + LENS_MODE_MENU_W - 10.0 - kw, row_ty, kw, LENS_MODE_ITEM, keys, small_px(), col_muted())
     }
 }
 

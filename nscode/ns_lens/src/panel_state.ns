@@ -1,0 +1,151 @@
+// Floating-panel layout state, kept beside the outline's fold state under the
+// opened project's bin/ns_lens/. It records whether the outline and terminal
+// are open and where each panel sits, so a later launch reopens the panels at
+// the size and place the user left them. A missing or unreadable file keeps
+// the built-in defaults.
+use std
+use os
+
+// Tests that scan a real project can turn this off without disabling the
+// outline's own expanded-folder state.
+let g_panel_state = true
+
+fn panel_state_path() str {
+    return workspace_join_root("bin/ns_lens/layout")
+}
+
+fn panel_state_save_allowed() bool {
+    if g_panel_state == false || g_workspace_state == false {
+        return false
+    }
+    return g_workspace_root != ""
+}
+
+fn panel_state_flag(open: bool) str {
+    if open {
+        return "1"
+    }
+    return "0"
+}
+
+fn panel_state_save() {
+    if panel_state_save_allowed() == false {
+        return
+    }
+    if os_make_dirs(workspace_join_root("bin/ns_lens")) == 0 {
+        return
+    }
+    let text = "outline.open=" + panel_state_flag(g_outline_open) + "\n"
+    // Geometry is written only after a panel has actually been shown. A panel
+    // that was never opened keeps its built-in placement, so a fresh project
+    // with only the outline open does not pin the terminal to the outline's
+    // placeholder coordinates.
+    if g_outline_ready {
+        text = text + "outline.x=" + ftos(g_outline_x) + "\n"
+        text = text + "outline.y=" + ftos(g_outline_y) + "\n"
+        text = text + "outline.w=" + ftos(g_outline_w) + "\n"
+        text = text + "outline.h=" + ftos(g_outline_h) + "\n"
+    }
+    text = text + "terminal.open=" + panel_state_flag(g_terminal_open) + "\n"
+    if g_terminal_ready {
+        text = text + "terminal.x=" + ftos(g_terminal_x) + "\n"
+        text = text + "terminal.y=" + ftos(g_terminal_y) + "\n"
+        text = text + "terminal.w=" + ftos(g_terminal_w) + "\n"
+        text = text + "terminal.h=" + ftos(g_terminal_h) + "\n"
+    }
+    os_write_file_atomic(panel_state_path(), text)
+}
+
+// Apply one "key=value" line. Unknown keys are ignored so a newer file still
+// opens in an older build.
+fn panel_state_apply(key: str, value: str) {
+    let n = stof(value)
+    if key == "outline.open" {
+        g_outline_open = n != 0.0
+    } else if key == "outline.x" {
+        g_outline_x = n
+        g_outline_ready = true
+    } else if key == "outline.y" {
+        g_outline_y = n
+        g_outline_ready = true
+    } else if key == "outline.w" {
+        if n >= OUTLINE_MIN_W {
+            g_outline_w = n
+            g_outline_ready = true
+        }
+    } else if key == "outline.h" {
+        if n >= OUTLINE_MIN_H {
+            g_outline_h = n
+            g_outline_ready = true
+        }
+    } else if key == "terminal.open" {
+        g_terminal_open = n != 0.0
+    } else if key == "terminal.x" {
+        g_terminal_x = n
+        g_terminal_ready = true
+    } else if key == "terminal.y" {
+        g_terminal_y = n
+        g_terminal_ready = true
+    } else if key == "terminal.w" {
+        if n >= TERM_MIN_W {
+            g_terminal_w = n
+            g_terminal_ready = true
+        }
+    } else if key == "terminal.h" {
+        if n >= TERM_MIN_H {
+            g_terminal_h = n
+            g_terminal_ready = true
+        }
+    }
+}
+
+fn panel_state_load() {
+    if panel_state_save_allowed() == false {
+        return
+    }
+    let text = os_read_file(panel_state_path())
+    if text == "" {
+        return
+    }
+    let start: i32 = 0
+    for i in 0 to text.len + 1 {
+        let c: i32 = 10
+        if i < text.len {
+            c = (text[i] as i32) & 255
+        }
+        if i == text.len || c == 10 {
+            let end = i
+            if end > start && ((text[end - 1] as i32) & 255) == 13 {
+                end = end - 1
+            }
+            if end > start {
+                let eq: i32 = -1
+                for j in start to end {
+                    if eq < 0 && ((text[j] as i32) & 255) == 61 {
+                        eq = j
+                    }
+                }
+                if eq > start {
+                    panel_state_apply(substr(text, start, eq - start), substr(text, eq + 1, end - eq - 1))
+                }
+            }
+            start = i + 1
+        }
+    }
+}
+
+// Reopen the panels the saved layout marked open. The outline takes pointer
+// input only; a restored terminal does not steal the keyboard from the map.
+fn panel_state_restore() {
+    if g_panel_state == false {
+        return
+    }
+    if g_outline_open {
+        outline_show()
+    }
+    if g_terminal_open {
+        terminal_show()
+        g_terminal_focus = false
+        g_lens_input_dirty = true
+    }
+}

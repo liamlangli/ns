@@ -16,6 +16,7 @@ fn main() {
         g_workspace_root = os_cwd()
     }
     workspace_init()
+    panel_state_load()
     let v = view_create("ns_lens", 1280, 800)
     if gpu_request_device(v) {
         let r = ui_renderer_create(v)
@@ -26,10 +27,13 @@ fn main() {
             reset_view_input(frame)
         })
         v.on_terminate({ dead in
+            // Save before shutdown clears the terminal's open flag.
+            panel_state_save()
             os_watch_stop()
             terminal_shutdown()
             ui_renderer_destroy(r)
         })
+        panel_state_restore()
         view_run(v)
     } else {
         print("ns_lens: GPU backend unavailable\n")

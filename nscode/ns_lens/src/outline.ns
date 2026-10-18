@@ -16,7 +16,6 @@ lit OUTLINE_FOOTER_H = 22.0
 lit OUTLINE_PROMPT_H = 118.0
 lit OUTLINE_MIN_W = 300.0
 lit OUTLINE_MIN_H = 220.0
-lit OUTLINE_RESIZE = 14.0
 
 // Prompt kinds.
 lit OUTLINE_PROMPT_NONE = 0
@@ -49,11 +48,15 @@ let g_outline_selected_path = ""
 let g_outline_scroll: i32 = 0
 let g_outline_generation: i32 = -1
 let g_outline_dragging = false
-let g_outline_resizing = false
+let g_outline_resize_edges: i32 = PANEL_EDGE_NONE
+let g_outline_resize_x: f64 = 0.0
+let g_outline_resize_y: f64 = 0.0
+let g_outline_resize_w: f64 = 0.0
+let g_outline_resize_h: f64 = 0.0
+let g_outline_resize_px: f64 = 0.0
+let g_outline_resize_py: f64 = 0.0
 let g_outline_grab_x: f64 = 0.0
 let g_outline_grab_y: f64 = 0.0
-let g_outline_grab_w: f64 = 0.0
-let g_outline_grab_h: f64 = 0.0
 let g_outline_prompt = OUTLINE_PROMPT_NONE
 let g_outline_prompt_text = ""
 let g_outline_prompt_fresh = false
@@ -244,7 +247,7 @@ fn outline_reset() {
     g_outline_prompt = OUTLINE_PROMPT_NONE
     g_outline_prompt_error = ""
     g_outline_dragging = false
-    g_outline_resizing = false
+    g_outline_resize_edges = PANEL_EDGE_NONE
 }
 
 fn outline_show() {
@@ -257,14 +260,16 @@ fn outline_show() {
         g_outline_w = 320.0
         g_outline_h = 480.0
     }
+    panel_state_save()
 }
 
 fn outline_hide() {
     g_outline_open = false
     g_outline_prompt = OUTLINE_PROMPT_NONE
     g_outline_dragging = false
-    g_outline_resizing = false
+    g_outline_resize_edges = PANEL_EDGE_NONE
     g_lens_input_dirty = true
+    panel_state_save()
 }
 
 fn outline_open() bool {
@@ -288,8 +293,10 @@ fn outline_blocks_pointer(v: ref view) bool {
 }
 
 fn outline_clamp(w: f64, h: f64) {
-    g_outline_w = clamp(g_outline_w, OUTLINE_MIN_W, clamp(w - 16.0, OUTLINE_MIN_W, 900.0))
-    g_outline_h = clamp(g_outline_h, OUTLINE_MIN_H, clamp(h - 48.0, OUTLINE_MIN_H, 1000.0))
+    // The panel must fit between the top bar and the status bar, so the
+    // largest useful height is the window minus both bars and the margins.
+    g_outline_w = clamp(g_outline_w, OUTLINE_MIN_W, clamp(w - 8.0, OUTLINE_MIN_W, 10000.0))
+    g_outline_h = clamp(g_outline_h, OUTLINE_MIN_H, clamp(h - STATUS_BAR_H - LENS_TOP_BAR_H - 12.0, OUTLINE_MIN_H, 10000.0))
     g_outline_x = clamp(g_outline_x, 4.0, clamp(w - g_outline_w - 4.0, 4.0, 10000.0))
     let min_y = LENS_TOP_BAR_H + 4.0
     let max_y = clamp(h - STATUS_BAR_H - g_outline_h - 8.0, min_y, 10000.0)
@@ -657,13 +664,17 @@ fn outline_mouse(v: ref view, w: f64, h: f64) {
             v.mouse_pressed = false
             return
         }
-        // Resize the bottom-right corner.
-        if raw_hit(v, g_outline_x + g_outline_w - OUTLINE_RESIZE, g_outline_y + g_outline_h - OUTLINE_RESIZE, OUTLINE_RESIZE, OUTLINE_RESIZE) {
-            g_outline_resizing = true
-            g_outline_grab_x = g_mouse_x
-            g_outline_grab_y = g_mouse_y
-            g_outline_grab_w = g_outline_w
-            g_outline_grab_h = g_outline_h
+        // Resize from any edge or corner. The band is checked before the
+        // title drag so the panel frame behaves like a window frame.
+        let edges = panel_edge_mask(g_outline_x, g_outline_y, g_outline_w, g_outline_h)
+        if edges != PANEL_EDGE_NONE {
+            g_outline_resize_edges = edges
+            g_outline_resize_x = g_outline_x
+            g_outline_resize_y = g_outline_y
+            g_outline_resize_w = g_outline_w
+            g_outline_resize_h = g_outline_h
+            g_outline_resize_px = g_mouse_x
+            g_outline_resize_py = g_mouse_y
             v.mouse_pressed = false
             return
         }
@@ -752,15 +763,22 @@ fn outline_mouse(v: ref view, w: f64, h: f64) {
         outline_clamp(w, h)
         return
     }
-    if g_outline_resizing && v.mouse_down {
-        g_outline_w = g_outline_grab_w + (g_mouse_x - g_outline_grab_x)
-        g_outline_h = g_outline_grab_h + (g_mouse_y - g_outline_grab_y)
+    if g_outline_resize_edges != PANEL_EDGE_NONE && v.mouse_down {
+        let r = panel_resized_rect(g_outline_resize_x, g_outline_resize_y, g_outline_resize_w, g_outline_resize_h, g_outline_resize_edges, g_mouse_x - g_outline_resize_px, g_mouse_y - g_outline_resize_py, OUTLINE_MIN_W, OUTLINE_MIN_H, 4.0, LENS_TOP_BAR_H + 4.0, w - 4.0, h - STATUS_BAR_H - 8.0)
+        g_outline_x = r.x
+        g_outline_y = r.y
+        g_outline_w = r.w
+        g_outline_h = r.h
         outline_clamp(w, h)
         return
     }
     if v.mouse_released || !v.mouse_down {
+        let moved = g_outline_dragging || g_outline_resize_edges != PANEL_EDGE_NONE
         g_outline_dragging = false
-        g_outline_resizing = false
+        g_outline_resize_edges = PANEL_EDGE_NONE
+        if moved {
+            panel_state_save()
+        }
     }
 }
 
@@ -920,4 +938,5 @@ fn outline_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         }
     }
     draw_text_clipped(r, g_outline_x + 12.0, g_outline_y + g_outline_h - OUTLINE_FOOTER_H + 4.0, g_outline_w - 24.0, 18.0, hint, small_px(), col_muted())
+    draw_panel_grip(r, g_outline_x, g_outline_y, g_outline_w, g_outline_h)
 }

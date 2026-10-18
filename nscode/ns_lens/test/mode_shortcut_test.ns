@@ -1,0 +1,60 @@
+// Cmd+1..4 switch the map between code, ref, change and full, and the mode
+// menu names each shortcut.
+use std
+use os
+use view
+use editor
+use workspace
+
+fn check(name: str, ok: bool) {
+    if ok {
+        print("ok   " + name + unescape("\n"))
+    } else {
+        print("FAIL " + name + unescape("\n"))
+        assert false
+    }
+}
+
+fn press(v: ref view, key: i32) {
+    view_on_key_action(v, key, 0)
+}
+
+fn release(v: ref view, key: i32) {
+    view_on_key_action(v, key, 1)
+}
+
+fn main() {
+    let stamp = os_time_us() % 1000000000
+    let root = "/tmp/ns_lens_mode_keys_" + itos(stamp as i32)
+    assert os_make_dirs(root + "/src") != 0
+    assert os_write_file_atomic(root + "/src/main.ns", "use util\nfn main() {\n    helper()\n}\n") != 0
+    assert os_write_file_atomic(root + "/src/util.ns", "fn helper() {\n}\n") != 0
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    lens_rebuild()
+
+    check("mode shortcut labels", lens_mode_key_label(LENS_MODE_CODE) == "cmd+1" && lens_mode_key_label(LENS_MODE_REF) == "cmd+2" && lens_mode_key_label(LENS_MODE_CHANGE) == "cmd+3" && lens_mode_key_label(LENS_MODE_FULL) == "cmd+4")
+
+    let v = view_create("mode shortcut test", 200, 200)
+    lens_set_mode(LENS_MODE_CODE)
+    press(v, 50)
+    check("2 selects ref", lens_mode_shortcut_keys(v) && g_lens_view_mode == LENS_MODE_REF)
+    release(v, 50)
+    press(v, 51)
+    check("3 selects change", lens_mode_shortcut_keys(v) && g_lens_view_mode == LENS_MODE_CHANGE)
+    release(v, 51)
+    press(v, 52)
+    check("4 selects full", lens_mode_shortcut_keys(v) && g_lens_view_mode == LENS_MODE_FULL)
+    release(v, 52)
+    press(v, 49)
+    check("1 selects code", lens_mode_shortcut_keys(v) && g_lens_view_mode == LENS_MODE_CODE)
+    release(v, 49)
+    press(v, 53)
+    let before = g_lens_view_mode
+    check("other digits leave the mode alone", lens_mode_shortcut_keys(v) == false && g_lens_view_mode == before)
+
+    view_close(v)
+    os_watch_stop()
+    print("mode shortcut: passed" + unescape("\n"))
+}

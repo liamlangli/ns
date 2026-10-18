@@ -1,0 +1,348 @@
+// Panel layout state and frame resizing: both floating panels resize from
+// every edge and corner, and their open state plus geometry is written to the
+// project's bin/ns_lens/layout and applied again by panel_state_load.
+use std
+use os
+use view
+use editor
+use workspace
+
+fn check(name: str, ok: bool) {
+    if ok {
+        print("ok   " + name + unescape("\n"))
+    } else {
+        print("FAIL " + name + unescape("\n"))
+        assert false
+    }
+}
+
+fn state_line(text: str, line: str) bool {
+    let start: i32 = 0
+    for i in 0 to text.len + 1 {
+        let c: i32 = 10
+        if i < text.len {
+            c = (text[i] as i32) & 255
+        }
+        if i == text.len || c == 10 {
+            let len = i - start
+            if len > 0 {
+                let keep = len
+                if ((text[start + len - 1] as i32) & 255) == 13 {
+                    keep = len - 1
+                }
+                if keep > 0 && substr(text, start, keep) == line {
+                    return true
+                }
+            }
+            start = i + 1
+        }
+    }
+    return false
+}
+
+fn press_outline(v: ref view, x: f64, y: f64) {
+    g_mouse_x = x
+    g_mouse_y = y
+    v.mouse_pressed = true
+    v.mouse_released = false
+    v.mouse_down = false
+    outline_mouse(v, 1280.0, 800.0)
+    v.mouse_pressed = false
+}
+
+fn drag_outline(v: ref view, x: f64, y: f64) {
+    g_mouse_x = x
+    g_mouse_y = y
+    v.mouse_down = true
+    v.mouse_released = false
+    outline_mouse(v, 1280.0, 800.0)
+}
+
+fn release_outline(v: ref view) {
+    v.mouse_down = false
+    v.mouse_released = true
+    outline_mouse(v, 1280.0, 800.0)
+    v.mouse_released = false
+}
+
+fn press_terminal(v: ref view, x: f64, y: f64) {
+    g_mouse_x = x
+    g_mouse_y = y
+    v.mouse_pressed = true
+    v.mouse_released = false
+    v.mouse_down = false
+    terminal_mouse(v, 1280.0, 800.0)
+    v.mouse_pressed = false
+}
+
+fn drag_terminal(v: ref view, x: f64, y: f64) {
+    g_mouse_x = x
+    g_mouse_y = y
+    v.mouse_down = true
+    v.mouse_released = false
+    terminal_mouse(v, 1280.0, 800.0)
+}
+
+fn release_terminal(v: ref view) {
+    v.mouse_down = false
+    v.mouse_released = true
+    terminal_mouse(v, 1280.0, 800.0)
+    v.mouse_released = false
+}
+
+fn main() {
+    let stamp = os_time_us() % 1000000000
+    let root = "/tmp/ns_lens_layout_" + itos(stamp as i32)
+    assert os_make_dirs(root + "/src") != 0
+    assert os_write_file_atomic(root + "/src/main.ns", "fn main() {\n}\n") != 0
+
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    g_lens_view_w = 1280.0
+    g_lens_canvas_h = 800.0
+    g_panel_state = true
+
+    let path = root + "/bin/ns_lens/layout"
+    check("no layout file on first launch", os_file_size(path) < 0)
+    panel_state_load()
+    check("missing layout leaves the outline closed", g_outline_open == false)
+    check("missing layout leaves default geometry unused", g_outline_ready == false)
+
+    // Opening a panel writes its open state and current rectangle.
+    outline_show()
+    check("opening the outline writes layout", os_file_size(path) >= 0)
+    let text = os_read_file(path)
+    check("open outline is recorded", state_line(text, "outline.open=1"))
+    check("default outline width is recorded", state_line(text, "outline.w=320"))
+    check("an unopened terminal keeps no geometry", state_line(text, "terminal.x=") == false)
+
+    // Write a chosen rectangle, then reload it as a later launch would.
+    g_outline_x = 40.0
+    g_outline_y = 60.0
+    g_outline_w = 410.0
+    g_outline_h = 330.0
+    g_terminal_x = 620.0
+    g_terminal_y = 300.0
+    g_terminal_w = 600.0
+    g_terminal_h = 420.0
+    g_terminal_open = true
+    g_terminal_ready = true
+    panel_state_save()
+    text = os_read_file(path)
+    check("saved outline width", state_line(text, "outline.w=410"))
+    check("saved terminal height", state_line(text, "terminal.h=420"))
+    check("saved terminal open state", state_line(text, "terminal.open=1"))
+
+    g_outline_open = false
+    g_outline_ready = false
+    g_outline_x = 0.0
+    g_outline_y = 0.0
+    g_outline_w = 0.0
+    g_outline_h = 0.0
+    g_terminal_open = false
+    g_terminal_ready = false
+    g_terminal_x = 0.0
+    g_terminal_y = 0.0
+    g_terminal_w = 0.0
+    g_terminal_h = 0.0
+    panel_state_load()
+    check("reload restores the open outline", g_outline_open)
+    check("reload restores the outline rectangle", g_outline_x == 40.0 && g_outline_y == 60.0 && g_outline_w == 410.0 && g_outline_h == 330.0)
+    check("reload restores the open terminal", g_terminal_open)
+    check("reload restores the terminal rectangle", g_terminal_x == 620.0 && g_terminal_y == 300.0 && g_terminal_w == 600.0 && g_terminal_h == 420.0)
+
+    // Closing is persisted as well.
+    outline_hide()
+    text = os_read_file(path)
+    check("closing the outline is recorded", state_line(text, "outline.open=0"))
+
+    // ---- restoring a saved layout -----------------------------------------
+    assert os_write_file_atomic(path, "outline.open=1\noutline.x=90\noutline.y=80\noutline.w=360\noutline.h=300\nterminal.open=1\nterminal.x=500\nterminal.y=260\nterminal.w=560\nterminal.h=300\n") != 0
+    g_outline_open = false
+    g_outline_ready = false
+    g_outline_x = 0.0
+    g_outline_y = 0.0
+    g_outline_w = 0.0
+    g_outline_h = 0.0
+    g_terminal_open = false
+    g_terminal_ready = false
+    g_terminal_x = 0.0
+    g_terminal_y = 0.0
+    g_terminal_w = 0.0
+    g_terminal_h = 0.0
+    panel_state_load()
+    panel_state_restore()
+    check("restore reopens the outline", outline_open())
+    check("restore reopens the terminal", terminal_open())
+    check("restore keeps the saved outline rectangle", g_outline_x == 90.0 && g_outline_w == 360.0)
+    if g_terminal_handle > 0 {
+        check("restore does not steal the keyboard", g_terminal_focus == false)
+        os_pty_close(g_terminal_handle)
+        g_terminal_handle = 0
+    }
+    g_terminal_open = false
+    g_terminal_focus = false
+    g_terminal_exited = false
+    g_terminal_error = ""
+    outline_hide()
+
+    // ---- switching projects -------------------------------------------------
+    let other = root + "_other"
+    assert os_make_dirs(other + "/src") != 0
+    assert os_make_dirs(other + "/bin/ns_lens") != 0
+    assert os_write_file_atomic(other + "/src/main.ns", "fn main() {\n}\n") != 0
+    assert os_write_file_atomic(other + "/bin/ns_lens/layout", "outline.open=0\noutline.x=70\noutline.y=80\noutline.w=340\noutline.h=260\nterminal.open=0\n") != 0
+    g_outline_open = true
+    g_outline_x = 10.0
+    g_outline_y = 20.0
+    g_outline_w = 320.0
+    g_outline_h = 240.0
+    panel_state_save()
+    workspace_open_root(other)
+    panel_state_load()
+    lens_apply_panel_state()
+    check("project switch closes a saved closed outline", outline_open() == false)
+    check("project switch adopts the saved outline rectangle", g_outline_x == 70.0 && g_outline_y == 80.0 && g_outline_w == 340.0 && g_outline_h == 260.0)
+    check("project switch keeps a saved closed terminal closed", terminal_open() == false)
+
+    workspace_open_root(root)
+    panel_state_load()
+    lens_apply_panel_state()
+    check("project switch back restores the first project's outline", outline_open())
+
+    // ---- outline frame resizing -------------------------------------------
+    g_terminal_open = false
+    outline_show()
+    g_outline_x = 100.0
+    g_outline_y = 100.0
+    g_outline_w = 320.0
+    g_outline_h = 400.0
+    let v = view_create("layout test", 200, 200)
+    v.mouse_pressed = false
+    v.mouse_down = false
+    v.mouse_released = false
+
+    press_outline(v, g_outline_x + g_outline_w - 4.0, g_outline_y + 200.0)
+    check("right edge starts a resize", (g_outline_resize_edges & PANEL_EDGE_RIGHT) != 0)
+    drag_outline(v, g_outline_x + g_outline_w - 4.0 + 80.0, g_outline_y + 200.0)
+    check("right edge widens the panel", g_outline_w == 400.0 && g_outline_x == 100.0)
+    release_outline(v)
+    check("release ends the resize", g_outline_resize_edges == PANEL_EDGE_NONE)
+
+    press_outline(v, g_outline_x + 3.0, g_outline_y + 200.0)
+    check("left edge starts a resize", (g_outline_resize_edges & PANEL_EDGE_LEFT) != 0)
+    drag_outline(v, g_outline_x + 3.0 + 40.0, g_outline_y + 200.0)
+    check("left edge narrows and moves the panel", g_outline_x == 140.0 && g_outline_w == 360.0)
+    release_outline(v)
+
+    press_outline(v, g_outline_x + 160.0, g_outline_y + 3.0)
+    check("top edge starts a resize", (g_outline_resize_edges & PANEL_EDGE_TOP) != 0)
+    drag_outline(v, g_outline_x + 160.0, g_outline_y + 3.0 + 30.0)
+    check("top edge moves the panel down", g_outline_y == 130.0 && g_outline_h == 370.0)
+    release_outline(v)
+
+    press_outline(v, g_outline_x + 160.0, g_outline_y + g_outline_h - 3.0)
+    check("bottom edge starts a resize", (g_outline_resize_edges & PANEL_EDGE_BOTTOM) != 0)
+    drag_outline(v, g_outline_x + 160.0, g_outline_y + g_outline_h - 3.0 + 20.0)
+    check("bottom edge grows the panel", g_outline_h == 390.0)
+    release_outline(v)
+
+    let right = g_outline_x + g_outline_w
+    let bottom = g_outline_y + g_outline_h
+    press_outline(v, right - 4.0, bottom - 4.0)
+    check("corner starts both edges", g_outline_resize_edges == (PANEL_EDGE_RIGHT | PANEL_EDGE_BOTTOM))
+    drag_outline(v, right - 4.0 + 30.0, bottom - 4.0 + 25.0)
+    check("corner grows both axes", g_outline_w == 390.0 && g_outline_h == 415.0)
+    release_outline(v)
+
+    // A left-edge drag cannot shrink past the minimum; the right edge stays.
+    g_outline_x = 200.0
+    g_outline_y = 100.0
+    g_outline_w = 320.0
+    g_outline_h = 400.0
+    press_outline(v, g_outline_x + 3.0, g_outline_y + 200.0)
+    drag_outline(v, g_outline_x + 1000.0, g_outline_y + 200.0)
+    check("resize stops at the minimum width", g_outline_w == 300.0)
+    check("minimum width keeps the right edge fixed", g_outline_x + g_outline_w == 520.0)
+    release_outline(v)
+
+    // Pushing an edge past the view bounds stops at the margin without moving
+    // the opposite edge.
+    g_outline_x = 10.0
+    g_outline_y = 100.0
+    g_outline_w = 320.0
+    g_outline_h = 400.0
+    let fixed_right = g_outline_x + g_outline_w
+    press_outline(v, g_outline_x + 3.0, g_outline_y + 200.0)
+    drag_outline(v, -100.0, g_outline_y + 200.0)
+    check("left edge stops at the view margin", g_outline_x == 4.0)
+    check("left edge keeps the right edge fixed", g_outline_x + g_outline_w == fixed_right)
+    release_outline(v)
+
+    g_outline_x = 100.0
+    g_outline_y = 100.0
+    g_outline_w = 320.0
+    g_outline_h = 400.0
+    press_outline(v, g_outline_x + g_outline_w - 4.0, g_outline_y + 200.0)
+    drag_outline(v, 2000.0, g_outline_y + 200.0)
+    check("right edge stops at the view margin", g_outline_x + g_outline_w == 1276.0)
+    release_outline(v)
+
+    g_outline_x = 100.0
+    g_outline_y = 50.0
+    g_outline_w = 320.0
+    g_outline_h = 400.0
+    let fixed_bottom = g_outline_y + g_outline_h
+    press_outline(v, g_outline_x + 160.0, g_outline_y + 3.0)
+    drag_outline(v, g_outline_x + 160.0, -100.0)
+    check("top edge stops at the bar", g_outline_y == 36.0)
+    check("top edge keeps the bottom edge fixed", g_outline_y + g_outline_h == fixed_bottom)
+    release_outline(v)
+
+    g_outline_x = 100.0
+    g_outline_y = 100.0
+    g_outline_w = 320.0
+    g_outline_h = 400.0
+    press_outline(v, g_outline_x + 160.0, g_outline_y + g_outline_h - 3.0)
+    drag_outline(v, g_outline_x + 160.0, 2000.0)
+    check("bottom edge stops above the status bar", g_outline_y + g_outline_h == 764.0)
+    release_outline(v)
+
+    // ---- terminal frame resizing ------------------------------------------
+    outline_hide()
+    g_terminal_open = true
+    g_terminal_ready = true
+    g_terminal_handle = 0
+    g_terminal_exited = true
+    g_terminal_x = 400.0
+    g_terminal_y = 200.0
+    g_terminal_w = 500.0
+    g_terminal_h = 320.0
+
+    press_terminal(v, g_terminal_x + g_terminal_w - 4.0, g_terminal_y + 120.0)
+    check("terminal right edge starts a resize", (g_terminal_resize_edges & PANEL_EDGE_RIGHT) != 0)
+    drag_terminal(v, g_terminal_x + g_terminal_w - 4.0 + 60.0, g_terminal_y + 120.0)
+    check("terminal right edge widens the panel", g_terminal_w == 560.0)
+    release_terminal(v)
+    check("terminal release ends the resize", g_terminal_resize_edges == PANEL_EDGE_NONE)
+
+    press_terminal(v, g_terminal_x + 160.0, g_terminal_y + 3.0)
+    check("terminal top edge starts a resize", (g_terminal_resize_edges & PANEL_EDGE_TOP) != 0)
+    drag_terminal(v, g_terminal_x + 160.0, g_terminal_y + 3.0 + 40.0)
+    check("terminal top edge moves the panel", g_terminal_y == 240.0 && g_terminal_h == 280.0)
+    release_terminal(v)
+
+    press_terminal(v, g_terminal_x + 160.0, g_terminal_y + g_terminal_h - 3.0)
+    drag_terminal(v, g_terminal_x + 160.0, g_terminal_y + g_terminal_h - 3.0 - 200.0)
+    check("terminal height stops at the minimum", g_terminal_h == 160.0)
+    release_terminal(v)
+
+    text = os_read_file(path)
+    check("resized terminal geometry is persisted", state_line(text, "terminal.w=560"))
+
+    terminal_hide()
+    os_watch_stop()
+    view_close(v)
+    print("panel layout: passed" + unescape("\n"))
+}

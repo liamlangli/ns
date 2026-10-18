@@ -47,6 +47,9 @@ fn main() {
     term_full_reset()
     term_feed_text("$ printf '\u{1b}[1;32mgreen\u{1b}[0m'\r\ngreen\r\n$ \u{1b}[4munder\u{1b}[0m")
     g_term_offset = 1
+    // The mode dropdown draws a shortcut label on every row; render it open so
+    // a bad row width or missing key label fails here rather than on screen.
+    g_lens_mode_open = true
 
     for n in 0 to 2 {
         ui_begin_frame(r)
@@ -59,6 +62,7 @@ fn main() {
     assert g_lens_scope_path == root + "/src"
     assert lens_file_count() == 2
 
+    g_lens_mode_open = false
     outline_hide()
     terminal_hide()
     os_watch_stop()

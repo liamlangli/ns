@@ -97,6 +97,99 @@ fn raw_hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
 
 fn UI_FOCUS_NONE() i32 { return 0 }
 
+// Floating panels resize from any edge and from a 16-point square in every
+// corner, matching how a window frame behaves. The outline and the terminal
+// share the mask and the geometry helper so the two panels behave alike.
+lit PANEL_EDGE_NONE = 0
+lit PANEL_EDGE_LEFT = 1
+lit PANEL_EDGE_RIGHT = 2
+lit PANEL_EDGE_TOP = 4
+lit PANEL_EDGE_BOTTOM = 8
+lit PANEL_EDGE_BAND = 8.0
+lit PANEL_CORNER_BAND = 16.0
+
+struct panel_rect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64
+}
+
+fn panel_edge_mask(x: f64, y: f64, w: f64, h: f64) i32 {
+    if g_mouse_x < x || g_mouse_x >= x + w || g_mouse_y < y || g_mouse_y >= y + h {
+        return PANEL_EDGE_NONE
+    }
+    let mask = PANEL_EDGE_NONE
+    if g_mouse_x < x + PANEL_EDGE_BAND {
+        mask = mask | PANEL_EDGE_LEFT
+    }
+    if g_mouse_x >= x + w - PANEL_EDGE_BAND {
+        mask = mask | PANEL_EDGE_RIGHT
+    }
+    if g_mouse_y < y + PANEL_EDGE_BAND {
+        mask = mask | PANEL_EDGE_TOP
+    }
+    if g_mouse_y >= y + h - PANEL_EDGE_BAND {
+        mask = mask | PANEL_EDGE_BOTTOM
+    }
+    if g_mouse_x < x + PANEL_CORNER_BAND {
+        if g_mouse_y < y + PANEL_CORNER_BAND {
+            mask = mask | PANEL_EDGE_LEFT | PANEL_EDGE_TOP
+        }
+        if g_mouse_y >= y + h - PANEL_CORNER_BAND {
+            mask = mask | PANEL_EDGE_LEFT | PANEL_EDGE_BOTTOM
+        }
+    }
+    if g_mouse_x >= x + w - PANEL_CORNER_BAND {
+        if g_mouse_y < y + PANEL_CORNER_BAND {
+            mask = mask | PANEL_EDGE_RIGHT | PANEL_EDGE_TOP
+        }
+        if g_mouse_y >= y + h - PANEL_CORNER_BAND {
+            mask = mask | PANEL_EDGE_RIGHT | PANEL_EDGE_BOTTOM
+        }
+    }
+    return mask
+}
+
+// Move the grabbed edges by (dx, dy), keeping the ungrabbed side fixed. The
+// moving edge stops at the panel's minimum size and at the view's bounds, so a
+// drag never pushes the opposite edge along with it.
+fn panel_resized_rect(x: f64, y: f64, w: f64, h: f64, edges: i32, dx: f64, dy: f64, min_w: f64, min_h: f64, left: f64, top: f64, right: f64, bottom: f64) panel_rect {
+    let nx = x
+    let ny = y
+    let nw = w
+    let nh = h
+    if (edges & PANEL_EDGE_LEFT) != 0 {
+        nx = clamp(x + dx, left, x + w - min_w)
+        nw = x + w - nx
+    }
+    if (edges & PANEL_EDGE_RIGHT) != 0 {
+        nw = clamp(w + dx, min_w, right - x)
+    }
+    if (edges & PANEL_EDGE_TOP) != 0 {
+        ny = clamp(y + dy, top, y + h - min_h)
+        nh = y + h - ny
+    }
+    if (edges & PANEL_EDGE_BOTTOM) != 0 {
+        nh = clamp(h + dy, min_h, bottom - y)
+    }
+    return panel_rect(nx, ny, nw, nh)
+}
+
+// Three short diagonal ticks in the lower-right corner mark the grip. They
+// brighten only while the pointer is on that corner.
+fn draw_panel_grip(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    let color = col_muted()
+    let mask = panel_edge_mask(x, y, w, h)
+    if (mask & PANEL_EDGE_RIGHT) != 0 && (mask & PANEL_EDGE_BOTTOM) != 0 {
+        color = col_accent()
+    }
+    for i in 0 to 3 {
+        let d = 6.0 + (i as f64) * 5.0
+        ui_stroke_line(r, x + w - d, y + h - 3.0, x + w - 3.0, y + h - d, 1.0, color, 0.0)
+    }
+}
+
 fn draw_text_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, px: f64, color: u32) {
     if w > 0.0 {
         if h > 0.0 {

@@ -20,7 +20,6 @@ lit TERM_FOOTER_H = 18.0
 lit TERM_PAD = 6.0
 lit TERM_MIN_W = 320.0
 lit TERM_MIN_H = 160.0
-lit TERM_RESIZE = 14.0
 
 lit TERM_FG_DEFAULT = 256
 lit TERM_BG_DEFAULT = 257
@@ -107,11 +106,15 @@ let g_terminal_y: f64 = 380.0
 let g_terminal_w: f64 = 740.0
 let g_terminal_h: f64 = 380.0
 let g_terminal_dragging = false
-let g_terminal_resizing = false
+let g_terminal_resize_edges: i32 = PANEL_EDGE_NONE
+let g_terminal_resize_x: f64 = 0.0
+let g_terminal_resize_y: f64 = 0.0
+let g_terminal_resize_w: f64 = 0.0
+let g_terminal_resize_h: f64 = 0.0
+let g_terminal_resize_px: f64 = 0.0
+let g_terminal_resize_py: f64 = 0.0
 let g_terminal_grab_x: f64 = 0.0
 let g_terminal_grab_y: f64 = 0.0
-let g_terminal_grab_w: f64 = 0.0
-let g_terminal_grab_h: f64 = 0.0
 
 // ---- colours ---------------------------------------------------------------
 
@@ -1160,13 +1163,16 @@ fn terminal_hide() {
     g_terminal_open = false
     g_terminal_focus = false
     g_terminal_dragging = false
-    g_terminal_resizing = false
+    g_terminal_resize_edges = PANEL_EDGE_NONE
     g_lens_input_dirty = true
+    panel_state_save()
 }
 
 fn terminal_clamp(w: f64, h: f64) {
-    g_terminal_w = clamp(g_terminal_w, TERM_MIN_W, clamp(w - 16.0, TERM_MIN_W, 1600.0))
-    g_terminal_h = clamp(g_terminal_h, TERM_MIN_H, clamp(h - 48.0, TERM_MIN_H, 1200.0))
+    // The panel must fit between the top bar and the status bar, so the
+    // largest useful height is the window minus both bars and the margins.
+    g_terminal_w = clamp(g_terminal_w, TERM_MIN_W, clamp(w - 8.0, TERM_MIN_W, 10000.0))
+    g_terminal_h = clamp(g_terminal_h, TERM_MIN_H, clamp(h - STATUS_BAR_H - LENS_TOP_BAR_H - 12.0, TERM_MIN_H, 10000.0))
     g_terminal_x = clamp(g_terminal_x, 4.0, clamp(w - g_terminal_w - 4.0, 4.0, 10000.0))
     let min_y = LENS_TOP_BAR_H + 4.0
     let max_y = clamp(h - STATUS_BAR_H - g_terminal_h - 8.0, min_y, 10000.0)
@@ -1221,6 +1227,7 @@ fn terminal_show() {
         g_terminal_exited = true
     }
     g_lens_input_dirty = true
+    panel_state_save()
 }
 
 fn terminal_toggle() {
@@ -1466,6 +1473,8 @@ fn terminal_keys(v: ref view) {
             term_set_cursor(0, 0)
             return
         }
+        // Cmd+1..4 switch the map mode; they do not reach the shell.
+        lens_mode_shortcut_keys(v)
         return
     }
     if key_edge(v, 256) {
@@ -1599,12 +1608,17 @@ fn terminal_mouse(v: ref view, w: f64, h: f64) {
             v.mouse_pressed = false
             return
         }
-        if raw_hit(v, g_terminal_x + g_terminal_w - TERM_RESIZE, g_terminal_y + g_terminal_h - TERM_RESIZE, TERM_RESIZE, TERM_RESIZE) {
-            g_terminal_resizing = true
-            g_terminal_grab_x = g_mouse_x
-            g_terminal_grab_y = g_mouse_y
-            g_terminal_grab_w = g_terminal_w
-            g_terminal_grab_h = g_terminal_h
+        // Resize from any edge or corner. Pressing the frame keeps keyboard
+        // focus in the terminal, as the old corner grip did.
+        let edges = panel_edge_mask(g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h)
+        if edges != PANEL_EDGE_NONE {
+            g_terminal_resize_edges = edges
+            g_terminal_resize_x = g_terminal_x
+            g_terminal_resize_y = g_terminal_y
+            g_terminal_resize_w = g_terminal_w
+            g_terminal_resize_h = g_terminal_h
+            g_terminal_resize_px = g_mouse_x
+            g_terminal_resize_py = g_mouse_y
             g_terminal_focus = true
             v.mouse_pressed = false
             return
@@ -1643,15 +1657,22 @@ fn terminal_mouse(v: ref view, w: f64, h: f64) {
         terminal_clamp(w, h)
         return
     }
-    if g_terminal_resizing && v.mouse_down {
-        g_terminal_w = g_terminal_grab_w + (g_mouse_x - g_terminal_grab_x)
-        g_terminal_h = g_terminal_grab_h + (g_mouse_y - g_terminal_grab_y)
+    if g_terminal_resize_edges != PANEL_EDGE_NONE && v.mouse_down {
+        let r = panel_resized_rect(g_terminal_resize_x, g_terminal_resize_y, g_terminal_resize_w, g_terminal_resize_h, g_terminal_resize_edges, g_mouse_x - g_terminal_resize_px, g_mouse_y - g_terminal_resize_py, TERM_MIN_W, TERM_MIN_H, 4.0, LENS_TOP_BAR_H + 4.0, w - 4.0, h - STATUS_BAR_H - 8.0)
+        g_terminal_x = r.x
+        g_terminal_y = r.y
+        g_terminal_w = r.w
+        g_terminal_h = r.h
         terminal_clamp(w, h)
         return
     }
     if v.mouse_released || !v.mouse_down {
+        let moved = g_terminal_dragging || g_terminal_resize_edges != PANEL_EDGE_NONE
         g_terminal_dragging = false
-        g_terminal_resizing = false
+        g_terminal_resize_edges = PANEL_EDGE_NONE
+        if moved {
+            panel_state_save()
+        }
     }
 }
 
@@ -1887,4 +1908,5 @@ fn terminal_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         status = "click to type"
     }
     draw_text_clipped(r, g_terminal_x + 12.0, g_terminal_y + g_terminal_h - TERM_FOOTER_H + 1.0, g_terminal_w - 24.0, TERM_FOOTER_H, status, small_px(), col_muted())
+    draw_panel_grip(r, g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h)
 }

@@ -71,12 +71,17 @@ snaps back to orthographic.
   source files (`.c`, `.h`, `.ns`, `.ts`, `.js`, and the other languages Lens
   already knows). **change** shows files Git reports as staged, unstaged, or
   untracked in the opened folder. **full** shows every scanned file. A file
-  that is not text is a name tile; a deleted file has no leaf.
+  that is not text is a name tile; a deleted file has no leaf. Cmd+1, Cmd+2,
+  Cmd+3 and Cmd+4 select **code**, **ref**, **change** and **full** directly;
+  the dropdown labels each shortcut.
 - **View** (right of the map menu) opens two floating panels, each of which can
-  be dragged by its title bar, resized from its bottom-right corner, and closed
-  with its **x**. **Outline** and **Terminal** are independent toggles. Both
-  float over the map on the shared 80% background, as every popup does, so the
-  code behind them stays faintly visible.
+  be dragged by its title bar, resized from every edge and corner (the grip in
+  the lower-right corner marks it), and closed with its **x**. **Outline** and
+  **Terminal** are independent toggles. Both float over the map on the shared
+  80% background, as every popup does, so the code behind them stays faintly
+  visible. Their open state, position and size are written to the project's
+  `bin/ns_lens/layout` and restored when that project opens again; deleting
+  that file returns both panels to their built-in defaults.
   - **Outline** is a tree of every scanned folder and file. Every folder starts
     folded; the button left of a folder unfolds and folds it. The open folders
     are remembered in the project's `bin/ns_lens/outline` (one
