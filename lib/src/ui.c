@@ -336,7 +336,12 @@ typedef struct ui_renderer {
     // latin_mono.png goes up the first time a draw samples it, so a program
     // that only draws bitmap text never holds it; a failed load is not retried.
     ns_bool font_texture_failed;
+    // The Chinese atlas is large and English text never samples it, so
+    // ui_load_chinese_font keeps only its glyph table and image path; the
+    // texture goes up the first time a draw uses a Chinese glyph.
     u32 font_zh_texture;
+    char font_zh_image[UI_PATH_MAX];
+    ns_bool font_zh_texture_failed;
     u32 font_bitmap_texture;
     u32 font_bitmap_zh_texture;
     // The one shader and state every ui draw uses. The state tests the screen
@@ -1650,38 +1655,38 @@ ns_bool ui_load_font(ui_renderer *r, const char *json_path, const char *image_pa
 ns_bool ui_load_chinese_font(ui_renderer *r, const char *json_path, const char *image_path) {
     if (!r || !json_path || !image_path) return false;
     size_t json_len = 0;
+    i32 path_len = snprintf(NULL, 0, "%s", image_path);
+    if (path_len <= 0 || path_len >= UI_PATH_MAX || !ui_file_readable(image_path)) return false;
     char *json = ui_read_file(json_path, &json_len);
     ns_unused(json_len);
-    io_image *image = io_load_image(image_path);
-    if (!json || !image || !image->data || image->channels != 4) {
-        free(json);
-        if (image) { free(image->data); free(image); }
-        return false;
-    }
+    if (!json) return false;
 
-    const i32 tex_w = (i32)ui_json_key_number(json, "width", image->width);
-    const i32 tex_h = (i32)ui_json_key_number(json, "height", image->height);
+    i32 tex_w = (i32)ui_json_key_number(json, "width", 0);
+    i32 tex_h = (i32)ui_json_key_number(json, "height", 0);
+    if (tex_w <= 0 || tex_h <= 0) {
+        // No atlas size in the json: read it off the image itself.
+        io_image *image = io_load_image(image_path);
+        if (image) {
+            tex_w = image->width;
+            tex_h = image->height;
+            free(image->data);
+            free(image);
+        }
+    }
     ui_font zh_font = {0};
-    ns_bool loaded = ui_load_font_face(json, NULL, tex_w, tex_h, &zh_font);
+    ns_bool loaded = tex_w > 0 && tex_h > 0 && ui_load_font_face(json, NULL, tex_w, tex_h, &zh_font);
     free(json);
     if (!loaded) {
         free(zh_font.glyphs);
-        free(image->data);
-        free(image);
         return false;
     }
 
-    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height, gpu_texture_file_name(image_path));
-    free(image->data);
-    free(image);
-    if (!texture) {
-        free(zh_font.glyphs);
-        return false;
-    }
     free(r->fonts[UI_FONT_ZH].glyphs);
     if (r->font_zh_texture) gpu_texture_destroy(r->font_zh_texture);
     r->fonts[UI_FONT_ZH] = zh_font;
-    r->font_zh_texture = texture;
+    r->font_zh_texture = 0;
+    r->font_zh_texture_failed = false;
+    snprintf(r->font_zh_image, UI_PATH_MAX, "%s", image_path);
     return true;
 }
 
@@ -2183,11 +2188,29 @@ static u32 ui_main_font_texture(ui_renderer *r) {
     return r->font_texture;
 }
 
+// The Chinese atlas, uploaded on its first use (see font_zh_image).
+static u32 ui_zh_font_texture(ui_renderer *r) {
+    if (r->font_zh_texture || r->font_zh_texture_failed || !r->font_zh_image[0]) return r->font_zh_texture;
+    io_image *img = io_load_image(r->font_zh_image);
+    if (img && img->data && img->channels == 4) {
+        r->font_zh_texture = ui_create_rgba_texture(img->data, img->width, img->height, gpu_texture_file_name(r->font_zh_image));
+    }
+    if (img) {
+        free(img->data);
+        free(img);
+    }
+    if (!r->font_zh_texture) {
+        fprintf(stderr, "ui: cannot load %s\n", r->font_zh_image);
+        r->font_zh_texture_failed = true;
+    }
+    return r->font_zh_texture;
+}
+
 static u32 ui_command_texture(ui_renderer *r, const ui_command *cmd) {
     if (cmd->kind == UI_KIND_ARC_SDF) return r->white_texture;
     if (cmd->retained && cmd->kind == UI_KIND_IMAGE) return r->white_texture;
     if (cmd->kind == UI_KIND_MSDF) {
-        if (cmd->texture_id == UI_FONT_ZH_TEXTURE && r->font_zh_texture) return r->font_zh_texture;
+        if (cmd->texture_id == UI_FONT_ZH_TEXTURE && ui_zh_font_texture(r)) return r->font_zh_texture;
         u32 texture = ui_main_font_texture(r);
         return texture ? texture : r->white_texture;
     }
