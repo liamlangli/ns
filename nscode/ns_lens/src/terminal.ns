@@ -20,6 +20,8 @@ lit TERM_FOOTER_H = 18.0
 lit TERM_PAD = 6.0
 lit TERM_MIN_W = 320.0
 lit TERM_MIN_H = 160.0
+// Seconds the active cursor takes to fade out and back in.
+lit TERM_BLINK_PERIOD: f64 = 1.2
 
 lit TERM_FG_DEFAULT = 256
 lit TERM_BG_DEFAULT = 257
@@ -1155,8 +1157,18 @@ fn terminal_focused() bool {
     return g_terminal_open && g_terminal_focus
 }
 
+// The active cursor's opacity at `time`: full at the start of each blink
+// period and gone halfway through, easing between the two.
+fn terminal_cursor_alpha(time: f64) f64 {
+    let phase = time / TERM_BLINK_PERIOD
+    return 0.5 + 0.5 * cos((phase - ((phase as i64) as f64)) * 6.283185307179586)
+}
+
+// Only the active terminal keeps frames coming, for its blinking cursor and
+// typed echo. An inactive one draws no cursor; the idle frames that poll for
+// file changes also read its output, and new output asks for a frame itself.
 fn terminal_needs_frames() bool {
-    return g_terminal_handle > 0
+    return g_terminal_handle > 0 && terminal_focused()
 }
 
 fn terminal_hide() {
@@ -1177,16 +1189,6 @@ fn terminal_clamp(w: f64, h: f64) {
     let min_y = LENS_TOP_BAR_H + 4.0
     let max_y = clamp(h - STATUS_BAR_H - g_terminal_h - 8.0, min_y, 10000.0)
     g_terminal_y = clamp(g_terminal_y, min_y, max_y)
-}
-
-fn terminal_frame_delay() i32 {
-    if terminal_focused() {
-        return 16
-    }
-    if g_terminal_open {
-        return 33
-    }
-    return 100
 }
 
 fn terminal_restart() {
@@ -1883,13 +1885,15 @@ fn terminal_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         for n in 0 to g_term_rows {
             terminal_draw_row(r, n, gx, gy + (n as f64) * lh, cw, lh)
         }
-        // Cursor: a caret at the live end, hidden while scrolling back.
-        if g_term_cursor_visible && g_term_offset == 0 && g_terminal_handle > 0 {
-            let blink = os_time() * 2.0
-            if blink - ((blink as i64) as f64) < 0.65 {
+        // Cursor: a caret at the live end that fades out and in while the
+        // terminal is active, hidden while scrolling back.
+        if g_term_cursor_visible && g_term_offset == 0 && g_terminal_handle > 0 && terminal_focused() {
+            let alpha = (terminal_cursor_alpha(os_time()) * 255.0) as u32
+            if alpha > 0u {
                 let cx = gx + clamp_i(g_term_cur_col, 0, g_term_cols - 1) as f64 * cw
                 let cy = gy + clamp_i(g_term_cur_row, 0, g_term_rows - 1) as f64 * lh
-                ui_fill_rect(r, cx, cy + 2.0, 2.0, lh - 4.0, col_editor_cursor(), 0.0)
+                let color = (col_editor_cursor() & 0x00ffffffu) | (alpha << 24)
+                ui_fill_rect(r, cx, cy + 2.0, 2.0, lh - 4.0, color, 0.0)
             }
         }
     }

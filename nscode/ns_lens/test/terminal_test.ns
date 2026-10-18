@@ -126,5 +126,25 @@ fn main() {
     check("escape and control characters round-trip", terminal_cp_str(27) == "\u{1b}" && terminal_cp_str(65) == "A")
     check("unicode characters encode", terminal_cp_str(0x4e2d) == "\u{4e2d}")
 
+    // The cursor fades out and back in once per blink period.
+    check("cursor starts each blink opaque", terminal_cursor_alpha(0.0) > 0.999)
+    check("cursor is gone halfway through a blink", terminal_cursor_alpha(TERM_BLINK_PERIOD * 0.5) < 0.001)
+    let quarter = terminal_cursor_alpha(TERM_BLINK_PERIOD * 0.25)
+    check("cursor fades through partial alpha", quarter > 0.45 && quarter < 0.55)
+    check("cursor blink repeats", terminal_cursor_alpha(TERM_BLINK_PERIOD * 3.0) > 0.999)
+    check("cursor blinks slower than twice a second", TERM_BLINK_PERIOD >= 1.0)
+
+    // Only the active terminal keeps frames coming for its blinking cursor.
+    g_terminal_open = true
+    g_terminal_handle = 1
+    g_terminal_focus = false
+    check("an inactive shell asks for no frames", terminal_needs_frames() == false)
+    g_terminal_focus = true
+    check("the active shell asks for frames", terminal_needs_frames())
+    g_terminal_handle = 0
+    check("no shell asks for no frames", terminal_needs_frames() == false)
+    g_terminal_focus = false
+    g_terminal_open = false
+
     print("terminal: passed" + unescape("\n"))
 }
