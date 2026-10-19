@@ -1,0 +1,76 @@
+// The window's content size in points, kept in the per-user application
+// support directory beside the recent list, so every project and every new
+// window opens at the size the user last resized one to. The file holds
+// "<width> <height>"; a missing, unreadable or implausible one keeps the
+// built-in default.
+use std
+use os
+
+lit WINDOW_SIZE_DEFAULT_W = 1280
+lit WINDOW_SIZE_DEFAULT_H = 800
+lit WINDOW_SIZE_MIN = 320
+lit WINDOW_SIZE_MAX = 16384
+// A resize is written once the size has held this long, not every frame of
+// the drag.
+lit WINDOW_SIZE_SETTLE = 0.5
+
+// Tests point this at a scratch file; "" selects the per-user default.
+let g_window_size_file = ""
+let g_window_size_w: i32 = 1280
+let g_window_size_h: i32 = 800
+// The size on disk, and when a different one was first seen.
+let g_window_size_saved_w: i32 = 0
+let g_window_size_saved_h: i32 = 0
+let g_window_size_changed: f64 = -1.0
+
+fn window_size_path() str {
+    if g_window_size_file != "" {
+        return g_window_size_file
+    }
+    return os_app_data_dir("ns_lens") + "/window"
+}
+
+fn window_size_valid(n: i32) bool {
+    return n >= WINDOW_SIZE_MIN && n <= WINDOW_SIZE_MAX
+}
+
+fn window_size_load() {
+    g_window_size_w = WINDOW_SIZE_DEFAULT_W
+    g_window_size_h = WINDOW_SIZE_DEFAULT_H
+    g_window_size_changed = -1.0
+    let text = os_read_file(window_size_path())
+    let w = lens_diff_number(text, 0)
+    let h = lens_diff_number(text, g_lens_diff_number_end + 1)
+    if window_size_valid(w) && window_size_valid(h) {
+        g_window_size_w = w
+        g_window_size_h = h
+    }
+    g_window_size_saved_w = g_window_size_w
+    g_window_size_saved_h = g_window_size_h
+}
+
+fn window_size_save(w: i32, h: i32) {
+    g_window_size_changed = -1.0
+    if window_size_valid(w) == false || window_size_valid(h) == false {
+        return
+    }
+    if w == g_window_size_saved_w && h == g_window_size_saved_h {
+        return
+    }
+    g_window_size_saved_w = w
+    g_window_size_saved_h = h
+    os_write_file_atomic(window_size_path(), itos(w) + " " + itos(h) + "\n")
+}
+
+// Each frame: write a size that differs from the saved one once it settles.
+fn window_size_tick(w: i32, h: i32, now: f64) {
+    if w == g_window_size_saved_w && h == g_window_size_saved_h {
+        g_window_size_changed = -1.0
+        return
+    }
+    if g_window_size_changed < 0.0 {
+        g_window_size_changed = now
+    } else if now - g_window_size_changed >= WINDOW_SIZE_SETTLE {
+        window_size_save(w, h)
+    }
+}

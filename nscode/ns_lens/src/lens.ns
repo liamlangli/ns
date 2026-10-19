@@ -7,6 +7,10 @@ use workspace
 use editor
 
 lit LENS_CORNER_RADIUS = 3.0
+// A leaf's outline is stroked centred on its one-pixel inset; its code, Git
+// row backgrounds and editing overlays start at the stroke's inner edge, so
+// they sit flush against the outline without covering it.
+lit LENS_LEAF_INSET = 1.0
 lit LENS_CACHE_SLOTS = 48
 // Code is laid out once per cached page in code-layout pixels (the editor's
 // metrics at zoom 1) and drawn scaled by the camera. The zoom picks one of
@@ -1169,6 +1173,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                 // whole rectangle submits triangles whose corners sit thousands
                 // of pixels off screen, so a partial leaf is just its visible fill.
                 let content = lens_leaf_content(leaf, vx0, vy0, vx1, vy1)
+                let inner = lens_leaf_code_clip(leaf, vx0, vy0, vx1, vy1, 1.0)
                 let on_screen = px >= vx0 && py >= vy0 && px + pw <= vx1 && py + ph <= vy1
                 if on_screen && pw >= 12.0 && ph >= 12.0 {
                     ui_fill_round_rect(r, px + 1.0, py + 1.0, pw - 2.0, ph - 2.0, LENS_CORNER_RADIUS, col_editor_panel_hi(), 0.0)
@@ -1219,7 +1224,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                     g_code_column_base = g_lens_flow_column_pitch
                     g_code_line_pitch = g_lens_flow_line_pitch
                     set_code_zoom(zoom * g_lens_flow_fit, zoom * g_lens_flow_fit * leaf.scale_y / leaf.scale)
-                    ui_push_clip(r, content.x, content.y, content.w, content.h)
+                    ui_push_clip(r, inner.x, inner.y, inner.w, inner.h)
                     // Retain visible glyphs across frames; the immediate stream
                     // only draws editing overlays. The renderer supplies frame
                     // storage if a retained GPU copy is unavailable.
@@ -1249,7 +1254,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                     }
                     let code = false
                     let need_text = false
-                    ui_push_clip(r, content.x, content.y, content.w, content.h)
+                    ui_push_clip(r, inner.x, inner.y, inner.w, inner.h)
                     if lod <= 1 && preview_budget > 0 {
                         preview_budget = preview_budget - 1
                         let text = lens_preview(i, false)
@@ -2273,6 +2278,17 @@ fn lens_camera_moving(v: ref view) bool {
     let dy = g_lens_target_y - g_lens_center_y
     let dz = g_lens_target_distance - g_lens_distance
     return dx * dx + dy * dy + dz * dz > 0.25
+}
+
+// The clip for a leaf's code: its visible portion, inside the inner edge of
+// an outline `stroke` thick so nothing covers the outline.
+fn lens_leaf_code_clip(leaf: lens_leaf_rect, x0: f64, y0: f64, x1: f64, y1: f64, stroke: f64) lens_leaf_rect {
+    let pad = LENS_LEAF_INSET + stroke * 0.5
+    let x = clamp(leaf.x + pad, x0 + 1.0, x1 - 1.0)
+    let y = clamp(leaf.y + pad, y0, y1)
+    let right = clamp(leaf.x + leaf.w - pad, x, x1 - 1.0)
+    let bottom = clamp(leaf.y + leaf.h - pad, y, y1)
+    return lens_leaf_rect(x, y, right - x, bottom - y, leaf.distance, leaf.scale, leaf.scale_y)
 }
 
 // Code stays inside the visible portion of its leaf even when its edges leave

@@ -21,13 +21,15 @@ fn main() {
         }
     }
     panel_state_load()
-    let v = view_create(lens_window_title_text(), 1280, 800)
+    window_size_load()
+    let v = view_create(lens_window_title_text(), g_window_size_w, g_window_size_h)
     if gpu_request_device(v) {
         let r = ui_renderer_create(v)
         view_set_dock_menu(v, lens_dock_menu_items())
         v.on_frame({ frame in
             lens_dock_menu(frame)
             lens_window_title(frame)
+            window_size_tick(frame.width, frame.height, os_time())
             ui_begin_frame(r)
             render_frame(r, frame)
             ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
@@ -36,6 +38,7 @@ fn main() {
         v.on_terminate({ dead in
             // Save before shutdown clears the terminal's open flag.
             panel_state_save()
+            window_size_save(dead.width, dead.height)
             os_watch_stop()
             terminal_shutdown()
             ui_renderer_destroy(r)

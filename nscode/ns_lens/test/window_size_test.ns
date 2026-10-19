@@ -1,0 +1,43 @@
+// The window size: a resize is remembered once it settles, and a later launch
+// opens at it; a missing or implausible file keeps the default.
+use std
+use os
+
+fn check(name: str, ok: bool) {
+    if ok {
+        print("ok   " + name + "\n")
+    } else {
+        print("FAIL " + name + "\n")
+        assert false
+    }
+}
+
+fn main() {
+    let stamp = os_time_us() % 1000000000
+    let base = "/tmp/ns_lens_window_" + itos(stamp as i32)
+    assert os_make_dirs(base) != 0
+    g_window_size_file = base + "/window"
+    g_panel_state = false
+
+    window_size_load()
+    check("missing file keeps the default", g_window_size_w == 1280 && g_window_size_h == 800)
+
+    window_size_tick(1280, 800, 1.0)
+    check("unchanged size writes nothing", os_file_size(g_window_size_file) < 0)
+
+    window_size_tick(1500, 900, 2.0)
+    window_size_tick(1500, 900, 2.2)
+    check("a resize waits to settle", os_file_size(g_window_size_file) < 0)
+    window_size_tick(1500, 900, 2.6)
+    window_size_load()
+    check("a settled resize restores", g_window_size_w == 1500 && g_window_size_h == 900)
+
+    window_size_save(1100, 700)
+    window_size_load()
+    check("closing saves the size", g_window_size_w == 1100 && g_window_size_h == 700)
+
+    assert os_write_file_atomic(g_window_size_file, "12 99999\n") != 0
+    window_size_load()
+    check("implausible size keeps the default", g_window_size_w == 1280 && g_window_size_h == 800)
+    print("window_size_test: passed\n")
+}
