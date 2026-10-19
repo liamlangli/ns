@@ -524,9 +524,6 @@ ref fn ui_rect_batch_vertex_count(r: ref ui_renderer, batch_id: i32) i32
 // (x * scale_x + dx, y * scale_y + dy).
 ref fn ui_rect_batch_draw_range(r: ref ui_renderer, batch_id: i32, first: i32, count: i32, dx: f64, dy: f64, scale_x: f64, scale_y: f64)
 
-// Set the host cursor (an empty string clears it).
-ref fn ui_set_cursor(r: ref ui_renderer, cursor: str)
-
 // Record commands into a reusable layer and replay it at an offset.
 ref fn ui_begin_layer(r: ref ui_renderer, origin_x: f64, origin_y: f64)
 ref fn ui_end_layer(r: ref ui_renderer) ref ui_layer

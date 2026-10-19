@@ -375,6 +375,18 @@ void view_set_fullscreen(view *v, ns_bool fullscreen) {
     view_platform_set_fullscreen(v, fullscreen);
 }
 
+// Backends are only told about a change; an immediate-mode program calls this
+// every frame with the shape under the pointer.
+static i32 view_cursor_current = VIEW_CURSOR_ARROW;
+
+void view_set_cursor(view *v, i32 cursor) {
+    if (!v) return;
+    if (cursor < 0 || cursor >= VIEW_CURSOR_COUNT) cursor = VIEW_CURSOR_ARROW;
+    if (cursor == view_cursor_current) return;
+    view_cursor_current = cursor;
+    view_platform_set_cursor(v, cursor);
+}
+
 void view_set_safe_area(view *v, f64 top, f64 right, f64 bottom, f64 left) {
     if (!v) return;
     v->safe_area_top = top > 0.0 ? top : 0.0;

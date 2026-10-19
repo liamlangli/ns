@@ -33,6 +33,7 @@ extern void view_close(void *);
 extern void view_set_title(void *, const char *);
 extern void view_set_app_name(void *, const char *);
 extern void view_set_fullscreen(void *, ns_bool);
+extern void view_set_cursor(void *, i32);
 extern void view_set_safe_area(void *, f64, f64, f64, f64);
 extern void view_capture_require(void *);
 extern void view_set_dock_menu(void *, const char *);
@@ -3251,6 +3252,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "view_run", (void *)view_run, ns_embedded_sig64, ns_embedded_cpu64 },
     { "view_set_app_name", (void *)view_set_app_name, ns_embedded_sig199, ns_embedded_cpu199 },
     { "view_set_clipboard", (void *)view_set_clipboard, ns_embedded_sig199, ns_embedded_cpu199 },
+    { "view_set_cursor", (void *)view_set_cursor, ns_embedded_sig131, ns_embedded_cpu131 },
     { "view_set_dock_menu", (void *)view_set_dock_menu, ns_embedded_sig199, ns_embedded_cpu199 },
     { "view_set_frame_per_second", (void *)view_set_frame_per_second, ns_embedded_sig131, ns_embedded_cpu131 },
     { "view_set_fullscreen", (void *)view_set_fullscreen, ns_embedded_sig175, ns_embedded_cpu175 },

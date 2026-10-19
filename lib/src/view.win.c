@@ -127,8 +127,31 @@ static i32 view_win_key_map(i32 vk) {
     }
 }
 
+// The system cursor view_set_cursor asked for; WM_SETCURSOR shows it over the
+// client area and leaves the frame's own resize cursors alone.
+static LPCSTR _cursor_id = IDC_ARROW;
+
+static LPCSTR view_win_cursor_id(i32 cursor) {
+    switch (cursor) {
+        case VIEW_CURSOR_TEXT: return IDC_IBEAM;
+        case VIEW_CURSOR_POINTER: return IDC_HAND;
+        case VIEW_CURSOR_RESIZE_EW: return IDC_SIZEWE;
+        case VIEW_CURSOR_RESIZE_NS: return IDC_SIZENS;
+        case VIEW_CURSOR_RESIZE_NWSE: return IDC_SIZENWSE;
+        case VIEW_CURSOR_RESIZE_NESW: return IDC_SIZENESW;
+        case VIEW_CURSOR_MOVE: return IDC_SIZEALL;
+        default: return IDC_ARROW;
+    }
+}
+
 static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
+        case WM_SETCURSOR:
+            if (LOWORD(lparam) == HTCLIENT) {
+                SetCursor(LoadCursor(NULL, _cursor_id));
+                return TRUE;
+            }
+            return DefWindowProc(hwnd, msg, wparam, lparam);
         case WM_MOUSEMOVE: {
             const i32 x = (i32)GET_X_LPARAM(lparam);
             const i32 y = (i32)GET_Y_LPARAM(lparam);
@@ -286,6 +309,16 @@ void view_platform_close(view *v) {
 void view_platform_set_app_name(view *v, const char *name) {
     ns_unused(v);
     ns_unused(name);
+}
+
+void view_platform_set_cursor(view *v, i32 cursor) {
+    ns_unused(v);
+    _cursor_id = view_win_cursor_id(cursor);
+    POINT at;
+    RECT client;
+    if (_hwnd && GetCursorPos(&at) && ScreenToClient(_hwnd, &at) && GetClientRect(_hwnd, &client) && PtInRect(&client, at)) {
+        SetCursor(LoadCursor(NULL, _cursor_id));
+    }
 }
 
 void view_platform_set_title(view *v, const char *title) {

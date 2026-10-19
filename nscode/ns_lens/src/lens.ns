@@ -830,7 +830,7 @@ fn lens_open_root(root: str) bool {
     return true
 }
 
-// No project: the window shows only its Open Folder button.
+// No project: the window shows its Open Folder button and the recent list.
 fn lens_close_root() {
     os_watch_stop()
     g_workspace_root = ""
@@ -1010,28 +1010,139 @@ fn lens_draw_plain_leaf(r: ref ui_renderer, v: ref view, i: i32, w: f64, top: f6
 
 lit LENS_EMPTY_BUTTON_W = 160.0
 lit LENS_EMPTY_BUTTON_H = 32.0
+lit LENS_EMPTY_RECENT_W = 520.0
+lit LENS_EMPTY_RECENT_ROW = 26.0
+// The recent file is shared by every Lens window, so the empty window rereads
+// it this often to pick up projects another window opened.
+lit LENS_EMPTY_RECENT_POLL: f64 = 1.0
+let g_lens_empty_recent_poll: f64 = 0.0
 
-// With no project open the window is empty but for one centred button; it and
-// Cmd+O pick the folder to map. A folder that failed to open says so below it.
+// With no project open the window shows a centred Open Folder button with the
+// recent projects listed below it; the button and Cmd+O pick a folder, a row
+// maps that project. A folder that failed to open says so below the button.
 fn lens_render_empty(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let top = main_menu_h()
     ui_fill_rect(r, 0.0, top, w, h - top, col_editor_bg(), 0.0)
+    view_set_cursor(v, VIEW_CURSOR_ARROW)
+    let now = os_time()
+    if now >= g_lens_empty_recent_poll {
+        recent_load()
+        g_lens_empty_recent_poll = now + LENS_EMPTY_RECENT_POLL
+    }
+    let message_h: f64 = 0.0
+    if g_lens_message != "" {
+        message_h = 32.0
+    }
+    // The list shows as many projects as fit below the button.
+    let list_x: f64 = (w - LENS_EMPTY_RECENT_W) * 0.5
+    let list_w: f64 = LENS_EMPTY_RECENT_W
+    if list_x < 16.0 {
+        list_x = 16.0
+        list_w = w - 32.0
+    }
+    let room = ((h - top - LENS_EMPTY_BUTTON_H - message_h - 96.0) / LENS_EMPTY_RECENT_ROW) as i32 - 1
+    let rows = clamp_i(g_recent_count, 0, clamp_i(room, 0, RECENT_KEEP))
+    let list_h: f64 = 0.0
+    if rows > 0 {
+        list_h = 24.0 + LENS_EMPTY_RECENT_ROW * ((rows + 1) as f64)
+    }
+    let block_h = LENS_EMPTY_BUTTON_H + message_h + list_h
     let bx = (w - LENS_EMPTY_BUTTON_W) * 0.5
-    let by = top + (h - top - LENS_EMPTY_BUTTON_H) * 0.5
+    let by = top + (h - top - block_h) * 0.5
     lens_draw_button(r, v, bx, by, LENS_EMPTY_BUTTON_W, LENS_EMPTY_BUTTON_H, "Open Folder...", false)
     if g_lens_message != "" {
         draw_centered_text(r, 0.0, by + LENS_EMPTY_BUTTON_H + 12.0, w, 20.0, g_lens_message, small_px(), col_muted())
     }
     let pressed = v.mouse_pressed && raw_hit(v, bx, by, LENS_EMPTY_BUTTON_W, LENS_EMPTY_BUTTON_H)
+    let open_row = -1
+    if rows > 0 {
+        let hy = by + LENS_EMPTY_BUTTON_H + message_h + 24.0
+        let head_ty = ui_text_v_center_y(r, hy, LENS_EMPTY_RECENT_ROW, small_px(), FONT_MONO())
+        draw_text_clipped(r, list_x + 10.0, head_ty, list_w - 20.0, LENS_EMPTY_RECENT_ROW, "Recent", small_px(), col_muted())
+        ui_fill_rect(r, list_x, hy + LENS_EMPTY_RECENT_ROW - 1.0, list_w, 1.0, col_editor_panel_hi(), 0.0)
+        for i in 0 to rows {
+            let iy = hy + ((i + 1) as f64) * LENS_EMPTY_RECENT_ROW
+            let hot = raw_hit(v, list_x, iy, list_w, LENS_EMPTY_RECENT_ROW)
+            if hot {
+                ui_fill_round_rect(r, list_x, iy, list_w, LENS_EMPTY_RECENT_ROW, 3.0, col_editor_panel_hi(), 0.0)
+                if v.mouse_pressed {
+                    open_row = i
+                }
+            }
+            let path = g_recent[i]
+            let name = recent_name(path)
+            let row_ty = ui_text_v_center_y(r, iy, LENS_EMPTY_RECENT_ROW, small_px(), FONT_MONO())
+            let nw = clamp(ui_text_width(r, name, small_px(), FONT_MONO()), 0.0, list_w - 20.0)
+            let name_color = col_text()
+            if hot {
+                name_color = col_accent()
+            }
+            draw_text_clipped(r, list_x + 10.0, row_ty, nw, LENS_EMPTY_RECENT_ROW, name, small_px(), name_color)
+            let px = list_x + 10.0 + nw + 16.0
+            draw_text_clipped(r, px, row_ty, list_x + list_w - 10.0 - px, LENS_EMPTY_RECENT_ROW, recent_place(path), small_px(), col_muted())
+        }
+    }
     v.mouse_pressed = false
     if pressed || (cmd_down(v) && key_edge(v, 79)) {
         lens_open_project()
+    } else if open_row >= 0 {
+        lens_open_root(g_recent[open_row])
     }
     if g_workspace_root != "" {
         view_request_frame_after(v, 1)
     } else {
         view_request_frame_after(v, 100)
     }
+}
+
+// The resize cursor for a panel frame's edge mask, the arrow off the frame.
+fn lens_edge_cursor(edges: i32) i32 {
+    let horizontal = (edges & (PANEL_EDGE_LEFT | PANEL_EDGE_RIGHT)) != 0
+    let vertical = (edges & (PANEL_EDGE_TOP | PANEL_EDGE_BOTTOM)) != 0
+    if horizontal && vertical {
+        let falling = (edges & PANEL_EDGE_LEFT) != 0 && (edges & PANEL_EDGE_TOP) != 0
+        if falling || ((edges & PANEL_EDGE_RIGHT) != 0 && (edges & PANEL_EDGE_BOTTOM) != 0) {
+            return VIEW_CURSOR_RESIZE_NWSE
+        }
+        return VIEW_CURSOR_RESIZE_NESW
+    }
+    if horizontal {
+        return VIEW_CURSOR_RESIZE_EW
+    }
+    if vertical {
+        return VIEW_CURSOR_RESIZE_NS
+    }
+    return VIEW_CURSOR_ARROW
+}
+
+// The pointer shape after this frame's panel input: a resize in progress keeps
+// its cursor wherever the pointer goes; otherwise the frontmost panel under
+// the pointer (terminal, outline, then the history list) shows the resize
+// cursor on its draggable frame. A press that is dragging anything else, the
+// map included, keeps the arrow.
+fn lens_pointer_cursor(v: ref view) i32 {
+    if g_terminal_resize_edges != PANEL_EDGE_NONE {
+        return lens_edge_cursor(g_terminal_resize_edges)
+    }
+    if g_outline_resize_edges != PANEL_EDGE_NONE {
+        return lens_edge_cursor(g_outline_resize_edges)
+    }
+    if g_lens_history_drag {
+        return VIEW_CURSOR_RESIZE_EW
+    }
+    if v.mouse_down || lens_menu_blocks() || g_lens_mode_block {
+        return VIEW_CURSOR_ARROW
+    }
+    if g_terminal_open && raw_hit(v, g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h) {
+        return lens_edge_cursor(panel_edge_mask(g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h))
+    }
+    if g_outline_open && raw_hit(v, g_outline_x, g_outline_y, g_outline_w, g_outline_h) {
+        return lens_edge_cursor(panel_edge_mask(g_outline_x, g_outline_y, g_outline_w, g_outline_h))
+    }
+    if lens_history_active() && lens_history_edge_at(g_mouse_x, g_mouse_y) {
+        return VIEW_CURSOR_RESIZE_EW
+    }
+    return VIEW_CURSOR_ARROW
 }
 
 // Camera-space projection includes perspective depth from the tilted map plane
@@ -1079,6 +1190,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
             lens_history_mouse(v, w, h)
         }
     }
+    view_set_cursor(v, lens_pointer_cursor(v))
     if g_lens_view_mode == LENS_MODE_REF { lens_ref_tick() }
     // The map is laid out flat and seen through the plane camera: every map
     // interaction runs on the flat plane, under the unprojected pointer.

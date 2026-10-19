@@ -363,6 +363,12 @@ void view_platform_set_app_name(view *value, const char *name) {
     ns_unused(name);
 }
 
+// Touch has no pointer to shape.
+void view_platform_set_cursor(view *value, i32 cursor) {
+    ns_unused(value);
+    ns_unused(cursor);
+}
+
 // An iOS scene has no title bar to show it in.
 void view_platform_set_title(view *value, const char *title) {
     ns_unused(value);

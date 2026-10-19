@@ -121,6 +121,8 @@ typedef struct view_linux_state {
     ns_bool pointer_inside;
     uint32_t last_serial;
     uint32_t enter_serial;
+    // wl_pointer.set_cursor names the pointer's own enter serial.
+    uint32_t pointer_serial;
 
     // Pending wheel travel for the current pointer frame. A compositor that
     // speaks axis_value120 sends both events; the discrete form wins so a
@@ -523,6 +525,7 @@ static void view_linux_pointer_enter(void *data, struct wl_pointer *pointer,
     ns_unused(pointer);
     ns_unused(surface);
     _state.last_serial = serial;
+    _state.pointer_serial = serial;
     _state.pointer_inside = true;
     _state.pointer_x = wl_fixed_to_double(sx);
     _state.pointer_y = wl_fixed_to_double(sy);
@@ -947,11 +950,44 @@ static void view_linux_set_cursor(void) {
     struct wl_cursor_image *image = _state.cursor->images[0];
     struct wl_buffer *buffer = wl_cursor_image_get_buffer(image);
     if (!buffer) return;
-    wl_pointer_set_cursor(_state.pointer, _state.enter_serial, _state.cursor_surface,
+    wl_pointer_set_cursor(_state.pointer, _state.pointer_serial, _state.cursor_surface,
                           (int32_t)image->hotspot_x, (int32_t)image->hotspot_y);
     wl_surface_attach(_state.cursor_surface, buffer, 0, 0);
     wl_surface_damage(_state.cursor_surface, 0, 0, (int32_t)image->width, (int32_t)image->height);
     wl_surface_commit(_state.cursor_surface);
+}
+
+// Cursor themes name shapes either the CSS way or the older X11 way; the first
+// name the theme carries wins.
+static struct wl_cursor *view_linux_theme_cursor(i32 cursor) {
+    static const char *names[VIEW_CURSOR_COUNT][3] = {
+        {"default", "left_ptr", ns_null},
+        {"text", "xterm", ns_null},
+        {"pointer", "hand2", ns_null},
+        {"ew-resize", "sb_h_double_arrow", ns_null},
+        {"ns-resize", "sb_v_double_arrow", ns_null},
+        {"nwse-resize", "bottom_right_corner", ns_null},
+        {"nesw-resize", "bottom_left_corner", ns_null},
+        {"move", "fleur", ns_null},
+    };
+    if (!_state.cursor_theme || cursor < 0 || cursor >= VIEW_CURSOR_COUNT) return ns_null;
+    for (i32 i = 0; names[cursor][i]; i++) {
+        struct wl_cursor *found = wl_cursor_theme_get_cursor(_state.cursor_theme, names[cursor][i]);
+        if (found) return found;
+    }
+    return ns_null;
+}
+
+void view_platform_set_cursor(view *v, i32 cursor) {
+    ns_unused(v);
+    struct wl_cursor *found = view_linux_theme_cursor(cursor);
+    if (!found) found = view_linux_theme_cursor(VIEW_CURSOR_ARROW);
+    if (!found) return;
+    _state.cursor = found;
+    if (_state.pointer_inside) {
+        view_linux_set_cursor();
+        if (_state.display) wl_display_flush(_state.display);
+    }
 }
 
 // ---- gamepads ---------------------------------------------------------------

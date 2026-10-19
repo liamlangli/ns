@@ -39,6 +39,8 @@ static id view_window_delegate;
 static id<MTLDevice> view_mtl_device;
 static id view_mtk_view_delegate;
 static MTKView* view_mtk_view;
+// The shape view_set_cursor asked for; nil is the arrow.
+static NSCursor* view_osx_cursor;
 static dispatch_semaphore_t view_osx_done;
 static ns_bool view_osx_hosted;
 static ns_bool view_osx_finished;
@@ -476,10 +478,18 @@ static void view_osx_touch_orbit(NSSet<NSTouch*> *touches, ns_bool publish) {
 
 - (void)mouseMoved:(NSEvent*)event {
     view_osx_update_mouse(event);
+    if (view_osx_cursor) [view_osx_cursor set];
 }
 
 - (void)mouseDragged:(NSEvent*)event {
     view_osx_update_mouse(event);
+    if (view_osx_cursor) [view_osx_cursor set];
+}
+
+// AppKit resets the cursor from the view's cursor rects whenever the pointer
+// enters it or the window reshapes, so the rect carries the chosen shape.
+- (void)resetCursorRects {
+    [self addCursorRect:[self bounds] cursor:view_osx_cursor ? view_osx_cursor : [NSCursor arrowCursor]];
 }
 
 - (void)rightMouseDown:(NSEvent*)event {
@@ -778,6 +788,49 @@ void view_platform_set_app_name(view *v, const char *name) {
     NSString *value = [NSString stringWithUTF8String:name ? name : ""];
     if (!value || [value length] == 0) return;
     void (^apply)(void) = ^{ view_osx_set_display_name(value); };
+    if ([NSThread isMainThread]) apply();
+    else dispatch_async(dispatch_get_main_queue(), apply);
+}
+
+// macOS 15 has the diagonal frame-resize cursors; earlier systems fall back
+// to the private ones AppKit itself uses, then to the arrow.
+static NSCursor* view_osx_diagonal_cursor(ns_bool nwse) {
+    if (@available(macOS 15.0, *)) {
+        return [NSCursor frameResizeCursorFromPosition:nwse ? NSCursorFrameResizePositionTopLeft : NSCursorFrameResizePositionTopRight
+                                          inDirections:NSCursorFrameResizeDirectionsAll];
+    }
+    SEL legacy = nwse ? NSSelectorFromString(@"_windowResizeNorthWestSouthEastCursor")
+                      : NSSelectorFromString(@"_windowResizeNorthEastSouthWestCursor");
+    if ([NSCursor respondsToSelector:legacy]) {
+        NSCursor* (*call)(id, SEL) = (NSCursor* (*)(id, SEL))[NSCursor methodForSelector:legacy];
+        return call([NSCursor class], legacy);
+    }
+    return [NSCursor arrowCursor];
+}
+
+static NSCursor* view_osx_cursor_for(i32 cursor) {
+    switch (cursor) {
+        case VIEW_CURSOR_TEXT: return [NSCursor IBeamCursor];
+        case VIEW_CURSOR_POINTER: return [NSCursor pointingHandCursor];
+        case VIEW_CURSOR_RESIZE_EW: return [NSCursor resizeLeftRightCursor];
+        case VIEW_CURSOR_RESIZE_NS: return [NSCursor resizeUpDownCursor];
+        case VIEW_CURSOR_RESIZE_NWSE: return view_osx_diagonal_cursor(true);
+        case VIEW_CURSOR_RESIZE_NESW: return view_osx_diagonal_cursor(false);
+        case VIEW_CURSOR_MOVE: return [NSCursor openHandCursor];
+        default: return nil;
+    }
+}
+
+void view_platform_set_cursor(view *v, i32 cursor) {
+    ns_unused(v);
+    void (^apply)(void) = ^{
+        view_osx_cursor = view_osx_cursor_for(cursor);
+        if (view_window && view_mtk_view) [view_window invalidateCursorRectsForView:view_mtk_view];
+        NSPoint at = view_window ? [view_window mouseLocationOutsideOfEventStream] : NSZeroPoint;
+        if (view_mtk_view && NSPointInRect([view_mtk_view convertPoint:at fromView:nil], [view_mtk_view bounds])) {
+            [(view_osx_cursor ? view_osx_cursor : [NSCursor arrowCursor]) set];
+        }
+    };
     if ([NSThread isMainThread]) apply();
     else dispatch_async(dispatch_get_main_queue(), apply);
 }

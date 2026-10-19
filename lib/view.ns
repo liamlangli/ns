@@ -151,6 +151,23 @@ ref fn view_set_app_name(v: ref view, name: str)
 // Windows covers the monitor without decorations. A browser canvas asks the
 // page for fullscreen, and a host that is already fullscreen ignores it.
 ref fn view_set_fullscreen(v: ref view, fullscreen: bool)
+// Pointer shapes for view_set_cursor. The resize shapes are the ones a
+// draggable edge or corner shows: EW for a left/right edge, NS for top/bottom,
+// NWSE for the top-left/bottom-right corners and NESW for the other two.
+lit VIEW_CURSOR_ARROW = 0
+lit VIEW_CURSOR_TEXT = 1
+lit VIEW_CURSOR_POINTER = 2
+lit VIEW_CURSOR_RESIZE_EW = 3
+lit VIEW_CURSOR_RESIZE_NS = 4
+lit VIEW_CURSOR_RESIZE_NWSE = 5
+lit VIEW_CURSOR_RESIZE_NESW = 6
+lit VIEW_CURSOR_MOVE = 7
+// Show `cursor` (a VIEW_CURSOR_* shape) while the pointer is over the view. The
+// shape stays until the next call, so an immediate-mode program sets it every
+// frame from what is under the pointer, ARROW included. macOS uses NSCursor,
+// Windows the system cursors, Wayland the cursor theme and a browser canvas
+// its CSS cursor; iOS and a host without a pointer ignore it.
+ref fn view_set_cursor(v: ref view, cursor: i32)
 // Publish safe-area insets in logical points. Native backends call this from
 // their metric sync; applications only need it when they host the view inside
 // their own chrome. Negative values are clamped to 0.

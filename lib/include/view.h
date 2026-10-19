@@ -308,6 +308,19 @@ void view_set_title(view *v, const char *title);
 // Rename this running application where the platform shows it apart from the
 // window title: the macOS Dock tooltip, app menu and Activity Monitor.
 void view_set_app_name(view *v, const char *name);
+// Pointer shape while over the view, one of the VIEW_CURSOR_* values.
+typedef enum {
+    VIEW_CURSOR_ARROW = 0,
+    VIEW_CURSOR_TEXT,
+    VIEW_CURSOR_POINTER,
+    VIEW_CURSOR_RESIZE_EW,
+    VIEW_CURSOR_RESIZE_NS,
+    VIEW_CURSOR_RESIZE_NWSE,
+    VIEW_CURSOR_RESIZE_NESW,
+    VIEW_CURSOR_MOVE,
+    VIEW_CURSOR_COUNT
+} view_cursor;
+void view_set_cursor(view *v, i32 cursor);
 void view_set_dock_menu(view *v, const char *items);
 i32 view_take_dock_menu(view *v);
 const char *view_dock_menu_items(void);
@@ -319,6 +332,7 @@ void view_platform_close(view *v);
 void view_platform_set_fullscreen(view *v, ns_bool fullscreen);
 void view_platform_set_title(view *v, const char *title);
 void view_platform_set_app_name(view *v, const char *name);
+void view_platform_set_cursor(view *v, i32 cursor);
 
 // View event handling functions
 void view_on_scroll(view *v, f64 x, f64 y);
