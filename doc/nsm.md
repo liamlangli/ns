@@ -282,7 +282,10 @@ place.
 
 `ns clean [path]` removes what builds generate for the nearest project: the
 `bin/` directory, including generated IDE projects, the build cache, and the
-build profile, plus legacy `ns.profile` beside the manifest.
+build profile, plus legacy `ns.profile` beside the manifest. It keeps
+`bin/ns_lens`, which holds the state of the project ns_lens has open - panel
+layout, ignore rules, outline, and caches - and which a running Lens rewrites;
+delete that directory by hand for a full reset.
 
 For a browser project, keep `type = "app"` and set `target = "wasm"` (at the top level
 or on one `[[targets]]` table).

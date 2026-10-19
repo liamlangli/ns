@@ -129,6 +129,51 @@ mkdir -p "$project/nested"
 (cd "$project/nested" && "$ns" clean > "$tmp/clean.log" 2>&1)
 test ! -e "$project/bin"
 
+# ns_lens keeps the open project's state - panel layout, ignore rules, outline
+# and caches - in bin/ns_lens and rewrites it while it runs. `ns clean` leaves
+# that directory in place: it holds user settings, and deleting a tree a running
+# Lens is writing to would race the removal and fail. Build output still goes.
+mkdir -p "$project/bin/ns_lens/files"
+printf 'tmp/\n' > "$project/bin/ns_lens/ignore"
+printf 'outline.open=1\n' > "$project/bin/ns_lens/layout"
+printf 'cache\n' > "$project/bin/ns_lens/index.cache"
+printf 'built\n' > "$project/bin/build-output"
+(
+    while :; do
+        printf 'live\n' > "$project/bin/ns_lens/index.cache" 2>/dev/null || true
+        printf 'live\n' > "$project/bin/ns_lens/files/live.cache" 2>/dev/null || true
+        mkdir -p "$project/bin/ns_lens" 2>/dev/null || true
+    done
+) &
+writer=$!
+sleep 0.1
+clean_status=0
+"$ns" clean "$project" > "$tmp/clean.log" 2>&1 || clean_status=$?
+kill "$writer" 2>/dev/null || true
+wait "$writer" 2>/dev/null || true
+if [ "$clean_status" -ne 0 ]; then
+    cat "$tmp/clean.log" >&2
+    printf '%s\n' 'FAIL: ns clean must succeed while ns_lens keeps writing its state.' >&2
+    exit 1
+fi
+if [ -e "$project/bin/build-output" ]; then
+    cat "$tmp/clean.log" >&2
+    printf '%s\n' 'FAIL: ns clean must remove build output beside bin/ns_lens.' >&2
+    exit 1
+fi
+for state in ignore layout; do
+    if [ ! -f "$project/bin/ns_lens/$state" ]; then
+        cat "$tmp/clean.log" >&2
+        printf 'FAIL: ns clean must keep bin/ns_lens/%s.\n' "$state" >&2
+        exit 1
+    fi
+done
+if ! grep -q 'kept' "$tmp/clean.log"; then
+    cat "$tmp/clean.log" >&2
+    printf '%s\n' 'FAIL: ns clean must report the ns_lens state it keeps.' >&2
+    exit 1
+fi
+
 printf '%s\n' 'PASS: ns build stays incremental and ns clean removes generated files.'
 
 # A manifest that declares targets gives each one `bin/<target name>`, so two

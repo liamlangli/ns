@@ -282,6 +282,8 @@ snaps back to orthographic.
 
 The application runs as a compiled native `exec` target. File metrics are streamed through a bounded 64 KiB buffer during the initial scan. Layout and source caches live under the opened
 project's `bin/ns_lens/`, including `index.cache` and `files/*.cache`.
+`ns clean` leaves that directory in place: it holds the project's Lens state and a
+running window keeps writing to it, so remove it by hand for a full reset.
 Layout reuse checks ordered paths, line counts, code scale and ancestry. Line/column metrics are cached with source hashes. Every source
 cache read first hashes the entire local file with streamed SHA-256, then
 checks the source digest and cached payload digest; same-size changes and

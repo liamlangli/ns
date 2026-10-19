@@ -159,8 +159,11 @@ The common commands are:
   label with `os_patch_label()`. See `doc/patch.md`.
 - `ns clean [path]`: remove what `ns` generates for the nearest project: the
   `bin/` output directory, which also holds generated IDE projects and the
-  build cache and build profile, plus legacy `ns.profile` beside the manifest. Source
-  and other user files are never removed.
+  build cache and build profile, plus legacy `ns.profile` beside the manifest.
+  `bin/ns_lens` is kept: it holds the open project's ns_lens state (panel
+  layout, ignore rules, outline and caches), which a running Lens rewrites;
+  remove it by hand for a full reset. Source and other user files are never
+  removed.
 - `ns project [path]`: generate the supported host-native IDE project below
   `bin/` from `ns.mod`. An `exec` app compiles the program into the generated
   Apple targets (arm64 Mach-O). An `eval` or `emu` app whose manifest sets

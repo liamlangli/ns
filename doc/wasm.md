@@ -32,8 +32,8 @@ the `ns` executable — is unchanged since the recorded build. A change confined
 to the files the bundle copies rather than compiles — an asset, the page shell,
 the icon, or the installed `ns-wasm.js` — re-packages the bundle and leaves the
 module in place, so editing a browser script or a model does not recompile the
-program. `--force` rebuilds it anyway, and `ns clean` removes the whole `bin/`
-directory.
+program. `--force` rebuilds it anyway, and `ns clean` removes the build output
+under `bin/` (keeping the `bin/ns_lens` state directory `ns` never builds).
 
 For a custom browser UI, set `shell` to an HTML file relative to the manifest.
 The builder copies it to `<bundle>/index.html` after expanding three stable markers:

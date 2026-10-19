@@ -360,6 +360,7 @@ void ns_help() {
     printf("                    --label <text> publishes free text with the version, else\n");
     printf("                    <version>.<YYYYMMDDHHMMSS>.debug (--release: .release)\n");
     printf("  clean [path]      remove bin/ and the profiles a build generates\n");
+    printf("                    keeps bin/ns_lens, the open project's ns_lens state\n");
     printf("  project [path]    generate a native IDE project from ns.mod\n");
     printf("                    Darwin: bin/<name>.xcodeproj; Windows: bin/<name>.sln\n");
     printf("  lint [path]       check the style of a file, a directory or the whole project\n");
@@ -4855,7 +4856,59 @@ static ns_str ns_project_absolute_path(ns_str path) {
 // `ns.profile.json` is leftover Chrome-trace output from older ns versions.
 static const char *ns_clean_generated[] = {"bin", "ns.profile", "ns.profile.json"};
 
-// `ns clean [path]` - remove the generated files of the nearest project.
+// ns_lens keeps the state of the project it has open - the panel layout, the
+// ignore rules, the outline and the layout/source caches - in bin/ns_lens, and
+// a running Lens rewrites it as it edits. A clean leaves that directory in
+// place: it holds user settings, and deleting a tree an application is still
+// writing to would discard them and race the removal (`rm -rf` then fails with
+// "Directory not empty", which is what made `make clean` fail).
+static const char *ns_clean_keep = "ns_lens";
+
+// Remove the children of `path` except the one named `keep`, and report whether
+// that child was left behind. The directory itself is not removed.
+static ns_bool ns_remove_children_except(ns_str path, const char *keep) {
+    ns_bool kept = false;
+#if defined(_WIN32)
+    ns_str pattern = ns_path_join(path, ns_str_cstr("*"));
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern.data, &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        ns_str_free(pattern);
+        return false;
+    }
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+        if (strcmp(fd.cFileName, keep) == 0) {
+            kept = true;
+            continue;
+        }
+        ns_str child = ns_path_join(path, ns_str_cstr(fd.cFileName));
+        ns_remove_tree(child);
+        ns_str_free(child);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    ns_str_free(pattern);
+#else
+    DIR *dir = opendir(path.data);
+    if (!dir) return false;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != ns_null) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        if (strcmp(entry->d_name, keep) == 0) {
+            kept = true;
+            continue;
+        }
+        ns_str child = ns_path_join(path, ns_str_cstr(entry->d_name));
+        ns_remove_tree(child);
+        ns_str_free(child);
+    }
+    closedir(dir);
+#endif
+    return kept;
+}
+
+// `ns clean [path]` - remove the generated files of the nearest project,
+// keeping the ns_lens state directory inside bin/.
 void ns_exec_clean(ns_str path) {
     ns_str base = ns_project_absolute_path(path);
     if (!ns_is_dir(base)) base = ns_path_dirname_safe(base);
@@ -4866,12 +4919,28 @@ void ns_exec_clean(ns_str path) {
 
     i32 removed = 0;
     for (i32 i = 0; i < (i32)(sizeof(ns_clean_generated) / sizeof(ns_clean_generated[0])); i++) {
-        ns_str target = ns_path_join(root, ns_str_cstr(ns_clean_generated[i]));
-        if (ns_is_dir(target) || ns_file_exists(target)) {
-            ns_remove_tree(target);
-            ns_info("clean", "removed %.*s\n", target.len, target.data);
-            removed++;
+        const char *name = ns_clean_generated[i];
+        ns_str target = ns_path_join(root, ns_str_cstr(name));
+        if (!ns_is_dir(target) && !ns_file_exists(target)) {
+            ns_str_free(target);
+            continue;
         }
+
+        ns_bool kept = false;
+        if (strcmp(name, "bin") == 0) {
+            kept = ns_remove_children_except(target, ns_clean_keep);
+            if (!kept) ns_remove_tree(target);
+        } else {
+            ns_remove_tree(target);
+        }
+        if (kept) {
+            ns_str state = ns_path_join(target, ns_str_cstr(ns_clean_keep));
+            ns_info("clean", "removed %.*s (kept %.*s)\n", target.len, target.data, state.len, state.data);
+            ns_str_free(state);
+        } else {
+            ns_info("clean", "removed %.*s\n", target.len, target.data);
+        }
+        removed++;
         ns_str_free(target);
     }
     if (removed == 0) ns_info("clean", "nothing to remove in %.*s\n", root.len, root.data);

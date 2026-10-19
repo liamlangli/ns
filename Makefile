@@ -358,8 +358,15 @@ $(NS_LIB_OBJS): $(NS_BINDIR)/%.o : %.c $(NS_HEADERS) | $(NS_DIRS)
 run: all
 	$(TARGET)
 
+# Generated output lives in bin/, except bin/ns_lens: a running ns_lens keeps
+# rewriting the state of the project it has open there (panel layout, ignore
+# rules, outline, caches). Leave that directory alone - removing it would drop
+# the user's settings and race the running program, so a plain `rm -rf bin`
+# fails with "Directory not empty" - and delete everything else.
+.PHONY: clean
 clean:
-	$(Q)$(NS_RMDIR) $(NS_BINDIR)
+	$(Q)find $(NS_BINDIR) -mindepth 1 -maxdepth 1 ! -name ns_lens -exec $(NS_RMDIR) {} + 2>/dev/null || true
+	$(Q)rmdir $(NS_BINDIR) 2>/dev/null || true
 	$(call ns_say,CLEAN,$(NS_BINDIR))
 
 # utility
