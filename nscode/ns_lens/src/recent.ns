@@ -65,6 +65,40 @@ fn recent_is_app_default(path: str) bool {
     return os_file_size(p + "/.ns-resources") >= 0
 }
 
+// File > New Window and the Dock's New Window start another Lens with this
+// argument: the new window opens no project and asks for a folder.
+lit RECENT_NEW_WINDOW = "--new-window"
+// Set when recent_startup_root picked the most recent project rather than a
+// folder the launch named.
+let g_recent_restored = false
+
+// The folder a starting Lens maps, from its argument, the shell's directory
+// and its working directory in that order. Started from Finder or the Dock it
+// lands in its own resource directory and reopens the most recent project
+// instead; with none remembered, or for a new window, it opens empty ("").
+fn recent_startup_root(arg: str, pwd: str, cwd: str) str {
+    g_recent_restored = false
+    if arg == RECENT_NEW_WINDOW {
+        return ""
+    }
+    let root = arg
+    if root == "" {
+        root = pwd
+    }
+    if root == "" {
+        root = cwd
+    }
+    if recent_is_app_default(root) {
+        recent_load()
+        if g_recent_count > 0 {
+            g_recent_restored = true
+            return g_recent[0]
+        }
+        return ""
+    }
+    return root
+}
+
 // Reread the file, so a project another Lens window opened shows up too. An
 // app's resource directory recorded by an older build is dropped.
 fn recent_load() {
@@ -170,12 +204,17 @@ fn recent_place(path: str) str {
     if parent.len > 1 && recent_is_separator((parent[parent.len - 1] as i32) & 255) {
         parent = substr(parent, 0, parent.len - 1)
     }
+    return recent_tilde(parent)
+}
+
+// `path` with the home directory shortened to ~.
+fn recent_tilde(path: str) str {
     let home = os_env("HOME")
-    if home != "" && parent.len >= home.len && substr(parent, 0, home.len) == home {
-        let rest = substr(parent, home.len, parent.len - home.len)
+    if home != "" && path.len >= home.len && substr(path, 0, home.len) == home {
+        let rest = substr(path, home.len, path.len - home.len)
         if rest == "" || recent_is_separator((rest[0] as i32) & 255) {
             return "~" + rest
         }
     }
-    return parent
+    return path
 }

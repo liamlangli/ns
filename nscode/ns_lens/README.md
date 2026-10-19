@@ -15,9 +15,17 @@ directly with `bin/ns run nscode/ns_lens /absolute/path/to/project`.
 
 Opened from Finder or the Dock, the app starts in its own resource directory
 (`Contents/Resources`, or the directory a Linux package marks with
-`.ns-resources`). That directory is never mapped or added to Open Recent: the
-window stays empty except for an **Open Folder...** button in the centre, which
-(like Cmd+O) picks the project folder to map.
+`.ns-resources`). That directory is never mapped or added to Open Recent;
+instead the most recent project from Open Recent opens again. With nothing
+remembered (or when that folder no longer exists, which also drops it from the
+list) the window stays empty except for an **Open Folder...** button in the
+centre, which (like Cmd+O) picks the project folder to map.
+
+Every window is its own process with its own project, panels and terminal.
+**File > New Window** (Cmd+Shift+N) and **New Window** in the Dock icon's
+right-click menu start another Lens the way this one was started (the compiled
+app relaunches itself, `ns run` reruns the interpreter); the new window opens
+empty. Each window shows its own Dock icon.
 
 The scan follows the project's root `.gitignore`, excludes Git metadata, and
 recognizes Nano Script, common native/web/shader languages, scripts, manifests,
@@ -49,6 +57,7 @@ snaps back to orthographic.
   inside that leaf. The map keeps the entire canvas; no separate editor opens.
 - Shift+wheel: scroll code inside the leaf.
 - **File** (top left) opens a project and holds search, Git commands and ignore settings:
+  - **New Window** (Cmd+Shift+N) opens another, empty Lens window.
   - **Open** (Cmd+O) selects a project folder to map.
   - **Open Recent** opens a submenu of the 10 projects opened most recently,
     newest first; each row names the folder and the folder that holds it, and

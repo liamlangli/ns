@@ -123,5 +123,8 @@ i32 os_launch_ns_profile(const char *exe, const char *folder, const char *entry,
 i32 os_process_alive(i32 pid);
 // Ask that child to terminate. Returns 1 when the request was delivered.
 i32 os_process_stop(i32 pid);
+// Start another instance of this program with `arg` as its NS_ARG0.
+// Returns 1 when it was started, 0 when this platform cannot.
+i32 os_launch_self(const char *arg);
 
 i32 os_share_file(const char *path);

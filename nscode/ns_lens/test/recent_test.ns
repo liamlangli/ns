@@ -114,6 +114,26 @@ fn main() {
     check("missing project keeps the window empty", lens_open_root(base + "/gone") == false && g_workspace_root == "" && g_workspace_count == 0)
     check("empty window opens a project", lens_open_root(second) && g_workspace_root == second && g_recent[0] == second)
 
+    // Started from the Dock or Finder, Lens reopens the most recent project;
+    // a named folder or the shell's directory wins, and a new window opens
+    // empty.
+    check("startup reopens the most recent project", recent_startup_root("", "", bundle) == second && g_recent_restored)
+    check("startup prefers the named folder", recent_startup_root(first, "/shell", bundle) == first && g_recent_restored == false)
+    check("startup uses the shell directory", recent_startup_root("", "/shell", bundle) == "/shell" && g_recent_restored == false)
+    check("new window opens empty", recent_startup_root(RECENT_NEW_WINDOW, "", bundle) == "" && g_recent_restored == false)
+    recent_clear()
+    check("startup with nothing remembered opens empty", recent_startup_root("", "", bundle) == "" && g_recent_restored == false)
+
+    // File > New Window leads the menu and takes Cmd+Shift+N.
+    check("new window leads the file menu", LENS_FILE_NEW_WINDOW == 0 && lens_file_item_label(LENS_FILE_NEW_WINDOW) == "New Window" && lens_file_item_keys(LENS_FILE_NEW_WINDOW) == "cmd+shift+N")
+    check("dock menu offers new window", lens_dock_menu_items() == "New Window" && LENS_DOCK_NEW_WINDOW == 0)
+
+    // The window title is the open project's path, home shortened to ~.
+    check("window title is the project path", lens_window_title_text() == recent_tilde(second))
+    check("tilde shortens home", home == "" || (recent_tilde(home + "/os/ns") == "~/os/ns" && recent_tilde(home) == "~" && recent_tilde(home + "x/y") == home + "x/y"))
+    lens_close_root()
+    check("empty window is titled with the app name", lens_window_title_text() == "ns_lens")
+
     os_watch_stop()
     print("recent_test: passed\n")
 }

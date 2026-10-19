@@ -12,6 +12,10 @@
 #include <TargetConditionals.h>
 #include <mach/mach.h>
 #include <sys/sysctl.h>
+#if TARGET_OS_OSX
+#include <crt_externs.h>
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 #ifdef NS_WIN
@@ -1014,6 +1018,123 @@ i32 os_process_stop(i32 pid) {
 
 #if !defined(__APPLE__)
 i32 os_share_file(const char *path) { ns_unused(path); return 0; }
+#endif
+
+// Start another instance of this program, detached, the same way it was
+// started: the executable with the original arguments, so an interpreted
+// program reruns `ns run <entry>` and a native build relaunches itself. The
+// new instance reads `arg` as its first program argument (NS_ARGC = 1,
+// NS_ARG0 = arg) and starts in the shell's directory ($PWD) when one is known.
+#if defined(__APPLE__) && !TARGET_OS_OSX
+i32 os_launch_self(const char *arg) {
+    ns_unused(arg);
+    return 0;
+}
+#elif defined(NS_WIN)
+i32 os_launch_self(const char *arg) {
+    char exe[MAX_PATH];
+    if (!GetModuleFileNameA(NULL, exe, sizeof(exe))) return 0;
+    char command[8192];
+    snprintf(command, sizeof(command), "%s", GetCommandLineA());
+    char old_argc[64];
+    char old_arg[OS_MAX_PATH];
+    DWORD argc_len = GetEnvironmentVariableA("NS_ARGC", old_argc, sizeof(old_argc));
+    DWORD arg_len = GetEnvironmentVariableA("NS_ARG0", old_arg, sizeof(old_arg));
+    SetEnvironmentVariableA("NS_ARGC", "1");
+    SetEnvironmentVariableA("NS_ARG0", arg ? arg : "");
+    STARTUPINFOA startup;
+    PROCESS_INFORMATION process;
+    ZeroMemory(&startup, sizeof(startup));
+    ZeroMemory(&process, sizeof(process));
+    startup.cb = sizeof(startup);
+    BOOL launched = CreateProcessA(exe, command, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &startup, &process);
+    SetEnvironmentVariableA("NS_ARGC", argc_len > 0 && argc_len < (DWORD)sizeof(old_argc) ? old_argc : NULL);
+    SetEnvironmentVariableA("NS_ARG0", arg_len > 0 && arg_len < (DWORD)sizeof(old_arg) ? old_arg : NULL);
+    if (!launched) return 0;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return 1;
+}
+#else
+extern char **environ;
+
+i32 os_launch_self(const char *arg) {
+    static char exe[OS_MAX_PATH];
+#if defined(__APPLE__)
+    uint32_t exe_size = sizeof(exe);
+    if (_NSGetExecutablePath(exe, &exe_size) != 0) return 0;
+    i32 argc = *_NSGetArgc();
+    char **source = *_NSGetArgv();
+#else
+    ssize_t exe_len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (exe_len <= 0) return 0;
+    exe[exe_len] = '\0';
+    static char cmdline[65536];
+    i32 cmd_len = 0;
+    i32 fd = open("/proc/self/cmdline", O_RDONLY);
+    if (fd >= 0) {
+        ssize_t got = read(fd, cmdline, sizeof(cmdline) - 1);
+        if (got > 0) cmd_len = (i32)got;
+        close(fd);
+    }
+    cmdline[cmd_len] = '\0';
+    char *split[256];
+    i32 argc = 0;
+    for (i32 at = 0; at < cmd_len && argc < 255; at += (i32)strlen(cmdline + at) + 1) {
+        split[argc++] = cmdline + at;
+    }
+    char **source = split;
+#endif
+    if (argc > 255) argc = 255;
+    // Everything the child needs is built before fork(): after it only
+    // async-signal-safe calls run, since the parent has other threads.
+    char *child_argv[256];
+    child_argv[0] = exe;
+    for (i32 i = 1; i < argc; i++) child_argv[i] = source[i];
+    child_argv[argc < 1 ? 1 : argc] = NULL;
+
+    i32 env_count = 0;
+    while (environ && environ[env_count]) env_count++;
+    char **child_env = (char **)malloc(sizeof(char *) * (size_t)(env_count + 3));
+    if (!child_env) return 0;
+    static char argc_entry[] = "NS_ARGC=1";
+    char *arg_entry = (char *)malloc(strlen(arg ? arg : "") + 9);
+    if (!arg_entry) {
+        free(child_env);
+        return 0;
+    }
+    sprintf(arg_entry, "NS_ARG0=%s", arg ? arg : "");
+    i32 n = 0;
+    child_env[n++] = argc_entry;
+    child_env[n++] = arg_entry;
+    for (i32 i = 0; i < env_count; i++) {
+        if (strncmp(environ[i], "NS_ARGC=", 8) == 0 || strncmp(environ[i], "NS_ARG0=", 8) == 0) continue;
+        child_env[n++] = environ[i];
+    }
+    child_env[n] = NULL;
+
+    const char *dir = getenv("PWD");
+    struct stat dir_stat;
+    if (!dir || stat(dir, &dir_stat) != 0 || !S_ISDIR(dir_stat.st_mode)) dir = NULL;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Detach twice so the new instance outlives this one and is never
+        // left as this process's zombie.
+        setsid();
+        if (fork() != 0) _exit(0);
+        for (int fd = 3; fd < 256; fd++) close(fd);
+        if (dir) chdir(dir);
+        execve(exe, child_argv, child_env);
+        _exit(127);
+    }
+    free(arg_entry);
+    free(child_env);
+    if (pid < 0) return 0;
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return 1;
+}
 #endif
 
 // ---------------------------------------------------------------------------

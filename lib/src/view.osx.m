@@ -306,6 +306,37 @@ i32 view_osx_key_map(i32 k) {
     }
 }
 
+// The program's view_set_dock_menu titles, rebuilt each time the Dock asks.
+- (NSMenu*)applicationDockMenu:(NSApplication*)sender {
+    (void)sender;
+    NSString *items = [NSString stringWithUTF8String:view_dock_menu_items()];
+    if (!items || [items length] == 0) return nil;
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+    NSInteger index = 0;
+    for (NSString *title in [items componentsSeparatedByString:@"\n"]) {
+        if ([title length] > 0) {
+            NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
+                                                          action:@selector(dockMenuPicked:)
+                                                   keyEquivalent:@""];
+            [item setTarget:self];
+            [item setTag:index];
+            [menu addItem:item];
+#if !__has_feature(objc_arc)
+            [item release];
+#endif
+        }
+        index++;
+    }
+#if !__has_feature(objc_arc)
+    [menu autorelease];
+#endif
+    return menu;
+}
+
+- (void)dockMenuPicked:(NSMenuItem*)item {
+    view_on_dock_menu(&_view, (i32)[item tag]);
+}
+
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
     (void)sender;
     view_osx_finish();
@@ -718,6 +749,46 @@ void view_platform_close(view *v) {
         view_osx_finish();
         view_osx_request_terminate();
     });
+}
+
+// AppKit has no public way to rename a running application; the Dock reads
+// the name LaunchServices holds for the process. These private entry points are
+// looked up by name, so a system without them leaves the bundle's name.
+typedef CFTypeRef (*view_osx_ls_asn_fn)(void);
+typedef OSStatus (*view_osx_ls_set_fn)(int, CFTypeRef, CFStringRef, CFStringRef, CFDictionaryRef *);
+
+static void view_osx_set_display_name(NSString *name) {
+    CFBundleRef services = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.LaunchServices"));
+    if (!services) return;
+    view_osx_ls_asn_fn current_asn =
+        (view_osx_ls_asn_fn)CFBundleGetFunctionPointerForName(services, CFSTR("_LSGetCurrentApplicationASN"));
+    view_osx_ls_set_fn set_item =
+        (view_osx_ls_set_fn)CFBundleGetFunctionPointerForName(services, CFSTR("_LSSetApplicationInformationItem"));
+    CFStringRef *display_name_key =
+        (CFStringRef *)CFBundleGetDataPointerForName(services, CFSTR("_kLSDisplayNameKey"));
+    if (!current_asn || !set_item || !display_name_key || !*display_name_key) return;
+    CFTypeRef asn = current_asn();
+    if (!asn) return;
+    // -2 is kLSDefaultSessionID.
+    set_item(-2, asn, *display_name_key, (__bridge CFStringRef)name, NULL);
+}
+
+void view_platform_set_app_name(view *v, const char *name) {
+    ns_unused(v);
+    NSString *value = [NSString stringWithUTF8String:name ? name : ""];
+    if (!value || [value length] == 0) return;
+    void (^apply)(void) = ^{ view_osx_set_display_name(value); };
+    if ([NSThread isMainThread]) apply();
+    else dispatch_async(dispatch_get_main_queue(), apply);
+}
+
+void view_platform_set_title(view *v, const char *title) {
+    ns_unused(v);
+    NSString *value = [NSString stringWithUTF8String:title ? title : ""];
+    if (!value) return;
+    void (^apply)(void) = ^{ if (view_window) [view_window setTitle:value]; };
+    if ([NSThread isMainThread]) apply();
+    else dispatch_async(dispatch_get_main_queue(), apply);
 }
 
 void view_platform_set_fullscreen(view *v, ns_bool fullscreen) {

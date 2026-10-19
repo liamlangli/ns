@@ -6,30 +6,28 @@ use ui
 
 fn main() {
     g_workspace_streaming = true
-    g_workspace_root = os_env("NS_ARG0")
     // A launched app bundle starts inside its own resource directory, so
-    // without an argument the shell's directory is the project to map.
-    if g_workspace_root == "" {
-        g_workspace_root = os_env("PWD")
-    }
-    if g_workspace_root == "" {
-        g_workspace_root = os_cwd()
-    }
-    // Opened from Finder or the Dock, that is the app's own resource
-    // directory: no project is open, and the window asks for a folder.
-    if recent_is_app_default(g_workspace_root) {
-        g_workspace_root = ""
-    } else {
+    // without an argument the shell's directory is the project to map; opened
+    // from Finder or the Dock, the most recent project opens again.
+    g_workspace_root = recent_startup_root(os_env("NS_ARG0"), os_env("PWD"), os_cwd())
+    if g_workspace_root != "" {
         workspace_init()
         if g_workspace_count >= 0 {
             recent_add(g_workspace_root)
+        } else if g_recent_restored {
+            // The remembered project is gone: forget it and open empty.
+            recent_remove(g_workspace_root)
+            lens_close_root()
         }
     }
     panel_state_load()
-    let v = view_create("ns_lens", 1280, 800)
+    let v = view_create(lens_window_title_text(), 1280, 800)
     if gpu_request_device(v) {
         let r = ui_renderer_create(v)
+        view_set_dock_menu(v, lens_dock_menu_items())
         v.on_frame({ frame in
+            lens_dock_menu(frame)
+            lens_window_title(frame)
             ui_begin_frame(r)
             render_frame(r, frame)
             ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })

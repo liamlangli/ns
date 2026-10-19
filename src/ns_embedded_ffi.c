@@ -30,9 +30,13 @@ extern void * view_create(const char *, i32, i32);
 extern void * view_create_no_title(const char *, i32, i32);
 extern void view_run(void *);
 extern void view_close(void *);
+extern void view_set_title(void *, const char *);
+extern void view_set_app_name(void *, const char *);
 extern void view_set_fullscreen(void *, ns_bool);
 extern void view_set_safe_area(void *, f64, f64, f64, f64);
 extern void view_capture_require(void *);
+extern void view_set_dock_menu(void *, const char *);
+extern i32 view_take_dock_menu(void *);
 extern void view_request_frame(void *, i32);
 extern void view_request_frame_after(void *, i32);
 extern void view_set_frame_per_second(void *, i32);
@@ -276,6 +280,7 @@ extern void os_pty_close(i32);
 extern i32 os_launch_ns_profile(const char *, const char *, const char *, i32);
 extern i32 os_process_alive(i32);
 extern i32 os_process_stop(i32);
+extern i32 os_launch_self(const char *);
 extern ns_bool gpu_request_device(void *);
 extern void gpu_destroy_device(void);
 extern const char * gpu_shader_target(void);
@@ -2934,6 +2939,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "os_impact_prepare", (void *)os_impact_prepare, ns_embedded_sig11, ns_embedded_cpu11 },
     { "os_launch_ns_profile", (void *)os_launch_ns_profile, ns_embedded_sig81, ns_embedded_cpu81 },
     { "os_launch_ns_project", (void *)os_launch_ns_project, ns_embedded_sig82, ns_embedded_cpu82 },
+    { "os_launch_self", (void *)os_launch_self, ns_embedded_sig5, ns_embedded_cpu5 },
     { "os_locale_date_string", (void *)os_locale_date_string, ns_embedded_sig3, ns_embedded_cpu3 },
     { "os_locale_date_time_string", (void *)os_locale_date_time_string, ns_embedded_sig3, ns_embedded_cpu3 },
     { "os_lock_acquire", (void *)os_lock_acquire, ns_embedded_sig39, ns_embedded_cpu39 },
@@ -3243,10 +3249,14 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "view_request_frame", (void *)view_request_frame, ns_embedded_sig131, ns_embedded_cpu131 },
     { "view_request_frame_after", (void *)view_request_frame_after, ns_embedded_sig131, ns_embedded_cpu131 },
     { "view_run", (void *)view_run, ns_embedded_sig64, ns_embedded_cpu64 },
+    { "view_set_app_name", (void *)view_set_app_name, ns_embedded_sig199, ns_embedded_cpu199 },
     { "view_set_clipboard", (void *)view_set_clipboard, ns_embedded_sig199, ns_embedded_cpu199 },
+    { "view_set_dock_menu", (void *)view_set_dock_menu, ns_embedded_sig199, ns_embedded_cpu199 },
     { "view_set_frame_per_second", (void *)view_set_frame_per_second, ns_embedded_sig131, ns_embedded_cpu131 },
     { "view_set_fullscreen", (void *)view_set_fullscreen, ns_embedded_sig175, ns_embedded_cpu175 },
     { "view_set_safe_area", (void *)view_set_safe_area, ns_embedded_sig162, ns_embedded_cpu162 },
+    { "view_set_title", (void *)view_set_title, ns_embedded_sig199, ns_embedded_cpu199 },
+    { "view_take_dock_menu", (void *)view_take_dock_menu, ns_embedded_sig114, ns_embedded_cpu114 },
     { "view_take_gamepad_button_press", (void *)view_take_gamepad_button_press, ns_embedded_sig167, ns_embedded_cpu167 },
     { "view_take_key_press", (void *)view_take_key_press, ns_embedded_sig20, ns_embedded_cpu20 },
 };

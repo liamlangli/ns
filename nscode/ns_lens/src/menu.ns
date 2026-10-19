@@ -1,5 +1,6 @@
-// The File menu and its shortcuts (Cmd+O open, Cmd+P search, Cmd+Enter
-// commit; Open Recent and Push have none), Open Recent's submenu, the commit
+// The File menu and its shortcuts (Cmd+Shift+N new window, Cmd+O open, Cmd+P
+// search, Cmd+Enter commit; Open Recent and Push have none), Open Recent's
+// submenu, the Dock icon's New Window, the commit
 // message dialog with its Commit, Commit Append and Commit & Push modes, the
 // search box, and the bottom-left hints and activity row
 // above the status bar. Input and drawing for the status bar's branch menu
@@ -12,13 +13,17 @@ use ui
 lit LENS_FILE_X = 12.0
 lit LENS_FILE_W = 64.0
 lit LENS_FILE_MENU_W = 220.0
-lit LENS_FILE_ITEMS = 6
-lit LENS_FILE_OPEN = 0
-lit LENS_FILE_RECENT = 1
-lit LENS_FILE_SEARCH = 2
-lit LENS_FILE_COMMIT = 3
-lit LENS_FILE_PUSH = 4
-lit LENS_FILE_IGNORE = 5
+lit LENS_FILE_ITEMS = 7
+lit LENS_FILE_NEW_WINDOW = 0
+lit LENS_FILE_OPEN = 1
+lit LENS_FILE_RECENT = 2
+lit LENS_FILE_SEARCH = 3
+lit LENS_FILE_COMMIT = 4
+lit LENS_FILE_PUSH = 5
+lit LENS_FILE_IGNORE = 6
+// Every Lens window is its own process, so the Dock icon's menu offers the
+// same New Window as the File menu. Its rows, one title per line.
+lit LENS_DOCK_NEW_WINDOW = 0
 // Open Recent's submenu opens to the right of the File popup, level with its
 // row. Its project rows end in a separator, then Clear Recent.
 lit LENS_RECENT_W = 420.0
@@ -76,6 +81,9 @@ let g_lens_commit_mode: i32 = 0
 let g_lens_commit_menu_open = false
 
 fn lens_file_item_label(i: i32) str {
+    if i == LENS_FILE_NEW_WINDOW {
+        return "New Window"
+    }
     if i == LENS_FILE_OPEN {
         return "Open..."
     }
@@ -94,6 +102,9 @@ fn lens_file_item_label(i: i32) str {
 
 // Open Recent shows its submenu arrow instead; Push has no shortcut.
 fn lens_file_item_keys(i: i32) str {
+    if i == LENS_FILE_NEW_WINDOW {
+        return "cmd+shift+N"
+    }
     if i == LENS_FILE_OPEN {
         return "cmd+O"
     }
@@ -338,7 +349,9 @@ fn lens_file_action(i: i32) {
         return
     }
     g_lens_file_open = false
-    if i == LENS_FILE_OPEN {
+    if i == LENS_FILE_NEW_WINDOW {
+        lens_new_window()
+    } else if i == LENS_FILE_OPEN {
         lens_open_project()
     } else if i == LENS_FILE_SEARCH {
         lens_search_show()
@@ -348,6 +361,48 @@ fn lens_file_action(i: i32) {
         lens_push()
     } else {
         lens_ignore_show()
+    }
+}
+
+// Start another Lens with no project open. Each window is its own process
+// with its own workspace, panels and terminal.
+fn lens_new_window() {
+    if os_launch_self(RECENT_NEW_WINDOW) == 0 {
+        g_lens_message = "New Window is not available on this platform"
+    }
+}
+
+fn lens_dock_menu_items() str { return "New Window" }
+
+// A pick from the Dock icon's menu, polled once per frame.
+fn lens_dock_menu(v: ref view) {
+    if view_take_dock_menu(v) == LENS_DOCK_NEW_WINDOW {
+        lens_new_window()
+    }
+}
+
+// Each window is titled with its project's path, the home directory shortened
+// to ~ (~/os/ns), so windows tell apart in the Dock, Mission Control and the
+// Window menu; with no project open it is the app's name. The Dock icon's
+// tooltip shows the application's name rather than a window's, and every
+// window is its own process, so that name follows the title too.
+let g_lens_window_title = ""
+
+fn lens_window_title_text() str {
+    let root = recent_normalize(g_workspace_root)
+    if root == "" {
+        return "ns_lens"
+    }
+    return recent_tilde(root)
+}
+
+// Called every frame; the title changes only when the project does.
+fn lens_window_title(v: ref view) {
+    let title = lens_window_title_text()
+    if title != g_lens_window_title {
+        g_lens_window_title = title
+        view_set_title(v, title)
+        view_set_app_name(v, title)
     }
 }
 
@@ -478,7 +533,9 @@ fn lens_menu_keys(v: ref view) {
         return
     }
     if cmd_down(v) {
-        if key_edge(v, 79) {
+        if shift_down(v) && key_edge(v, 78) {
+            lens_new_window()
+        } else if key_edge(v, 79) {
             lens_open_project()
         } else if key_edge(v, 80) {
             lens_search_show()

@@ -300,11 +300,25 @@ ns_bool view_take_frame_request(view *v);
 // with a positive rate.
 ns_bool view_continuous_render(void);
 void view_complete_frame(view *v);
+// Dock menu: the program publishes newline-separated item titles and polls
+// for the picked item's index (-1 when none was picked since the last call).
+// A backend reads the titles and reports a pick with view_on_dock_menu.
+// Replace the window title after creation (the browser's document title).
+void view_set_title(view *v, const char *title);
+// Rename this running application where the platform shows it apart from the
+// window title: the macOS Dock tooltip, app menu and Activity Monitor.
+void view_set_app_name(view *v, const char *name);
+void view_set_dock_menu(view *v, const char *items);
+i32 view_take_dock_menu(view *v);
+const char *view_dock_menu_items(void);
+void view_on_dock_menu(view *v, i32 index);
 void view_platform_request_frame(view *v);
 void view_platform_request_frame_after(view *v, i32 milliseconds);
 void view_platform_set_frame_per_second(view *v, i32 frames);
 void view_platform_close(view *v);
 void view_platform_set_fullscreen(view *v, ns_bool fullscreen);
+void view_platform_set_title(view *v, const char *title);
+void view_platform_set_app_name(view *v, const char *name);
 
 // View event handling functions
 void view_on_scroll(view *v, f64 x, f64 y);

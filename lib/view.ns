@@ -137,6 +137,15 @@ ref fn view_create_no_title(title: str, width: i32, height: i32) ref view
 // is nonblocking because the generated shell drives the exported frame fn.
 ref fn view_run(v: ref view)
 ref fn view_close(v: ref view)
+// Replace the window title after creation. A browser canvas sets the page's
+// document title; an iOS scene has no title bar and ignores it.
+ref fn view_set_title(v: ref view, title: str)
+// Rename this running application where the platform shows its name apart
+// from the window title: on macOS the Dock icon's tooltip, the app menu and
+// Activity Monitor, through LaunchServices' display name for this process
+// (a private call, skipped when the system lacks it). Other platforms show
+// the window title there already and ignore it.
+ref fn view_set_app_name(v: ref view, name: str)
 // Ask the platform window to enter or leave fullscreen. Wayland requests
 // xdg_toplevel.set_fullscreen, macOS toggles the window's fullscreen state and
 // Windows covers the monitor without decorations. A browser canvas asks the
@@ -147,6 +156,14 @@ ref fn view_set_fullscreen(v: ref view, fullscreen: bool)
 // their own chrome. Negative values are clamped to 0.
 ref fn view_set_safe_area(v: ref view, top: f64, right: f64, bottom: f64, left: f64)
 ref fn view_capture_require(v: ref view)
+
+// Items for the application's dock menu (right-click on the macOS Dock icon),
+// one title per line; "" removes them. view_take_dock_menu returns the index
+// of the item picked since the last call, or -1, and a pick requests a frame
+// so an on-demand program sees it. Other backends keep the titles and never
+// report a pick.
+ref fn view_set_dock_menu(v: ref view, items: str)
+ref fn view_take_dock_menu(v: ref view) i32
 
 // Frames are drawn on demand. Queue `frames` more of them, or one after a
 // delay; an animation or a simulation asks for the next frame from inside the

@@ -1,6 +1,7 @@
 #include "view.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 static ns_bool view_keys[VIEW_KEY_MENU + 1];
 // Stored as modifiers + 1 so zero remains the no-event sentinel.
@@ -380,6 +381,59 @@ void view_set_safe_area(view *v, f64 top, f64 right, f64 bottom, f64 left) {
     v->safe_area_right = right > 0.0 ? right : 0.0;
     v->safe_area_bottom = bottom > 0.0 ? bottom : 0.0;
     v->safe_area_left = left > 0.0 ? left : 0.0;
+}
+
+// The application's dock menu: newline-separated item titles the platform
+// shows when the dock (or taskbar) icon is right-clicked, and the item picked
+// since the program last asked. Backends without such a menu keep the titles
+// and never report a pick.
+static char *view_dock_items;
+static i32 view_dock_pick = -1;
+
+void view_set_dock_menu(view *v, const char *items) {
+    ns_unused(v);
+    size_t len = items ? strlen(items) : 0;
+    char *copy = ns_realloc(view_dock_items, len + 1);
+    if (!copy) return;
+    memcpy(copy, items ? items : "", len);
+    copy[len] = '\0';
+    view_dock_items = copy;
+}
+
+const char *view_dock_menu_items(void) {
+    return view_dock_items ? view_dock_items : "";
+}
+
+void view_on_dock_menu(view *v, i32 index) {
+    view_dock_pick = index;
+    view_request_frame(v, 1);
+}
+
+i32 view_take_dock_menu(view *v) {
+    ns_unused(v);
+    i32 pick = view_dock_pick;
+    view_dock_pick = -1;
+    return pick;
+}
+
+void view_set_app_name(view *v, const char *name) {
+    if (!v || !name || !name[0]) return;
+    view_platform_set_app_name(v, name);
+}
+
+// The title is copied: the caller's string may not outlive the window.
+static char *view_title_copy;
+
+void view_set_title(view *v, const char *title) {
+    if (!v) return;
+    size_t len = title ? strlen(title) : 0;
+    char *copy = ns_realloc(view_title_copy, len + 1);
+    if (!copy) return;
+    memcpy(copy, title ? title : "", len);
+    copy[len] = '\0';
+    view_title_copy = copy;
+    v->title = ns_str_cstr(copy);
+    view_platform_set_title(v, copy);
 }
 
 void view_capture_require(view *v) {

@@ -1529,6 +1529,19 @@ void view_platform_close(view *v) {
     view_linux_wake();
 }
 
+// Wayland shells name a window by its title; there is no separate app name.
+void view_platform_set_app_name(view *v, const char *name) {
+    ns_unused(v);
+    ns_unused(name);
+}
+
+void view_platform_set_title(view *v, const char *title) {
+    ns_unused(v);
+    if (!_state.toplevel) return;
+    xdg_toplevel_set_title(_state.toplevel, title ? title : "");
+    if (_state.display) wl_display_flush(_state.display);
+}
+
 void view_platform_set_fullscreen(view *v, ns_bool fullscreen) {
     ns_unused(v);
     if (!_state.toplevel) return;

@@ -282,6 +282,17 @@ void view_platform_close(view *v) {
     else _quit = true;
 }
 
+// The taskbar already shows the window title.
+void view_platform_set_app_name(view *v, const char *name) {
+    ns_unused(v);
+    ns_unused(name);
+}
+
+void view_platform_set_title(view *v, const char *title) {
+    ns_unused(v);
+    if (_hwnd) SetWindowTextA(_hwnd, title ? title : "");
+}
+
 // Borderless monitor coverage, the Windows form of fullscreen. The previous
 // style and placement are restored on the way out so the window returns to the
 // size and position the title bar had.

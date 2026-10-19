@@ -221,3 +221,10 @@ ref fn os_pty_close(handle: i32)
 ref fn os_launch_ns_profile(exe: str, folder: str, entry: str, port: i32) i32
 ref fn os_process_alive(pid: i32) i32
 ref fn os_process_stop(pid: i32) i32
+
+// Start another instance of this program, detached, the way this one was
+// started (a native build relaunches itself, an interpreted program reruns
+// `ns run`). The new instance reads `arg` as its first program argument
+// through os_env("NS_ARG0"). Returns 1 when it was started, 0 where a program
+// cannot start itself (iOS, the browser).
+ref fn os_launch_self(arg: str) i32
