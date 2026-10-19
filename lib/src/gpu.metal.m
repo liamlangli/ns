@@ -415,8 +415,10 @@ typedef struct gpu_state_mtl {
     id<MTLBuffer> *v2_storage_buffers;
     u64 *v2_storage_offsets;
     u32 v2_storage_slot_count;
-    // gpu_set_texture_table, bound at GPU_MTL_TEXTURE_TABLE_BASE.
+    // gpu_set_texture_table, bound at GPU_MTL_TEXTURE_TABLE_BASE: exactly
+    // v2_texture_table_count entries, as many as the shader declares.
     u32 v2_texture_table[GPU_TEXTURE_TABLE_SIZE];
+    u32 v2_texture_table_count;
     MTLPixelFormat v2_pass_colors[4];
     MTLPixelFormat v2_pass_depth;
     MTLPixelFormat v2_pass_stencil;
@@ -1601,8 +1603,9 @@ static void mtl_v2_set_storage(u32 binding, u32 slot, u64 offset, gpu_addr addr)
     _state.v2_storage_offsets[index] = offset;
 }
 
-static void mtl_v2_set_texture_table(const u32 *textures) {
+static void mtl_v2_set_texture_table(const u32 *textures, u32 count) {
     memcpy(_state.v2_texture_table, textures, sizeof(_state.v2_texture_table));
+    _state.v2_texture_table_count = count < GPU_TEXTURE_TABLE_SIZE ? count : GPU_TEXTURE_TABLE_SIZE;
 }
 
 // The table follows the three fixed fragment textures (shadow, map, mask).
@@ -1615,13 +1618,17 @@ static void mtl_v2_bind_texture_table(id<MTLRenderCommandEncoder> encoder) {
         if (index && index < _state.texture_count) fallback = _state.textures[index].texture;
     }
     if (!fallback) return;
+    // Only the entries the caller passed: a slot past them is one the shader
+    // does not declare, and a texture bound there is one the GPU never reads.
+    const u32 count = _state.v2_texture_table_count;
+    if (count == 0) return;
     id<MTLTexture> table[GPU_TEXTURE_TABLE_SIZE];
-    for (u32 i = 0; i < GPU_TEXTURE_TABLE_SIZE; ++i) {
+    for (u32 i = 0; i < count; ++i) {
         u32 index = _state.v2_texture_table[i];
         id<MTLTexture> texture = index && index < _state.texture_count ? _state.textures[index].texture : nil;
         table[i] = texture ? texture : fallback;
     }
-    [encoder setFragmentTextures:table withRange:NSMakeRange(GPU_MTL_TEXTURE_TABLE_BASE, GPU_TEXTURE_TABLE_SIZE)];
+    [encoder setFragmentTextures:table withRange:NSMakeRange(GPU_MTL_TEXTURE_TABLE_BASE, count)];
 }
 
 static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encoder, bool compute) {

@@ -291,7 +291,7 @@ int main(void) {
     ns_expect(text_has(ui_native, "gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height)") &&
                   text_has(ui_native, "gpu_set_scissor(0, 0, framebuffer_width, framebuffer_height)") &&
                   text_has(ui_native, "gpu_set_shader(r->shader)") &&
-                  text_has(ui_native, "gpu_set_texture_table(d->textures, d->texture_count)") &&
+                  text_has(ui_native, "gpu_set_texture_table(textures, 2)") &&
                   text_has(ui_native, "gpu_set_storage(r->storage)") &&
                   text_has(ui_native, "gpu_draw_vertices("),
               "embedded UI uses v2 storage and draws its frame with one shader under a framebuffer scissor.");

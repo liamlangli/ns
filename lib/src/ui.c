@@ -32,6 +32,9 @@
 #define UI_FONT_BITMAP 3
 #define UI_FONT_BITMAP_ZH 4
 #define UI_FONT_COUNT 5
+// A command's texture_id: a solid shape samples nothing, the main/mono and
+// Chinese faces live in the MSDF font pack, the bitmap faces and atlases are
+// RGBA textures of their own.
 #define UI_WHITE_TEXTURE 1
 #define UI_FONT_TEXTURE 2
 #define UI_FONT_ZH_TEXTURE (UI_MAX_TEXTURES + 3)
@@ -41,12 +44,25 @@
 #define UI_KIND_MSDF 1
 #define UI_KIND_ARC_SDF 2
 #define UI_KIND_BITMAP 3
+// Only in ui_vertex.meta: an image command with no texture of its own, drawn
+// in its vertex colour.
+#define UI_KIND_SOLID 4
 // ui_vertex.meta, written when the frame is flushed: the kind (bits 0-3), the
-// slot in the draw's texture table (bits 4-7) and the projection (bits 8-11)
-// of the command the vertex belongs to. Projection 0 is the flat screen,
+// MSDF face in the font pack (bits 4-7) and the projection (bits 8-11) of the
+// command the vertex belongs to. Projection 0 is the flat screen,
 // 1..UI_MAX_PLANES a ui_begin_plane plane, and UI_PROJECTION_PANEL the 3D
 // panel. The shader sources spell these numbers out.
-#define UI_META_SLOT_SHIFT 4
+#define UI_META_FACE_SHIFT 4
+// The MSDF faces in the font pack: the main/mono atlas, then the Chinese one.
+#define UI_FACE_MAIN 0
+#define UI_FACE_ZH 1
+#define UI_FACES 2
+// Empty texels between packed faces, so linear sampling at a glyph's edge
+// never reaches the next face.
+#define UI_FONT_PACK_GUTTER 8
+// The ui draws with two textures: the MSDF font pack and one RGBA texture.
+#define UI_TEXTURE_MSDF 0
+#define UI_TEXTURE_RGBA 1
 #define UI_META_PROJECTION_SHIFT 8
 #define UI_PROJECTION_PANEL (UI_MAX_PLANES + 1)
 // Per projection in frame storage: a column-major clip matrix, then the
@@ -175,8 +191,8 @@ typedef struct ui_vertex {
 } ui_vertex;
 
 _Static_assert(sizeof(ui_vertex) == UI_VERTEX_STRIDE, "the ui shader reads ten words per vertex");
-_Static_assert(UI_PROJECTION_PANEL == 9 && GPU_TEXTURE_TABLE_SIZE == 16,
-               "the ui shader sources hard-code the panel projection and the table size");
+_Static_assert(UI_PROJECTION_PANEL == 9 && UI_KIND_SOLID == 4 && UI_FACE_ZH == 1,
+               "the ui shader sources hard-code the panel projection, the solid kind and the faces");
 
 typedef struct ui_clip {
     f64 x, y, w, h;
@@ -288,14 +304,15 @@ typedef struct ui_panel_touch_state {
 } ui_panel_touch_state;
 
 // One draw of the flush: a run of immediate commands whose vertices are
-// contiguous and whose textures fit one table, or a single retained command.
+// contiguous and that sample at most one RGBA texture, or a single retained
+// command. Every draw samples the one MSDF font pack.
 typedef struct ui_draw {
     i32 command;          // the retained command, -1 for an immediate run
     i32 vertex_offset;
     i32 vertex_count;
     u32 batch_meta;       // a retained command's meta; its vertices carry none
-    u32 textures[GPU_TEXTURE_TABLE_SIZE];
-    u32 texture_count;
+    u32 rgba;             // the RGBA texture its images and bitmap glyphs sample, 0 for none
+    ns_bool msdf;         // it draws MSDF text from the font pack
 } ui_draw;
 
 typedef struct ui_renderer {
@@ -331,17 +348,33 @@ typedef struct ui_renderer {
     i32 current_texture_id;
 
     ui_font fonts[UI_FONT_COUNT];
-    u32 white_texture;
-    u32 font_texture;
-    // latin_mono.png goes up the first time a draw samples it, so a program
-    // that only draws bitmap text never holds it; a failed load is not retried.
+    // The MSDF faces share one texture, the font pack (ui_font_pack): the
+    // main/mono atlas on top and the Chinese one under it. Glyph vertices keep
+    // face-local UVs and the shader moves them into the pack through
+    // font_faces, each face's (u, v) origin and extent, so a repack leaves
+    // retained text valid. The pack goes up the first time a draw samples
+    // it, so a program that only draws bitmap text never holds it.
+    u32 font_pack;
+    ns_bool font_pack_zh;
+    f32 font_faces[UI_FACES][4];
+    // A replaced pack may still be read by a frame in flight.
+    u32 font_pack_retired;
+    i32 font_pack_retired_frames;
+    // The main/mono atlas image; empty for the bundled latin_mono.png. A
+    // failed load is not retried.
+    char font_main_image[UI_PATH_MAX];
     ns_bool font_texture_failed;
     // The Chinese atlas is large and English text never samples it, so
-    // ui_load_chinese_font keeps only its glyph table and image path; the
-    // texture goes up the first time a draw uses a Chinese glyph.
-    u32 font_zh_texture;
+    // ui_load_chinese_font keeps only its glyph table and image path; it joins
+    // the pack the first time a draw uses a Chinese glyph.
     char font_zh_image[UI_PATH_MAX];
     ns_bool font_zh_texture_failed;
+    // Bound only where a draw has neither the pack nor an RGBA texture to
+    // give a slot it never reads.
+    u32 placeholder_texture;
+    // What the planned frame samples from the pack (ui_plan_draws).
+    ns_bool plan_msdf;
+    ns_bool plan_zh;
     u32 font_bitmap_texture;
     u32 font_bitmap_zh_texture;
     // The one shader and state every ui draw uses. The state tests the screen
@@ -406,6 +439,8 @@ typedef struct ui_gpu_root {
     // Drawable-space clip (x0, y0, x1, y1) of a retained batch draw. A batch
     // binds its own vertex buffer, so it cannot index the frame's clip list.
     f32 batch_clip[4];
+    // Per MSDF face its (u, v) origin and (u, v) extent in the font pack.
+    f32 font_faces[UI_FACES][4];
 } ui_gpu_root;
 
 _Static_assert(sizeof(ui_gpu_root) <= GPU_V2_ALLOC_ALIGN, "UI root must fit its frame-storage stride");
@@ -469,13 +504,15 @@ static void ui_round_rect_points(f64 *pts, i32 *out_n, f64 x, f64 y, f64 w, f64 
 static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inner, i32 n, u32 outer_color, u32 inner_color);
 
 // One shader draws all of it. Every vertex carries its own meta word (kind,
-// texture-table slot, projection), so a frame's ui is one draw whatever mix of
-// rectangles, text, arcs, images, planes and panel it holds; only a retained
-// batch, which keeps its own vertex buffer, is a draw of its own.
+// MSDF face, projection), so a frame's ui is one draw whatever mix of
+// rectangles, text, arcs, planes and panel it holds; a retained batch, which
+// keeps its own vertex buffer, and a change of RGBA texture start another.
+// It samples two textures at fixed bindings: the MSDF font pack and the
+// draw's RGBA texture (an atlas, an image or a bitmap face).
 static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
-"struct UiRoot { float screen_width; float screen_height; float offset_x; float offset_y; uint clip_offset; uint projection_offset; uint batch_meta; uint unused; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4 vertex_scale; float4 batch_clip; };\n"
+"struct UiRoot { float screen_width; float screen_height; float offset_x; float offset_y; uint clip_offset; uint projection_offset; uint batch_meta; uint unused; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4 vertex_scale; float4 batch_clip; float4 font_faces[2]; };\n"
 "struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; uint meta [[flat]]; };\n"
 "static inline float ui_word(device const uint *s, uint i) { return as_type<float>(s[i]); }\n"
 "vertex VOut ui_vs(uint vertex_id [[vertex_id]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
@@ -536,7 +573,7 @@ static const char *ui_shader_src =
 "  float2 q = abs(float2(angle * radius, radial - radius)) - extent;\n"
 "  return length(max(q, float2(0.0))) + min(max(q.x, q.y), 0.0) - corner;\n"
 "}\n"
-"fragment float4 ui_fs(VOut in [[stage_in]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]], array<texture2d<float>, 16> ns_texture_table [[texture(3)]]) {\n"
+"fragment float4 ui_fs(VOut in [[stage_in]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]], texture2d<float> ns_texture_table_msdf [[texture(3)]], texture2d<float> ns_texture_table_rgba [[texture(4)]]) {\n"
 "  // Derivatives first, outside every branch: the fragments of one 2x2 quad\n"
 "  // can belong to primitives of different kinds in the same draw.\n"
 "  float2 uv_dx = dfdx(in.uv); float2 uv_dy = dfdy(in.uv);\n"
@@ -548,30 +585,31 @@ static const char *ui_shader_src =
 "    if (in.params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
 "    return float4(in.col.rgb, in.col.a * opacity);\n"
 "  }\n"
-"  texture2d<float> tex = ns_texture_table[(in.meta >> 4u) & 15u];\n"
-"  if (kind == 3u) {\n"
-"    constexpr sampler point_samp(mag_filter::nearest, min_filter::nearest, mip_filter::none, address::clamp_to_edge);\n"
-"    float4 texel = tex.sample(point_samp, in.uv, level(0.0)); float coverage = min(texel.r, texel.a);\n"
-"    return float4(in.col.rgb, in.col.a * coverage);\n"
-"  }\n"
+"  if (kind == 4u) { return in.col; }\n"
 "  constexpr sampler samp(mag_filter::linear, min_filter::linear, address::clamp_to_edge);\n"
-"  float4 sample = tex.sample(samp, in.uv, gradient2d(uv_dx, uv_dy));\n"
 "  if (kind == 1u) {\n"
+"    // The glyph's face-local uv, moved into the font pack.\n"
+"    float4 face = ns_root.font_faces[((in.meta >> 4u) & 15u) == 1u ? 1 : 0];\n"
+"    float4 sample = ns_texture_table_msdf.sample(samp, face.xy + in.uv * face.zw, gradient2d(uv_dx * face.zw, uv_dy * face.zw));\n"
 "    half sd = ui_median3(half(sample.r), half(sample.g), half(sample.b));\n"
-"    float2 tex_size = float2(tex.get_width(), tex.get_height()); float range = max(in.params.x, 0.5);\n"
+"    float2 tex_size = float2(ns_texture_table_msdf.get_width(), ns_texture_table_msdf.get_height()) * face.zw; float range = max(in.params.x, 0.5);\n"
 "    float2 unit_range = float2(range) / tex_size; float2 screen_texel = max(abs(uv_dx) + abs(uv_dy), float2(1e-6));\n"
 "    float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
 "    float opacity = clamp(((float(sd) - 0.5) * px_range + in.params.y) / max(in.params.z, 1.0) + 0.5, 0.0, 1.0);\n"
 "    return float4(in.col.rgb, in.col.a * opacity);\n"
 "  }\n"
-"  return sample * in.col;\n"
+"  if (kind == 3u) {\n"
+"    constexpr sampler point_samp(mag_filter::nearest, min_filter::nearest, mip_filter::none, address::clamp_to_edge);\n"
+"    float4 texel = ns_texture_table_rgba.sample(point_samp, in.uv, level(0.0)); float coverage = min(texel.r, texel.a);\n"
+"    return float4(in.col.rgb, in.col.a * coverage);\n"
+"  }\n"
+"  return ns_texture_table_rgba.sample(samp, in.uv, gradient2d(uv_dx, uv_dy)) * in.col;\n"
 "}\n";
 
 // Vulkan/GLSL 450 form of the same renderer. The backend compiles each stage
 // with entry `main`, so the vertex and the fragment stage each get a source of
-// their own, built from the shared root and storage declarations. GLSL only
-// indexes a sampler array with a constant, so the fragment stage reaches the
-// texture table through generated switches (ui_shader_glsl_fragment).
+// their own, built from the shared root and storage declarations. The two
+// textures are the first two entries of the backend's texture table.
 #define UI_SHADER_GLSL_CAPACITY 16384
 
 static const char *ui_shader_glsl_common =
@@ -592,6 +630,7 @@ static const char *ui_shader_glsl_common =
     "    vec4 hud_depth;\n"
     "    vec4 vertex_scale;\n"
     "    vec4 batch_clip;\n"
+    "    vec4 font_faces[2];\n"
     "} ns_root;\n"
     "layout(set = 0, binding = 8, std430) readonly buffer UiStorage { uint values[]; } ns_storage_buffer_0_block;\n"
     "#define ns_storage_buffer_0 ns_storage_buffer_0_block.values\n"
@@ -641,7 +680,7 @@ static const char *ui_shader_glsl_vs_body =
     "}\n";
 
 static const char *ui_shader_glsl_fs_prelude =
-    "layout(set = 0, binding = 5) uniform sampler2D ns_texture_table[16];\n"
+    "layout(set = 0, binding = 5) uniform sampler2D ns_texture_table[2];\n"
     "layout(location = 0) in vec2 ns_pixel;\n"
     "layout(location = 1) in vec2 ns_uv;\n"
     "layout(location = 2) in vec4 ns_col;\n"
@@ -685,32 +724,37 @@ static const char *ui_shader_glsl_fs_body =
     "    float arc_aa = max(fwidth(arc_distance), 0.35);\n"
     "    if (ui_clip_discard()) { discard; }\n"
     "    uint kind = ns_meta & 15u;\n"
-    "    uint slot = (ns_meta >> 4u) & 15u;\n"
     "    if (kind == 2u) {\n"
     "        float opacity = 1.0 - smoothstep(-arc_aa, arc_aa, arc_distance);\n"
     "        if (ns_params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
     "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
     "        return;\n"
     "    }\n"
-    "    ivec2 size = ui_table_size(slot);\n"
-    "    if (kind == 3u) {\n"
-    "        ivec2 pixel = clamp(ivec2(ns_uv * vec2(size)), ivec2(0), size - ivec2(1));\n"
-    "        vec4 texel = ui_table_fetch(slot, pixel);\n"
-    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * min(texel.r, texel.a));\n"
+    "    if (kind == 4u) {\n"
+    "        ns_frag_color = ns_col;\n"
     "        return;\n"
     "    }\n"
-    "    vec4 s = ui_table_grad(slot, ns_uv, uv_dx, uv_dy);\n"
     "    if (kind == 1u) {\n"
+    "        // The glyph's face-local uv, moved into the font pack.\n"
+    "        vec4 face = ns_root.font_faces[((ns_meta >> 4u) & 15u) == 1u ? 1 : 0];\n"
+    "        vec4 s = textureGrad(ns_texture_table[0], face.xy + ns_uv * face.zw, uv_dx * face.zw, uv_dy * face.zw);\n"
     "        float sd = max(min(s.r, s.g), min(max(s.r, s.g), s.b));\n"
     "        float range = max(ns_params.x, 0.5);\n"
-    "        vec2 unit_range = vec2(range) / vec2(size);\n"
+    "        vec2 unit_range = vec2(range) / (vec2(textureSize(ns_texture_table[0], 0)) * face.zw);\n"
     "        vec2 screen_texel = max(abs(uv_dx) + abs(uv_dy), vec2(1e-6));\n"
     "        float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
     "        float opacity = clamp(((sd - 0.5) * px_range + ns_params.y) / max(ns_params.z, 1.0) + 0.5, 0.0, 1.0);\n"
     "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
     "        return;\n"
     "    }\n"
-    "    ns_frag_color = s * ns_col;\n"
+    "    if (kind == 3u) {\n"
+    "        ivec2 size = textureSize(ns_texture_table[1], 0);\n"
+    "        ivec2 pixel = clamp(ivec2(ns_uv * vec2(size)), ivec2(0), size - ivec2(1));\n"
+    "        vec4 texel = texelFetch(ns_texture_table[1], pixel, 0);\n"
+    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * min(texel.r, texel.a));\n"
+    "        return;\n"
+    "    }\n"
+    "    ns_frag_color = textureGrad(ns_texture_table[1], ns_uv, uv_dx, uv_dy) * ns_col;\n"
     "}\n";
 
 static void ui_glsl_append(char *out, size_t capacity, size_t *used, const char *format, ...) {
@@ -722,16 +766,6 @@ static void ui_glsl_append(char *out, size_t capacity, size_t *used, const char 
     if (written > 0) *used += (size_t)written;
 }
 
-// One switch per table access, each case a constant index.
-static void ui_shader_glsl_table(char *out, size_t capacity, size_t *used, const char *head,
-                                 const char *call, const char *args, const char *fallback) {
-    ui_glsl_append(out, capacity, used, "%s {\n    switch (slot) {\n", head);
-    for (i32 i = 0; i < GPU_TEXTURE_TABLE_SIZE; i++) {
-        ui_glsl_append(out, capacity, used, "    case %du: return %s(ns_texture_table[%d]%s);\n", i, call, i, args);
-    }
-    ui_glsl_append(out, capacity, used, "    }\n    return %s;\n}\n", fallback);
-}
-
 static ns_bool ui_shader_glsl_vertex(char *out, size_t capacity) {
     size_t used = 0;
     ui_glsl_append(out, capacity, &used, "%s%s", ui_shader_glsl_common, ui_shader_glsl_vs_body);
@@ -740,14 +774,7 @@ static ns_bool ui_shader_glsl_vertex(char *out, size_t capacity) {
 
 static ns_bool ui_shader_glsl_fragment(char *out, size_t capacity) {
     size_t used = 0;
-    ui_glsl_append(out, capacity, &used, "%s%s", ui_shader_glsl_common, ui_shader_glsl_fs_prelude);
-    ui_shader_glsl_table(out, capacity, &used, "vec4 ui_table_grad(uint slot, vec2 uv, vec2 dx, vec2 dy)",
-                         "textureGrad", ", uv, dx, dy", "vec4(0.0)");
-    ui_shader_glsl_table(out, capacity, &used, "ivec2 ui_table_size(uint slot)",
-                         "textureSize", ", 0", "ivec2(1)");
-    ui_shader_glsl_table(out, capacity, &used, "vec4 ui_table_fetch(uint slot, ivec2 p)",
-                         "texelFetch", ", p, 0", "vec4(0.0)");
-    ui_glsl_append(out, capacity, &used, "%s", ui_shader_glsl_fs_body);
+    ui_glsl_append(out, capacity, &used, "%s%s%s", ui_shader_glsl_common, ui_shader_glsl_fs_prelude, ui_shader_glsl_fs_body);
     return used < capacity;
 }
 
@@ -1006,6 +1033,17 @@ static u32 ui_create_rgba_texture(const void *data, i32 width, i32 height, const
                            (u64)(size_t)width * (u64)(size_t)height * 4u);
     }
     return texture;
+}
+
+// Drop the font pack so the next draw that samples it builds it again; a
+// frame in flight keeps the old one a few frames longer.
+static void ui_font_pack_retire(ui_renderer *r) {
+    if (!r->font_pack) return;
+    if (r->font_pack_retired) gpu_texture_destroy(r->font_pack_retired);
+    r->font_pack_retired = r->font_pack;
+    r->font_pack_retired_frames = 4;
+    r->font_pack = 0;
+    r->font_pack_zh = false;
 }
 
 static u32 ui_create_font_texture(io_image *image, const char *name) {
@@ -1505,9 +1543,6 @@ void ui_stroke_round_rect_per_corner(ui_renderer *r, f64 x, f64 y, f64 w, f64 h,
 }
 
 static void ui_create_gpu_resources(ui_renderer *r) {
-    u32 white = 0xffffffffu;
-    r->white_texture = ui_create_rgba_texture(&white, 1, 1, "ui white");
-
     if (strcmp(gpu_shader_target(), "glsl") == 0) {
         static char vs_src[UI_SHADER_GLSL_CAPACITY];
         static char fs_src[UI_SHADER_GLSL_CAPACITY];
@@ -1527,8 +1562,7 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     // pixels as if they belonged to the world behind them.
     r->render_state_hud = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
                                            COMPARE_ALWAYS, true, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
-    r->gpu_ready = r->white_texture && r->shader &&
-                   r->render_state && r->render_state_hud;
+    r->gpu_ready = r->shader && r->render_state && r->render_state_hud;
 }
 
 static f64 ui_view_content_scale(view *v) {
@@ -1635,20 +1669,20 @@ ns_bool ui_load_font(ui_renderer *r, const char *json_path, const char *image_pa
         return false;
     }
 
-    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height, gpu_texture_file_name(image_path));
     free(image->data);
     free(image);
-    if (!texture) {
+    if (snprintf(r->font_main_image, UI_PATH_MAX, "%s", image_path) >= UI_PATH_MAX) {
+        r->font_main_image[0] = '\0';
         free(main_font.glyphs);
         free(mono_font.glyphs);
         return false;
     }
     free(r->fonts[UI_FONT_MAIN].glyphs);
     free(r->fonts[UI_FONT_MONO].glyphs);
-    if (r->font_texture) gpu_texture_destroy(r->font_texture);
     r->fonts[UI_FONT_MAIN] = main_font;
     r->fonts[UI_FONT_MONO] = mono_font;
-    r->font_texture = texture;
+    r->font_texture_failed = false;
+    ui_font_pack_retire(r);
     return true;
 }
 
@@ -1682,11 +1716,10 @@ ns_bool ui_load_chinese_font(ui_renderer *r, const char *json_path, const char *
     }
 
     free(r->fonts[UI_FONT_ZH].glyphs);
-    if (r->font_zh_texture) gpu_texture_destroy(r->font_zh_texture);
     r->fonts[UI_FONT_ZH] = zh_font;
-    r->font_zh_texture = 0;
     r->font_zh_texture_failed = false;
     snprintf(r->font_zh_image, UI_PATH_MAX, "%s", image_path);
+    if (r->font_pack_zh) ui_font_pack_retire(r);
     return true;
 }
 
@@ -1767,9 +1800,9 @@ void ui_renderer_destroy(ui_renderer *r) {
     for (i32 i = 0; i < UI_MAX_TEXTURES; i++) {
         if (r->textures[i]) gpu_texture_destroy(r->textures[i]);
     }
-    if (r->white_texture) gpu_texture_destroy(r->white_texture);
-    if (r->font_texture) gpu_texture_destroy(r->font_texture);
-    if (r->font_zh_texture) gpu_texture_destroy(r->font_zh_texture);
+    if (r->font_pack) gpu_texture_destroy(r->font_pack);
+    if (r->font_pack_retired) gpu_texture_destroy(r->font_pack_retired);
+    if (r->placeholder_texture) gpu_texture_destroy(r->placeholder_texture);
     if (r->font_bitmap_texture) gpu_texture_destroy(r->font_bitmap_texture);
     if (r->font_bitmap_zh_texture) gpu_texture_destroy(r->font_bitmap_zh_texture);
     if (r->shader) gpu_shader_destroy(r->shader);
@@ -1818,6 +1851,10 @@ static void ui_age_retired_buffers(ui_renderer *r) {
             gpu_free(r->retired[i].addr);
             r->retired[i].addr = 0;
         }
+    }
+    if (r->font_pack_retired && --r->font_pack_retired_frames <= 0) {
+        gpu_texture_destroy(r->font_pack_retired);
+        r->font_pack_retired = 0;
     }
 }
 
@@ -2167,63 +2204,110 @@ static ns_bool ui_upload_storage(ui_renderer *r, u32 *clip_offset, u32 *root_off
     return true;
 }
 
-// The main/mono atlas, uploaded on its first use (see font_texture_failed).
-static u32 ui_main_font_texture(ui_renderer *r) {
-    if (r->font_texture || r->font_texture_failed) return r->font_texture;
-    char image_path[UI_PATH_MAX];
-    io_image *img = ui_resolve_asset("latin_mono.png", image_path)
-                        ? io_load_image(image_path)
-                        : NULL;
-    if (img && img->data && img->channels == 4) {
-        r->font_texture = ui_create_rgba_texture(img->data, img->width, img->height, gpu_texture_file_name(image_path));
+// An MSDF atlas image as RGBA texels, or NULL. The caller frees the image.
+static io_image *ui_font_image_load(const char *path) {
+    io_image *image = path && path[0] ? io_load_image(path) : NULL;
+    if (image && (!image->data || image->channels != 4 || image->width <= 0 || image->height <= 0)) {
+        free(image->data);
+        free(image);
+        image = NULL;
     }
-    if (img) {
-        free(img->data);
-        free(img);
-    }
-    if (!r->font_texture) {
-        fprintf(stderr, "ui: cannot locate or load latin_mono.png\n");
-        r->font_texture_failed = true;
-    }
-    return r->font_texture;
+    return image;
 }
 
-// The Chinese atlas, uploaded on its first use (see font_zh_image).
-static u32 ui_zh_font_texture(ui_renderer *r) {
-    if (r->font_zh_texture || r->font_zh_texture_failed || !r->font_zh_image[0]) return r->font_zh_texture;
-    io_image *img = io_load_image(r->font_zh_image);
-    if (img && img->data && img->channels == 4) {
-        r->font_zh_texture = ui_create_rgba_texture(img->data, img->width, img->height, gpu_texture_file_name(r->font_zh_image));
+// The font pack holding the main/mono face and, once `zh` asks for it, the
+// Chinese one: built on first use and again when the Chinese face first
+// joins, so English text never uploads the large Chinese atlas. 0 when no
+// face loads.
+static u32 ui_font_pack(ui_renderer *r, ns_bool zh) {
+    if (zh && (r->font_zh_texture_failed || !r->font_zh_image[0])) zh = false;
+    if (r->font_pack && (r->font_pack_zh || !zh)) return r->font_pack;
+    if (!r->font_pack && r->font_texture_failed && !zh) return 0;
+    zh = zh || r->font_pack_zh;
+    char main_path[UI_PATH_MAX];
+    if (r->font_main_image[0]) snprintf(main_path, UI_PATH_MAX, "%s", r->font_main_image);
+    else if (!ui_resolve_asset("latin_mono.png", main_path)) main_path[0] = '\0';
+    io_image *main = r->font_texture_failed ? NULL : ui_font_image_load(main_path);
+    if (!main && !r->font_texture_failed) {
+        fprintf(stderr, "ui: cannot locate or load %s\n", main_path[0] ? main_path : "latin_mono.png");
+        r->font_texture_failed = true;
     }
-    if (img) {
-        free(img->data);
-        free(img);
-    }
-    if (!r->font_zh_texture) {
+    io_image *chinese = zh ? ui_font_image_load(r->font_zh_image) : NULL;
+    if (zh && !chinese) {
         fprintf(stderr, "ui: cannot load %s\n", r->font_zh_image);
         r->font_zh_texture_failed = true;
     }
-    return r->font_zh_texture;
+    if (!main && !chinese) return r->font_pack;
+    // The main face on top, the Chinese face under it after a gutter.
+    const i32 main_w = main ? main->width : 0, main_h = main ? main->height : 0;
+    const i32 zh_w = chinese ? chinese->width : 0, zh_h = chinese ? chinese->height : 0;
+    const i32 zh_y = main && chinese ? main_h + UI_FONT_PACK_GUTTER : 0;
+    const i32 width = main_w > zh_w ? main_w : zh_w;
+    const i32 height = zh_y + (chinese ? zh_h : main_h);
+    u8 *texels = (u8 *)calloc((size_t)width * (size_t)height, 4);
+    u32 pack = 0;
+    if (texels) {
+        for (i32 y = 0; y < main_h; y++) {
+            memcpy(texels + ((size_t)y * (size_t)width) * 4, main->data + (size_t)y * (size_t)main_w * 4, (size_t)main_w * 4);
+        }
+        for (i32 y = 0; y < zh_h; y++) {
+            memcpy(texels + ((size_t)(zh_y + y) * (size_t)width) * 4, chinese->data + (size_t)y * (size_t)zh_w * 4, (size_t)zh_w * 4);
+        }
+        pack = ui_create_rgba_texture(texels, width, height, "ui msdf font pack");
+        free(texels);
+    }
+    if (pack) {
+        ui_font_pack_retire(r);
+        r->font_pack = pack;
+        r->font_pack_zh = chinese != NULL;
+        memset(r->font_faces, 0, sizeof(r->font_faces));
+        if (main) {
+            r->font_faces[UI_FACE_MAIN][2] = (f32)main_w / (f32)width;
+            r->font_faces[UI_FACE_MAIN][3] = (f32)main_h / (f32)height;
+        }
+        if (chinese) {
+            r->font_faces[UI_FACE_ZH][1] = (f32)zh_y / (f32)height;
+            r->font_faces[UI_FACE_ZH][2] = (f32)zh_w / (f32)width;
+            r->font_faces[UI_FACE_ZH][3] = (f32)zh_h / (f32)height;
+        }
+    }
+    if (main) { free(main->data); free(main); }
+    if (chinese) { free(chinese->data); free(chinese); }
+    return r->font_pack;
 }
 
-static u32 ui_command_texture(ui_renderer *r, const ui_command *cmd) {
-    if (cmd->kind == UI_KIND_ARC_SDF) return r->white_texture;
-    if (cmd->retained && cmd->kind == UI_KIND_IMAGE) return r->white_texture;
-    if (cmd->kind == UI_KIND_MSDF) {
-        if (cmd->texture_id == UI_FONT_ZH_TEXTURE && ui_zh_font_texture(r)) return r->font_zh_texture;
-        u32 texture = ui_main_font_texture(r);
-        return texture ? texture : r->white_texture;
+// A 1x1 texture for a slot no draw reads, made only when there is nothing
+// else to bind there.
+static u32 ui_placeholder_texture(ui_renderer *r) {
+    if (!r->placeholder_texture) {
+        u32 clear = 0;
+        r->placeholder_texture = ui_create_rgba_texture(&clear, 1, 1, "ui unused slot");
     }
+    return r->placeholder_texture;
+}
+
+// The RGBA texture a command samples: its atlas or image, or its bitmap face.
+// 0 for a solid shape, an arc or MSDF text, which sample none of their own.
+static u32 ui_command_rgba(const ui_renderer *r, const ui_command *cmd) {
     if (cmd->kind == UI_KIND_BITMAP) {
         return cmd->texture_id == UI_FONT_BITMAP_ZH_TEXTURE
                    ? r->font_bitmap_zh_texture
                    : r->font_bitmap_texture;
     }
-    if (cmd->texture_id >= 3 && cmd->texture_id < UI_MAX_TEXTURES + 3) {
-        u32 texture = r->textures[cmd->texture_id - 3];
-        if (texture) return texture;
+    if (cmd->kind != UI_KIND_IMAGE || cmd->retained) return 0;
+    if (cmd->texture_id >= 3 && cmd->texture_id < UI_MAX_TEXTURES + 3) return r->textures[cmd->texture_id - 3];
+    return 0;
+}
+
+// The kind and MSDF face a command's vertices carry in their meta. An image
+// or bitmap glyph with no texture to sample is drawn solid.
+static u32 ui_command_meta(const ui_command *cmd, u32 rgba) {
+    if (cmd->kind == UI_KIND_MSDF) {
+        const u32 face = cmd->texture_id == UI_FONT_ZH_TEXTURE ? UI_FACE_ZH : UI_FACE_MAIN;
+        return (u32)UI_KIND_MSDF | (face << UI_META_FACE_SHIFT);
     }
-    return r->white_texture;
+    if ((cmd->kind == UI_KIND_IMAGE || cmd->kind == UI_KIND_BITMAP) && !rgba) return UI_KIND_SOLID;
+    return (u32)cmd->kind;
 }
 
 static f32 ui_dot3(const f32 a[3], const f32 b[3]) {
@@ -2584,23 +2668,14 @@ static u32 ui_command_projection(const ui_renderer *r, const ui_command *cmd, ns
     return 0;
 }
 
-// The draw's table slot for `texture`, adding it when there is room, or
-// GPU_TEXTURE_TABLE_SIZE once the table is full.
-static u32 ui_draw_slot(ui_draw *d, u32 texture) {
-    for (u32 i = 0; i < d->texture_count; i++) {
-        if (d->textures[i] == texture) return i;
-    }
-    if (d->texture_count >= GPU_TEXTURE_TABLE_SIZE) return GPU_TEXTURE_TABLE_SIZE;
-    d->textures[d->texture_count] = texture;
-    return d->texture_count++;
-}
-
 // Group the frame's commands into draws and stamp each immediate vertex with
 // its meta. Consecutive immediate commands share one draw however their kind,
-// texture, clip or projection differ; a draw ends only at a retained batch, a
-// gap in the vertices, or a seventeenth distinct texture.
+// face, clip or projection differ; a draw ends only at a retained batch, a
+// gap in the vertices, or a second RGBA texture.
 static ns_bool ui_plan_draws(ui_renderer *r, ns_bool panel, ns_bool hud) {
     r->draw_count = 0;
+    r->plan_msdf = false;
+    r->plan_zh = false;
     if (r->command_count > r->draw_capacity) {
         ui_draw *draws = (ui_draw *)realloc(r->draws, (size_t)r->command_count * sizeof(ui_draw));
         if (!draws) return false;
@@ -2615,28 +2690,31 @@ static ns_bool ui_plan_draws(ui_renderer *r, ns_bool panel, ns_bool hud) {
             continue;
         }
         const u32 projection = ui_command_projection(r, cmd, panel, hud);
-        const u32 texture = ui_command_texture(r, cmd);
+        const u32 rgba = ui_command_rgba(r, cmd);
+        const u32 meta = ui_command_meta(cmd, rgba) | (projection << UI_META_PROJECTION_SHIFT);
+        const ns_bool msdf = cmd->kind == UI_KIND_MSDF;
+        if (msdf) {
+            r->plan_msdf = true;
+            if (cmd->texture_id == UI_FONT_ZH_TEXTURE) r->plan_zh = true;
+        }
         if (cmd->retained) {
-            ui_draw *d = &r->draws[r->draw_count++];
-            *d = (ui_draw){
+            r->draws[r->draw_count++] = (ui_draw){
                 .command = i,
-                .batch_meta = (u32)cmd->kind | (projection << UI_META_PROJECTION_SHIFT),
-                .textures = {texture},
-                .texture_count = 1,
+                .batch_meta = meta,
+                .rgba = rgba,
+                .msdf = msdf,
             };
             run = NULL;
             continue;
         }
-        u32 slot = run ? ui_draw_slot(run, texture) : GPU_TEXTURE_TABLE_SIZE;
         if (!run || run->vertex_offset + run->vertex_count != cmd->vertex_offset ||
-            slot >= GPU_TEXTURE_TABLE_SIZE) {
+            (rgba && run->rgba && rgba != run->rgba)) {
             run = &r->draws[r->draw_count++];
             *run = (ui_draw){.command = -1, .vertex_offset = cmd->vertex_offset};
-            slot = ui_draw_slot(run, texture);
         }
+        if (rgba) run->rgba = rgba;
+        if (msdf) run->msdf = true;
         run->vertex_count += cmd->vertex_count;
-        const u32 meta = (u32)cmd->kind | (slot << UI_META_SLOT_SHIFT) |
-                         (projection << UI_META_PROJECTION_SHIFT);
         ui_vertex *v = r->vertices + cmd->vertex_offset;
         for (i32 j = 0; j < cmd->vertex_count; j++) v[j].meta = meta;
     }
@@ -2694,6 +2772,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     gpu_set_shader(r->shader);
     gpu_set_storage(r->storage);
     gpu_addr bound_storage = r->storage;
+    const u32 pack = r->plan_msdf ? ui_font_pack(r, r->plan_zh) : r->font_pack;
     for (i32 i = 0; i < r->draw_count; i++) {
         const ui_draw *d = &r->draws[i];
         ui_gpu_root root = {
@@ -2703,6 +2782,13 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             .projection_offset = r->projection_offset,
             .vertex_scale = {1.0f, 1.0f, 0.0f, 1.0f},
         };
+        memcpy(root.font_faces, r->font_faces, sizeof(root.font_faces));
+        // Both slots are bound on every draw; one the draw does not read
+        // holds a texture the draw does read where there is one.
+        u32 textures[2];
+        textures[UI_TEXTURE_MSDF] = d->msdf && pack ? pack : (d->rgba ? d->rgba : pack);
+        if (!textures[UI_TEXTURE_MSDF]) textures[UI_TEXTURE_MSDF] = ui_placeholder_texture(r);
+        textures[UI_TEXTURE_RGBA] = d->rgba ? d->rgba : textures[UI_TEXTURE_MSDF];
         i32 vertex_offset = d->vertex_offset;
         i32 vertex_count = d->vertex_count;
         gpu_addr storage = r->storage;
@@ -2733,7 +2819,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         gpu_addr root_addr = r->storage + root_offset + (u64)(u32)i * GPU_V2_ALLOC_ALIGN;
         gpu_write(root_addr, &root, sizeof(root));
         gpu_set_root(root_addr);
-        gpu_set_texture_table(d->textures, d->texture_count);
+        gpu_set_texture_table(textures, 2);
         if (storage != bound_storage) {
             gpu_set_storage(storage);
             bound_storage = storage;

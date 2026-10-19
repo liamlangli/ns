@@ -205,7 +205,8 @@ ref fn gpu_set_storage(addr: u64)
 ref fn gpu_set_storage_at(index: i32, addr: u64)
 // Bind up to GPU_TEXTURE_TABLE_SIZE textures for draws whose raw-source
 // shader declares ns_texture_table, so one draw samples a texture per
-// primitive. Missing entries bind the first valid one.
+// primitive. Pass as many entries as the shader declares; an entry naming no
+// texture binds the first valid one.
 ref fn gpu_set_texture_table(textures: [u32], count: u32)
 // Copy a small argument struct into the frame ring and bind it as the root
 // pointer in one call.

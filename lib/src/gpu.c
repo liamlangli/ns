@@ -832,7 +832,7 @@ void gpu_set_texture_table(const u32 *textures, u32 count) {
         if (count > GPU_TEXTURE_TABLE_SIZE) count = GPU_TEXTURE_TABLE_SIZE;
         memcpy(table, textures, count * sizeof(u32));
     }
-    if (_v2.ops && _v2.ops->set_texture_table) _v2.ops->set_texture_table(table);
+    if (_v2.ops && _v2.ops->set_texture_table) _v2.ops->set_texture_table(table, textures ? count : 0);
 }
 
 void gpu_set_root_data(const void *data, u64 size) {

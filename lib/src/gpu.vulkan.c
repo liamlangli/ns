@@ -2287,7 +2287,10 @@ static void gpu_vk_set_root(u32 slot, u64 offset, gpu_addr addr) {
     _vk.root_valid = true;
 }
 
-static void gpu_vk_set_texture_table(const u32 *textures) {
+// The descriptor array always holds GPU_TEXTURE_TABLE_SIZE entries; the ones
+// past `count` take the first valid texture.
+static void gpu_vk_set_texture_table(const u32 *textures, u32 count) {
+    ns_unused(count);
     memcpy(_vk.texture_table, textures, sizeof(_vk.texture_table));
 }
 

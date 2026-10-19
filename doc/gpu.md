@@ -412,7 +412,8 @@ void gpu_set_storage_at(i32 index, gpu_addr addr);
 
 // Up to GPU_TEXTURE_TABLE_SIZE (16) textures for a raw-source shader that
 // declares ns_texture_table, so one draw samples a different texture per
-// primitive. Missing or invalid entries bind the first valid one.
+// primitive. Pass as many entries as the shader declares (Metal binds exactly
+// `count`); an entry naming no texture binds the first valid one.
 void gpu_set_texture_table(const u32 *textures, u32 count);
 
 void gpu_draw_vertices(i32 vertex_base, i32 vertex_count, i32 instance_count);

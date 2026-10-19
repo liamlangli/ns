@@ -190,19 +190,18 @@ static u32 meta_of(ui_renderer *r, i32 command) {
     return r->vertices[r->commands[command].vertex_offset].meta;
 }
 
-static u32 meta(i32 kind, u32 slot, u32 projection) {
-    return (u32)kind | (slot << UI_META_SLOT_SHIFT) | (projection << UI_META_PROJECTION_SHIFT);
+static u32 meta(i32 kind, u32 face, u32 projection) {
+    return (u32)kind | (face << UI_META_FACE_SHIFT) | (projection << UI_META_PROJECTION_SHIFT);
 }
 
-// Rectangles, arcs, images under a clip, a tilted plane and a screen overlay
-// recorded in one frame are one draw, and every vertex carries the kind,
-// texture slot and projection the one shader needs. A panel puts everything
-// but the overlay on it.
+// Rectangles, arcs, an image under a clip, a tilted plane and a screen
+// overlay recorded in one frame are one draw, and every vertex carries the
+// kind, MSDF face and projection the one shader needs; solid shapes sample
+// nothing. A panel puts everything but the overlay on it.
 static void test_one_draw(void) {
     ui_renderer *r = calloc(1, sizeof(*r));
     assert(r);
     r->rect = r->safe_rect = (ui_rect){0, 0, 200, 100};
-    r->white_texture = 11;
     for (i32 i = 0; i < UI_MAX_TEXTURES; i++) r->textures[i] = 100 + (u32)i;
     ui_begin_frame(r);
     ui_fill_rect(r, 0, 0, 10, 10, 0xffffffffu, 0.0);
@@ -223,44 +222,51 @@ static void test_one_draw(void) {
     assert(r->draw_count == 1);
     assert(r->draws[0].command == -1 && r->draws[0].vertex_offset == 0);
     assert(r->draws[0].vertex_count == r->vertex_count);
-    assert(r->draws[0].texture_count == 2);
-    assert(r->draws[0].textures[0] == 11 && r->draws[0].textures[1] == 100);
-    assert(meta_of(r, 0) == meta(UI_KIND_IMAGE, 0, 0));
+    assert(r->draws[0].rgba == 100 && !r->draws[0].msdf && !r->plan_msdf);
+    assert(meta_of(r, 0) == meta(UI_KIND_SOLID, 0, 0));
     assert(meta_of(r, 1) == meta(UI_KIND_ARC_SDF, 0, 0));
-    assert(meta_of(r, 2) == meta(UI_KIND_IMAGE, 1, 0));
-    assert(meta_of(r, 3) == meta(UI_KIND_IMAGE, 0, 1));
-    assert(meta_of(r, 4) == meta(UI_KIND_IMAGE, 0, 0));
+    assert(meta_of(r, 2) == meta(UI_KIND_IMAGE, 0, 0));
+    assert(meta_of(r, 3) == meta(UI_KIND_SOLID, 0, 1));
+    assert(meta_of(r, 4) == meta(UI_KIND_SOLID, 0, 0));
     // The clipped quad keeps its clip per vertex rather than as a scissor.
     assert(r->vertices[r->commands[2].vertex_offset].clip > 0.0f);
 
     assert(ui_plan_draws(r, true, false));
     assert(r->draw_count == 1);
-    assert(meta_of(r, 0) == meta(UI_KIND_IMAGE, 0, UI_PROJECTION_PANEL));
-    assert(meta_of(r, 3) == meta(UI_KIND_IMAGE, 0, UI_PROJECTION_PANEL));
-    assert(meta_of(r, 4) == meta(UI_KIND_IMAGE, 0, 0));
+    assert(meta_of(r, 0) == meta(UI_KIND_SOLID, 0, UI_PROJECTION_PANEL));
+    assert(meta_of(r, 3) == meta(UI_KIND_SOLID, 0, UI_PROJECTION_PANEL));
+    assert(meta_of(r, 4) == meta(UI_KIND_SOLID, 0, 0));
     // The immersive HUD projects everything itself.
     assert(ui_plan_draws(r, false, true));
-    assert(meta_of(r, 3) == meta(UI_KIND_IMAGE, 0, 0));
+    assert(meta_of(r, 3) == meta(UI_KIND_SOLID, 0, 0));
 
-    // A seventeenth texture starts a second draw, as does a retained batch.
+    // A second RGBA texture starts a second draw, as does a retained batch;
+    // solid shapes and MSDF text join any draw.
     ui_begin_frame(r);
-    for (i32 i = 0; i <= GPU_TEXTURE_TABLE_SIZE; i++) {
-        r->current_texture_id = 3 + i;
-        ui_push_quad_ex(r, 0, 0, 10, 10, 0, 0, 1, 1, 0xffffffffu, UI_KIND_IMAGE, 0, 0, 0);
-    }
+    r->current_texture_id = 3;
+    ui_push_quad_ex(r, 0, 0, 10, 10, 0, 0, 1, 1, 0xffffffffu, UI_KIND_IMAGE, 0, 0, 0);
+    ui_push_quad_ex(r, 10, 0, 20, 10, 0, 0, 1, 1, 0xffffffffu, UI_KIND_IMAGE, 0, 0, 0);
+    ui_fill_rect(r, 0, 0, 10, 10, 0xffffffffu, 0.0);
+    r->current_texture_id = 4;
+    ui_push_quad_ex(r, 0, 0, 10, 10, 0, 0, 1, 1, 0xffffffffu, UI_KIND_IMAGE, 0, 0, 0);
     const i32 batch = ui_rect_batch_create(r);
     ui_rect_batch_begin(r, batch);
     ui_rect_batch_add(r, batch, 1, 2, 3, 4, 0xffffffffu);
     ui_rect_batch_draw_range(r, batch, 0, 6, 0, 0, 1, 1);
     ui_fill_rect(r, 0, 0, 10, 10, 0xffffffffu, 0.0);
+    r->current_texture_id = UI_FONT_ZH_TEXTURE;
+    ui_push_quad_ex(r, 0, 0, 10, 10, 0, 0, 1, 1, 0xffffffffu, UI_KIND_MSDF, 5, 0, 1);
+    assert(r->command_count == 6);
     assert(ui_plan_draws(r, false, false));
     assert(r->draw_count == 4);
-    assert(r->draws[0].texture_count == GPU_TEXTURE_TABLE_SIZE);
-    assert(r->draws[0].vertex_count == GPU_TEXTURE_TABLE_SIZE * 6);
-    assert(r->draws[1].texture_count == 1 && r->draws[1].vertex_offset == GPU_TEXTURE_TABLE_SIZE * 6);
-    assert(r->draws[2].command == GPU_TEXTURE_TABLE_SIZE + 1);
-    assert(r->draws[2].batch_meta == meta(UI_KIND_IMAGE, 0, 0));
-    assert(r->draws[3].command == -1 && r->draws[3].vertex_count == 6);
+    assert(r->draws[0].rgba == 100);
+    assert(r->draws[0].vertex_count == r->commands[0].vertex_count + r->commands[1].vertex_count);
+    assert(r->draws[1].rgba == 101 && r->draws[1].vertex_offset == r->commands[2].vertex_offset);
+    assert(r->draws[2].command == 3 && r->draws[2].rgba == 0);
+    assert(r->draws[2].batch_meta == meta(UI_KIND_SOLID, 0, 0));
+    assert(r->draws[3].command == -1 && r->draws[3].rgba == 0 && r->draws[3].msdf);
+    assert(r->plan_msdf && r->plan_zh);
+    assert(meta_of(r, 5) == meta(UI_KIND_MSDF, UI_FACE_ZH, 0));
 
     // Vertices no command can take are taken back, so a draw never covers them.
     const i32 vertices = r->vertex_count;
