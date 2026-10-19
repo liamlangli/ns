@@ -261,7 +261,7 @@ static view *view_win_create(const char *title, i32 width, i32 height) {
     _view.display_ratio = 1.0;
     _view.framebuffer_width = width;
     _view.framebuffer_height = height;
-    _view.title = ns_str_cstr((char *)title);
+    _view.title = view_keep_title(title);
     _view.native_window = (void *)_hwnd;
 
     ShowWindow(_hwnd, SW_SHOW);

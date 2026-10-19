@@ -1426,7 +1426,7 @@ view *view_create(const char *title, i32 width, i32 height) {
         _view.framebuffer_height = height;
         _view.display_ratio = 1.0;
         _view.ui_scale = 1.0;
-        _view.title = ns_str_cstr((char *)title);
+        _view.title = view_keep_title(title);
         _view.native_window = ns_null;
         return &_view;
     }
@@ -1444,7 +1444,7 @@ view *view_create(const char *title, i32 width, i32 height) {
         _view.framebuffer_height = height;
         _view.display_ratio = 1.0;
         _view.ui_scale = 1.0;
-        _view.title = ns_str_cstr((char *)title);
+        _view.title = view_keep_title(title);
         _view.native_window = ns_null;
         return &_view;
     }
@@ -1493,7 +1493,7 @@ view *view_create(const char *title, i32 width, i32 height) {
     _view.ui_scale = 1.0;
     _view.framebuffer_width = _view.width;
     _view.framebuffer_height = _view.height;
-    _view.title = ns_str_cstr((char *)title);
+    _view.title = view_keep_title(title);
     _view.native_window = _state.surface;
     _view.safe_area_top = 0.0;
     _view.safe_area_right = 0.0;

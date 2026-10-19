@@ -703,10 +703,10 @@ view* view_create(const char *title, i32 width, i32 height) {
     _view.ui_scale = 1.0;
     _view.framebuffer_width = width;
     _view.framebuffer_height = height;
-    _view.title = ns_str_cstr((char*)title);
+    _view.title = view_keep_title(title);
     view_osx_finished = false;
     view_osx_done = dispatch_semaphore_create(0);
-    void (^create_view)(void) = ^{ view_osx_create(width, height, title); };
+    void (^create_view)(void) = ^{ view_osx_create(width, height, (const char *)_view.title.data); };
     if ([NSThread isMainThread]) create_view();
     else dispatch_sync(dispatch_get_main_queue(), create_view);
     return &_view;

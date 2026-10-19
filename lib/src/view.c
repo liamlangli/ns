@@ -433,19 +433,25 @@ void view_set_app_name(view *v, const char *name) {
     view_platform_set_app_name(v, name);
 }
 
-// The title is copied: the caller's string may not outlive the window.
+// The title is copied: the caller's string may not outlive the window. A
+// Nano Script str crosses into native code as a temporary C copy that is
+// released when the call returns, so the view never keeps that pointer.
 static char *view_title_copy;
 
-void view_set_title(view *v, const char *title) {
-    if (!v) return;
+ns_str view_keep_title(const char *title) {
     size_t len = title ? strlen(title) : 0;
     char *copy = ns_realloc(view_title_copy, len + 1);
-    if (!copy) return;
+    if (!copy) return ns_str_cstr(view_title_copy ? view_title_copy : "");
     memcpy(copy, title ? title : "", len);
     copy[len] = '\0';
     view_title_copy = copy;
-    v->title = ns_str_cstr(copy);
-    view_platform_set_title(v, copy);
+    return ns_str_cstr(copy);
+}
+
+void view_set_title(view *v, const char *title) {
+    if (!v) return;
+    v->title = view_keep_title(title);
+    view_platform_set_title(v, (const char *)v->title.data);
 }
 
 void view_capture_require(view *v) {

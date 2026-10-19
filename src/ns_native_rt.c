@@ -1287,8 +1287,15 @@ void ns_rt_shader_unsupported(int64_t name) {
     abort();
 }
 
+/* A str crosses into native code as a malloc'd, NUL-terminated copy. The call
+ * site releases it with ns_rt_free_cstr once the callee returns, so a library
+ * that keeps the text past the call copies it. */
 int64_t ns_rt_to_cstr(int64_t str) {
     return (int64_t)(uintptr_t)ns_rt_cstr(str);
+}
+
+void ns_rt_free_cstr(int64_t ptr) {
+    free((void *)(uintptr_t)ptr);
 }
 
 int64_t ns_rt_from_cstr(int64_t ptr) {

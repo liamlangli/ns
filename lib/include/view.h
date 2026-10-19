@@ -331,6 +331,8 @@ void view_platform_set_frame_per_second(view *v, i32 frames);
 void view_platform_close(view *v);
 void view_platform_set_fullscreen(view *v, ns_bool fullscreen);
 void view_platform_set_title(view *v, const char *title);
+// Copy a title into storage the view owns and return it as the view's title.
+ns_str view_keep_title(const char *title);
 void view_platform_set_app_name(view *v, const char *name);
 void view_platform_set_cursor(view *v, i32 cursor);
 

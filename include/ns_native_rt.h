@@ -98,6 +98,7 @@ int64_t ns_rt_union_new(int64_t tag, int64_t payload);
 int64_t ns_rt_union_as(int64_t u, int64_t want_tag);
 
 int64_t ns_rt_to_cstr(int64_t str);
+void ns_rt_free_cstr(int64_t ptr);
 int64_t ns_rt_from_cstr(int64_t ptr);
 int64_t ns_rt_native_ptr(int64_t addr);
 int64_t ns_rt_array_ptr(int64_t arr);

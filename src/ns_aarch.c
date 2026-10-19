@@ -23,7 +23,8 @@
 #define NS_AARCH_FP  29
 #define NS_AARCH_SP  31
 #define NS_AARCH_EXTRA_MAX 64
-/* One spill slot per register-passed argument, for the ffi pointer dance. */
+/* One spill slot per register-passed argument, for the ffi pointer dance.
+ * Stack-passed str arguments get a slot each past these (ns_aarch_ffi_scratch). */
 #define NS_AARCH_FFI_SCRATCH 8
 
 /* ── intra-function fixup ─────────────────────────────────────────────────── */
@@ -262,6 +263,12 @@ static const char *ns_aarch_map_task(ns_str module, ns_str name) {
     if (ns_str_equals(name, ns_str_cstr("queue_worker"))) return "ns_rt_queue_worker";
     if (ns_str_equals(name, ns_str_cstr("queue_idle"))) return "ns_rt_queue_idle";
     return NULL;
+}
+
+/* A str crosses into C as a malloc'd copy that the call site frees once the
+ * callee returns, so each one is remembered in a frame slot across the call. */
+static ns_bool ns_aarch_ffi_is_cstr(ns_type t) {
+    return !ns_type_is_array(t) && ns_aarch_is_string(t);
 }
 
 static ns_bool ns_aarch_is_ffi_module(ns_str module) {
@@ -736,6 +743,11 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             i32 dest_reg[NS_AARCH_EXTRA_MAX + 8];
             i32 stack_n = 0;
             i32 stack_args[NS_AARCH_EXTRA_MAX];
+            i32 stack_types[NS_AARCH_EXTRA_MAX];
+            // Every C string the call is handed, in the frame slot that keeps it
+            // for the free once the callee has returned.
+            i32 cstr_slot[NS_AARCH_EXTRA_MAX + 8];
+            i32 ncstr = 0;
             i32 igpr = 0;
             i32 fpr = 0;
             for (i32 ai = 0; ai < nargs; ++ai) dest_reg[ai] = -1;
@@ -745,11 +757,11 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
                 else at = ns_aarch_value_type(c->fn, args[ai]);
                 if (ns_aarch_ffi_is_float(at)) {
                     if (fpr < 8) dest_reg[ai] = 8 + fpr++;
-                    else stack_args[stack_n++] = args[ai];
+                    else { stack_types[stack_n] = ai; stack_args[stack_n++] = args[ai]; }
                     continue;
                 }
                 if (igpr < 8) dest_reg[ai] = igpr++;
-                else stack_args[stack_n++] = args[ai];
+                else { stack_types[stack_n] = ai; stack_args[stack_n++] = args[ai]; }
             }
             if (stack_n > 0) {
                 space = (stack_n * 8 + 15) & ~15;
@@ -759,11 +771,19 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
                     ns_aarch_emit_u32(c, ns_aarch_sub_sp_ext(NS_AARCH_X9));
                 }
                 for (i32 ei = 0; ei < stack_n; ++ei) {
-                    ns_type st = ns_aarch_value_type(c->fn, stack_args[ei]);
+                    i32 ai = stack_types[ei];
+                    ns_type st = im && ai < (i32)ns_array_length(im->params)
+                        ? im->params[ai] : ns_aarch_value_type(c->fn, stack_args[ei]);
                     const char *conv = ns_aarch_ffi_convert(st);
                     if (conv) {
                         ns_aarch_load_value(c, NS_AARCH_X0, stack_args[ei]);
                         ns_aarch_emit_rt_call(c, conv);
+                        // The callee owns its stack arguments and may reuse
+                        // them, so the copy to free is kept in the frame.
+                        if (ns_aarch_ffi_is_cstr(st)) {
+                            cstr_slot[ncstr] = c->scratch_base + NS_AARCH_FFI_SCRATCH + ncstr;
+                            ns_aarch_store_value(c, cstr_slot[ncstr++], NS_AARCH_X0);
+                        }
                         ns_aarch_emit_u32(c, 0xAA0003E9u); /* MOV X9, X0 */
                     } else {
                         ns_aarch_load_value(c, NS_AARCH_X9, stack_args[ei]);
@@ -792,6 +812,7 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
                 ns_aarch_emit_rt_call(c, conv);
                 spill_slot[ai] = c->scratch_base + nspill++;
                 ns_aarch_store_value(c, spill_slot[ai], NS_AARCH_X0);
+                if (ns_aarch_ffi_is_cstr(at)) cstr_slot[ncstr++] = spill_slot[ai];
             }
             for (i32 ai = 0; ai < nargs; ++ai) {
                 if (spill_slot[ai] < 0) continue;
@@ -827,6 +848,12 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
                 ns_aarch_narrow_reg(c, NS_AARCH_X0, ret);
             }
             if (inst->dst >= 0) ns_aarch_store_value(c, inst->dst, 0);
+            // The result is stored (a returned str already copied out), so the
+            // C strings handed to the callee can go.
+            for (i32 si = 0; si < ncstr; ++si) {
+                ns_aarch_load_value(c, NS_AARCH_X0, cstr_slot[si]);
+                ns_aarch_emit_rt_call(c, "ns_rt_free_cstr");
+            }
             if (space > 0) {
                 if (space <= 4095) {
                     ns_aarch_emit_u32(c, 0x910003FFu | (((u32)space & 0xFFFu) << 10));
@@ -1110,6 +1137,19 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     }
 }
 
+/* Frame slots reserved past the SSA values for ffi calls: the register spills,
+ * then one per argument a call passes on the stack, which may be a str. */
+static i32 ns_aarch_ffi_scratch(ns_ssa_fn *fn) {
+    i32 n = NS_AARCH_FFI_SCRATCH;
+    for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
+        ns_ssa_inst *inst = &fn->insts[i];
+        if (inst->op != NS_SSA_OP_CALL || inst->c <= 8) continue;
+        i32 extra = inst->c - 8 < NS_AARCH_EXTRA_MAX ? inst->c - 8 : NS_AARCH_EXTRA_MAX;
+        if (NS_AARCH_FFI_SCRATCH + extra > n) n = NS_AARCH_FFI_SCRATCH + extra;
+    }
+    return n;
+}
+
 /* Number of stack slots a function needs: one per distinct SSA value. */
 static i32 ns_aarch_slot_count(ns_ssa_fn *fn) {
     i32 max_dst = -1;
@@ -1127,7 +1167,7 @@ static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn, ns_b
 
     i32 nslots = ns_aarch_slot_count(fn);
     c.scratch_base = nslots;
-    nslots += NS_AARCH_FFI_SCRATCH;
+    nslots += ns_aarch_ffi_scratch(fn);
     /* Reserve one 8-byte slot per value, rounded up so SP stays 16-aligned. */
     i32 frame = ((nslots * 8) + 15) & ~15;
 

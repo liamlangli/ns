@@ -274,7 +274,7 @@ static void view_ios_add_gesture(UIGestureRecognizer *gesture) {
 view *view_create(const char *title, i32 width, i32 height) {
     memset(&view_ios_state, 0, sizeof(view_ios_state));
     view_ios_active_touch_count = 0;
-    view_ios_state.title = ns_str_cstr((char *)(title ? title : ""));
+    view_ios_state.title = view_keep_title(title);
     view_ios_state.width = width;
     view_ios_state.height = height;
     view_ios_state.display_ratio = 1.0;

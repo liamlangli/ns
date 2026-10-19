@@ -560,17 +560,23 @@ static u64 ns_cpu_ffi_invoke(ns_cpu_fn *fn, ns_cpu_ffi_site *site, const u64 *r,
     }
     u64 v = ret[0];
     switch (site->ret) {
-    case NS_CPU_FFI_VOID: return 0;
-    case NS_CPU_FFI_I8: return (u64)(i64)(i8)v;
-    case NS_CPU_FFI_U8: return (u64)(u8)v;
-    case NS_CPU_FFI_I16: return (u64)(i64)(i16)v;
-    case NS_CPU_FFI_U16: return (u64)(u16)v;
-    case NS_CPU_FFI_I32: return (u64)(i64)(i32)v;
-    case NS_CPU_FFI_U32: return (u64)(u32)v;
-    case NS_CPU_FFI_F32: return (u64)(u32)v;
-    case NS_CPU_FFI_STR: return (u64)ns_rt_from_cstr((i64)v);
-    default: return v;
+    case NS_CPU_FFI_VOID: v = 0; break;
+    case NS_CPU_FFI_I8: v = (u64)(i64)(i8)v; break;
+    case NS_CPU_FFI_U8: v = (u64)(u8)v; break;
+    case NS_CPU_FFI_I16: v = (u64)(i64)(i16)v; break;
+    case NS_CPU_FFI_U16: v = (u64)(u16)v; break;
+    case NS_CPU_FFI_I32: v = (u64)(i64)(i32)v; break;
+    case NS_CPU_FFI_U32: v = (u64)(u32)v; break;
+    case NS_CPU_FFI_F32: v = (u64)(u32)v; break;
+    case NS_CPU_FFI_STR: v = (u64)ns_rt_from_cstr((i64)v); break;
+    default: break;
     }
+    // The result is copied out (a returned str may be one of the arguments),
+    // so the C strings handed to the callee can go.
+    for (i32 i = 0; i < nargs; ++i) {
+        if (site->params[i] == NS_CPU_FFI_STR) ns_rt_free_cstr((i64)slots[i]);
+    }
+    return v;
 }
 
 /* ── interpreter ──────────────────────────────────────────────────────────── */

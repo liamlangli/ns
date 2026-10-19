@@ -1,0 +1,29 @@
+use os
+
+// A str argument crosses into a native library as a C copy. The copy belongs
+// to the call: it is released once the callee returns, so passing the same
+// large string over and over keeps resident memory flat instead of growing by
+// the string's size on every call.
+fn main() {
+    let text = "0123456789abcdef"
+    for i in 0 to 16 {
+        text = text + text
+    }
+    assert text.len == 1048576
+
+    // Warm up the allocator and any first-call state before measuring.
+    for i in 0 to 8 {
+        assert os_file_size(text) < 0
+    }
+    let before = os_process_memory()
+    for i in 0 to 512 {
+        assert os_file_size(text) < 0
+    }
+    let after = os_process_memory()
+    if before == 0 || after == 0 {
+        return
+    }
+    // 512 leaked copies would be 512 MiB; allow allocator noise.
+    let limit = (64 * 1048576) as u64
+    assert after < before + limit
+}

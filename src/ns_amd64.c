@@ -47,7 +47,8 @@ static const i32 NS_AMD64_WIN_INT_REGS[4] = { 1, 2, 8, 9 };        /* RCX RDX R8
 
 #define NS_AMD64_EXTRA_MAX 64
 /* One spill slot per register-passed argument, for the ffi pointer dance, plus
- * one for the target of an indirect call. */
+ * one for the target of an indirect call. Stack-passed str arguments get a
+ * slot each past these (ns_amd64_ffi_scratch). */
 #define NS_AMD64_FFI_SCRATCH 8
 /* Bytes the Microsoft x64 ABI reserves below the outgoing arguments. */
 #define NS_AMD64_SHADOW 32
@@ -473,6 +474,12 @@ static const char *ns_amd64_map_task(ns_str module, ns_str name) {
     if (ns_str_equals(name, ns_str_cstr("queue_worker"))) return "ns_rt_queue_worker";
     if (ns_str_equals(name, ns_str_cstr("queue_idle"))) return "ns_rt_queue_idle";
     return NULL;
+}
+
+/* A str crosses into C as a malloc'd copy that the call site frees once the
+ * callee returns, so each one is remembered in a frame slot across the call. */
+static ns_bool ns_amd64_ffi_is_cstr(ns_type t) {
+    return !ns_type_is_array(t) && ns_amd64_is_string(t);
 }
 
 static ns_bool ns_amd64_is_ffi_module(ns_str module) {
@@ -912,6 +919,11 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             i32 dest_reg[NS_AMD64_EXTRA_MAX + 8];
             i32 stack_n = 0;
             i32 stack_args[NS_AMD64_EXTRA_MAX];
+            i32 stack_index[NS_AMD64_EXTRA_MAX];
+            // Every C string the call is handed, in the frame slot that keeps it
+            // for the free once the callee has returned.
+            i32 cstr_slot[NS_AMD64_EXTRA_MAX + 8];
+            i32 ncstr = 0;
             i32 igpr = 0;
             i32 fpr = 0;
             for (i32 ai = 0; ai < nargs; ++ai) dest_reg[ai] = -1;
@@ -926,27 +938,36 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
                         dest_reg[ai] = ns_amd64_ffi_is_float(at) ? 16 + igpr : c->int_regs[igpr];
                         igpr++;
                     } else {
+                        stack_index[stack_n] = ai;
                         stack_args[stack_n++] = args[ai];
                     }
                     continue;
                 }
                 if (ns_amd64_ffi_is_float(at)) {
                     if (fpr < 8) dest_reg[ai] = 16 + fpr++;
-                    else stack_args[stack_n++] = args[ai];
+                    else { stack_index[stack_n] = ai; stack_args[stack_n++] = args[ai]; }
                     continue;
                 }
                 if (igpr < c->nint_regs) dest_reg[ai] = c->int_regs[igpr++];
-                else stack_args[stack_n++] = args[ai];
+                else { stack_index[stack_n] = ai; stack_args[stack_n++] = args[ai]; }
             }
             if (stack_n > 0) {
                 i32 base = c->win_abi ? NS_AMD64_SHADOW : 0;
                 space = ns_amd64_open_arg_space(c, stack_n);
                 for (i32 ei = 0; ei < stack_n; ++ei) {
-                    ns_type st = ns_amd64_value_type(c->fn, stack_args[ei]);
+                    i32 ai = stack_index[ei];
+                    ns_type st = im && ai < (i32)ns_array_length(im->params)
+                        ? im->params[ai] : ns_amd64_value_type(c->fn, stack_args[ei]);
                     const char *conv = ns_amd64_ffi_convert(st);
                     if (conv) {
                         ns_amd64_load_value(c, c->int_regs[0], stack_args[ei]);
                         ns_amd64_emit_rt_call(c, conv);
+                        // The callee owns its stack arguments and may reuse
+                        // them, so the copy to free is kept in the frame.
+                        if (ns_amd64_ffi_is_cstr(st)) {
+                            cstr_slot[ncstr] = c->scratch_base + NS_AMD64_FFI_SCRATCH + ncstr;
+                            ns_amd64_store_value(c, cstr_slot[ncstr++], NS_AMD64_RAX);
+                        }
                     } else {
                         ns_amd64_load_value(c, NS_AMD64_RAX, stack_args[ei]);
                     }
@@ -972,6 +993,7 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
                 ns_amd64_emit_rt_call(c, conv);
                 spill_slot[ai] = c->scratch_base + nspill++;
                 ns_amd64_store_value(c, spill_slot[ai], NS_AMD64_RAX);
+                if (ns_amd64_ffi_is_cstr(at)) cstr_slot[ncstr++] = spill_slot[ai];
             }
             for (i32 ai = 0; ai < nargs; ++ai) {
                 if (spill_slot[ai] < 0) continue;
@@ -1016,6 +1038,12 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             }
             if (inst->dst >= 0) ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
             ns_amd64_close_arg_space(c, space);
+            // The result is stored (a returned str already copied out), so the
+            // C strings handed to the callee can go.
+            for (i32 si = 0; si < ncstr; ++si) {
+                ns_amd64_load_value(c, c->int_regs[0], cstr_slot[si]);
+                ns_amd64_emit_rt_call(c, "ns_rt_free_cstr");
+            }
             break;
         }
         if (callee_name.len == 0 && inst->a >= 0) {
@@ -1256,6 +1284,20 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
     }
 }
 
+/* Frame slots reserved past the SSA values for ffi calls: the register spills,
+ * then one per argument a call can pass on the stack, which may be a str. The
+ * Microsoft ABI passes the fewest arguments in registers, four. */
+static i32 ns_amd64_ffi_scratch(ns_ssa_fn *fn) {
+    i32 n = NS_AMD64_FFI_SCRATCH;
+    for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
+        ns_ssa_inst *inst = &fn->insts[i];
+        if (inst->op != NS_SSA_OP_CALL || inst->c <= 4) continue;
+        i32 extra = inst->c - 4 < NS_AMD64_EXTRA_MAX ? inst->c - 4 : NS_AMD64_EXTRA_MAX;
+        if (NS_AMD64_FFI_SCRATCH + extra > n) n = NS_AMD64_FFI_SCRATCH + extra;
+    }
+    return n;
+}
+
 /* Number of stack slots a function needs: one per distinct SSA value. */
 static i32 ns_amd64_slot_count(ns_ssa_fn *fn) {
     i32 max_dst = -1;
@@ -1283,7 +1325,7 @@ static ns_amd64_fn_bin ns_amd64_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn,
 
     i32 nslots = ns_amd64_slot_count(fn);
     c.scratch_base = nslots;
-    nslots += NS_AMD64_FFI_SCRATCH;
+    nslots += ns_amd64_ffi_scratch(fn);
     c.indirect_slot = nslots++;
     /* One 8-byte slot per value, plus the Microsoft ABI's shadow space below
      * them, rounded so RSP stays 16-byte aligned at every call site. */
