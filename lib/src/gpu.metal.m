@@ -268,20 +268,31 @@ static MTLIndexType _mtl_index_type(gpu_index_type type) {
 
 #define GPU_MTL_CACHE_NAME_CAPACITY 128
 
-// A shader keeps one pipeline and rebuilds it whenever the render state moves,
-// so a shader drawn under several states rebuilds thousands of times per
-// second. Metal serves those repeats from its own in-process cache faster than
-// a binary archive lookup does, so the archive is consulted once per render
-// state and the repeats take the plain path. These are the states already
-// looked up this run; a shader with more of them than fit leaves the rest
-// uncached rather than growing the record.
+// A shader keeps a pipeline per render state and pass formats it is drawn
+// with, so a shader drawn in two passes a frame - a shadow pass and the main
+// pass - builds each pipeline once. Past GPU_MTL_PSO_SLOTS states the oldest
+// pipeline is replaced and rebuilt on its next use.
+#define GPU_MTL_PSO_SLOTS 8
+// A pipeline rebuilt after eviction comes from Metal's in-process cache faster
+// than from a binary archive lookup, so the archive is consulted once per
+// render state and the repeats take the plain path. These are the states
+// already looked up this run; a shader with more of them than fit leaves the
+// rest uncached rather than growing the record.
 #define GPU_MTL_ARCHIVE_KEY_SLOTS 16
 
+// Everything a render pipeline is built from besides the shader functions:
+// the render state without its depth-stencil half, and the pass formats.
 typedef struct gpu_mtl_pipeline_key {
     gpu_v2_state_desc state;
     MTLPixelFormat colors[4];
     MTLPixelFormat depth;
+    MTLPixelFormat stencil;
 } gpu_mtl_pipeline_key;
+
+typedef struct gpu_mtl_pso_entry {
+    gpu_mtl_pipeline_key key;
+    id<MTLRenderPipelineState> pso;
+} gpu_mtl_pso_entry;
 
 typedef const char *(*gpu_mtl_cache_path_fn)(const char *name, u64 hash);
 typedef int (*gpu_mtl_cache_adopt_fn)(const char *name, u64 hash, const char *path);
@@ -309,12 +320,9 @@ typedef struct gpu_shader_mtl {
     id<MTLLibrary> compute_lib;
     id<MTLFunction> compute_func;
     id<MTLComputePipelineState> compute_pso;
-    id<MTLRenderPipelineState> v2_pso;
-    gpu_v2_state_desc v2_state;
-    MTLPixelFormat v2_colors[4];
-    MTLPixelFormat v2_depth;
-    MTLPixelFormat v2_stencil;
-    bool v2_pipeline_valid;
+    gpu_mtl_pso_entry v2_psos[GPU_MTL_PSO_SLOTS];
+    u32 v2_pso_count;
+    u32 v2_pso_next; // the slot replaced once all are taken
     // Compiled-pipeline cache: `archive` holds every pipeline this shader has
     // been drawn with, `cache_name`/`cache_hash` address its storage entry.
     id<MTLBinaryArchive> archive;
@@ -1282,11 +1290,8 @@ static void mtl_shader_cache_open(gpu_shader_mtl *record, const char *name, u64 
 
 // True the first time this run asks for the current render state, which is the
 // only time the archive is worth consulting.
-static bool mtl_archive_first_use(gpu_shader_mtl *shader) {
-    gpu_mtl_pipeline_key key = {0};
-    key.state = _state.v2_render_state;
-    memcpy(key.colors, _state.v2_pass_colors, sizeof(key.colors));
-    key.depth = _state.v2_pass_depth;
+static bool mtl_archive_first_use(gpu_shader_mtl *shader, const gpu_mtl_pipeline_key *key_ref) {
+    gpu_mtl_pipeline_key key = *key_ref;
     for (u32 i = 0; i < shader->archive_key_count; ++i) {
         if (memcmp(&shader->archive_keys[i], &key, sizeof(key)) == 0) return false;
     }
@@ -1430,7 +1435,7 @@ static void mtl_v2_shader_destroy(u32 shader) {
     [record->compute_pso release];
     [record->compute_func release];
     [record->compute_lib release];
-    [record->v2_pso release];
+    for (u32 i = 0; i < record->v2_pso_count; ++i) [record->v2_psos[i].pso release];
     [record->archive release];
 #endif
     memset(record, 0, sizeof(*record));
@@ -1660,26 +1665,26 @@ static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encod
     }
 }
 
-static ns_bool mtl_v2_ensure_pipeline(gpu_shader_mtl *shader) {
-    if (!shader || !shader->vertex_func || !shader->fragment_func) return false;
+// The pipeline for the current render state and pass formats, built on the
+// shader's first draw under them and kept for later ones; nil on failure.
+static id<MTLRenderPipelineState> mtl_v2_ensure_pipeline(gpu_shader_mtl *shader) {
+    if (!shader || !shader->vertex_func || !shader->fragment_func) return nil;
     // Depth and stencil test, depth write and stencil op live in the
     // depth-stencil state, not the pipeline: states that differ only there
     // share one PSO.
-    gpu_v2_state_desc pipeline_state = _state.v2_render_state;
-    pipeline_state.depth_compare = 0;
-    pipeline_state.depth_write = false;
-    pipeline_state.stencil_compare = 0;
-    pipeline_state.stencil_pass_op = 0;
-    bool same = shader->v2_pipeline_valid &&
-        memcmp(&shader->v2_state, &pipeline_state, sizeof(gpu_v2_state_desc)) == 0 &&
-        memcmp(shader->v2_colors, _state.v2_pass_colors, sizeof(shader->v2_colors)) == 0 &&
-        shader->v2_depth == _state.v2_pass_depth &&
-        shader->v2_stencil == _state.v2_pass_stencil;
-    if (same) return true;
-#ifndef ENABLE_ARC
-    [shader->v2_pso release];
-#endif
-    shader->v2_pso = nil;
+    gpu_mtl_pipeline_key key;
+    memset(&key, 0, sizeof(key));
+    key.state = _state.v2_render_state;
+    key.state.depth_compare = 0;
+    key.state.depth_write = false;
+    key.state.stencil_compare = 0;
+    key.state.stencil_pass_op = 0;
+    memcpy(key.colors, _state.v2_pass_colors, sizeof(key.colors));
+    key.depth = _state.v2_pass_depth;
+    key.stencil = _state.v2_pass_stencil;
+    for (u32 i = 0; i < shader->v2_pso_count; ++i) {
+        if (memcmp(&shader->v2_psos[i].key, &key, sizeof(key)) == 0) return shader->v2_psos[i].pso;
+    }
     MTLRenderPipelineDescriptor *desc = [MTLRenderPipelineDescriptor new];
     desc.vertexFunction = shader->vertex_func;
     desc.fragmentFunction = shader->fragment_func;
@@ -1707,43 +1712,51 @@ static ns_bool mtl_v2_ensure_pipeline(gpu_shader_mtl *shader) {
     desc.depthAttachmentPixelFormat = _state.v2_pass_depth;
     desc.stencilAttachmentPixelFormat = _state.v2_pass_stencil;
     NSError *error = nil;
-    if (shader->archive && mtl_archive_first_use(shader)) {
+    id<MTLRenderPipelineState> pso = nil;
+    if (shader->archive && mtl_archive_first_use(shader, &key)) {
         // Ask the archive alone first: a hit skips the compile, and a miss has
         // to be told apart from it so the compiled pipeline can be recorded.
         desc.binaryArchives = @[shader->archive];
-        shader->v2_pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc
-                                                                            options:MTLPipelineOptionFailOnBinaryArchiveMiss
-                                                                         reflection:NULL
-                                                                              error:&error];
-        if (!shader->v2_pso) {
+        pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc
+                                                                 options:MTLPipelineOptionFailOnBinaryArchiveMiss
+                                                              reflection:NULL
+                                                                   error:&error];
+        if (!pso) {
             error = nil;
-            shader->v2_pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc error:&error];
+            pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc error:&error];
             // Each distinct render state is its own archive entry, so a shader
             // drawn under several states grows its entry until every
             // combination the program uses is on disk.
-            if (shader->v2_pso && [shader->archive addRenderPipelineFunctionsWithDescriptor:desc error:nil]) {
+            if (pso && [shader->archive addRenderPipelineFunctionsWithDescriptor:desc error:nil]) {
                 mtl_shader_cache_store(shader);
             }
         }
     }
-    if (!shader->v2_pso) {
+    if (!pso) {
         error = nil;
         desc.binaryArchives = nil;
-        shader->v2_pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc error:&error];
+        pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc error:&error];
     }
 #ifndef ENABLE_ARC
     [desc release];
 #endif
-    if (!shader->v2_pso) {
+    if (!pso) {
         NSLog(@"Failed to create v2 render pipeline: %@", error);
-        return false;
+        return nil;
     }
-    shader->v2_state = pipeline_state;
-    memcpy(shader->v2_colors, _state.v2_pass_colors, sizeof(shader->v2_colors));
-    shader->v2_depth = _state.v2_pass_depth;
-    shader->v2_stencil = _state.v2_pass_stencil;
-    shader->v2_pipeline_valid = true;
-    return true;
+    u32 slot = shader->v2_pso_count;
+    if (slot < GPU_MTL_PSO_SLOTS) {
+        shader->v2_pso_count++;
+    } else {
+        slot = shader->v2_pso_next;
+        shader->v2_pso_next = (slot + 1) % GPU_MTL_PSO_SLOTS;
+#ifndef ENABLE_ARC
+        [shader->v2_psos[slot].pso release];
+#endif
+    }
+    shader->v2_psos[slot].key = key;
+    shader->v2_psos[slot].pso = pso;
+    return pso;
 }
 
 // The depth-stencil state for the current render state and pass. Without a
@@ -1800,8 +1813,9 @@ static id<MTLDepthStencilState> mtl_v2_depth_stencil_state(void) {
 static gpu_shader_mtl *mtl_v2_prepare_draw(void) {
     if (!_state.cmd_encoder || !_state.v2_shader || _state.v2_shader >= _state.shader_count) return NULL;
     gpu_shader_mtl *shader = &_state.shaders[_state.v2_shader];
-    if (!mtl_v2_ensure_pipeline(shader)) return NULL;
-    [_state.cmd_encoder setRenderPipelineState:shader->v2_pso];
+    id<MTLRenderPipelineState> pso = mtl_v2_ensure_pipeline(shader);
+    if (!pso) return NULL;
+    [_state.cmd_encoder setRenderPipelineState:pso];
     [_state.cmd_encoder setCullMode:_mtl_cull_mode((gpu_cull_mode)_state.v2_render_state.cull_mode)];
     [_state.cmd_encoder setFrontFacingWinding:_mtl_winding((gpu_face_winding)_state.v2_render_state.face_winding)];
     id<MTLDepthStencilState> depth_stencil = mtl_v2_depth_stencil_state();

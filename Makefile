@@ -403,6 +403,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ui_triangle_test
 	$(NS_BINDIR)/gpu_cooked_test
 	$(NS_BINDIR)/gpu_fx_test
+	$(NS_METAL_PSO_TEST)
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) run test/gpu_fx_test.ns
 	python3 test/ns_cook_test.py
 	sh nscode/ns_lens/test/batch_native_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -443,6 +444,15 @@ $(NS_BINDIR)/gpu_cooked_test: test/gpu_cooked_test.c lib/include/gpu.h lib/inclu
 test: $(NS_BINDIR)/gpu_fx_test
 $(NS_BINDIR)/gpu_fx_test: test/gpu_fx_test.c lib/include/gpu.h $(NS_HEADERS) $(NS_LIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB)
 	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) $(NS_LDFLAGS) $(NS_UI_TEST_LDFLAGS)
+
+# The Metal backend's per-shader pipeline cache, driven on the default device.
+# The test includes gpu.metal.m whole to reach its static cache.
+ifeq ($(NS_OS), $(NS_DARWIN))
+NS_METAL_PSO_TEST = $(NS_BINDIR)/gpu_metal_pso_test
+test: $(NS_METAL_PSO_TEST)
+$(NS_METAL_PSO_TEST): test/gpu_metal_pso_test.m lib/src/gpu.metal.m lib/src/gpu.c lib/include/gpu.h $(NS_HEADERS) $(NS_LIB)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< lib/src/gpu.c $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns -framework Foundation -framework Metal -framework MetalKit -framework QuartzCore $(NS_LDFLAGS) -undefined dynamic_lookup $(NS_UI_TEST_LDFLAGS)
+endif
 
 include sample/c/Makefile
 
