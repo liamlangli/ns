@@ -59,14 +59,25 @@ fn panel_state_entry_path(relative: str) str {
 // The map's lines of the state file. The camera is its target, where the
 // smoothed camera settles.
 fn panel_state_view_text() str {
-    let text = "view.mode=" + itos(g_lens_view_mode) + "\n"
-    text = text + "view.x=" + ftos(g_lens_target_x) + "\n"
-    text = text + "view.y=" + ftos(g_lens_target_y) + "\n"
-    text = text + "view.distance=" + ftos(g_lens_target_distance) + "\n"
+    // History mode is not restored: the map it returns to is saved instead.
+    let mode = g_lens_view_mode
+    let x = g_lens_target_x
+    let y = g_lens_target_y
+    let distance = g_lens_target_distance
+    if mode == LENS_MODE_HISTORY {
+        mode = g_lens_history_return_mode
+        x = g_lens_history_return_x
+        y = g_lens_history_return_y
+        distance = g_lens_history_return_distance
+    }
+    let text = "view.mode=" + itos(mode) + "\n"
+    text = text + "view.x=" + ftos(x) + "\n"
+    text = text + "view.y=" + ftos(y) + "\n"
+    text = text + "view.distance=" + ftos(distance) + "\n"
     text = text + "view.tilt=" + ftos(g_lens_tilt) + "\n"
     text = text + "view.scope=" + panel_state_relative(g_lens_scope_path) + "\n"
     text = text + "view.selected=" + panel_state_relative(g_lens_selected_path) + "\n"
-    if g_lens_view_mode == LENS_MODE_REF {
+    if mode == LENS_MODE_REF {
         // Ref mode lays out around its root file and returns to the map's
         // own camera when left.
         text = text + "view.ref_root=" + panel_state_relative(g_lens_ref_root) + "\n"
@@ -74,6 +85,7 @@ fn panel_state_view_text() str {
         text = text + "view.ref_y=" + ftos(g_lens_ref_return_y) + "\n"
         text = text + "view.ref_distance=" + ftos(g_lens_ref_return_distance) + "\n"
     }
+    text = text + "history.list_w=" + ftos(g_lens_history_list_w) + "\n"
     text = text + "outline.scroll=" + ftos(g_outline_scroll) + "\n"
     text = text + "outline.selected=" + panel_state_relative(g_outline_selected_path) + "\n"
     return text
@@ -196,6 +208,8 @@ fn panel_state_apply(key: str, value: str) {
         if n >= 1.0 && n <= LENS_DISTANCE_LIMIT {
             g_lens_ref_return_distance = n
         }
+    } else if key == "history.list_w" {
+        if n >= LENS_HISTORY_LIST_MIN_W { g_lens_history_list_w = n }
     } else if key == "outline.scroll" {
         g_outline_scroll = clamp(n, 0.0, 100000000.0)
     } else if key == "outline.selected" {

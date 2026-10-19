@@ -96,8 +96,9 @@ snaps back to orthographic.
   source files (`.c`, `.h`, `.ns`, `.ts`, `.js`, and the other languages Lens
   already knows). **change** shows files Git reports as staged, unstaged, or
   untracked in the opened folder. **full** shows every scanned file. A file
-  that is not text is a name tile; a deleted file has no leaf. Cmd+1, Cmd+2,
-  Cmd+3 and Cmd+4 select **code**, **ref**, **change** and **full** directly;
+  that is not text is a name tile; a deleted file has no leaf. **history**
+  shows the folder's commits (below). Cmd+1, Cmd+2, Cmd+3, Cmd+4 and Cmd+5
+  select **code**, **ref**, **change**, **full** and **history** directly;
   the dropdown labels each shortcut.
 - **View** (right of **File**) opens two floating panels, each of which can
   be dragged by its title bar, resized from every edge and corner (the grip in
@@ -169,6 +170,33 @@ snaps back to orthographic.
   outside the workspace are omitted. This is a lexical dependency view.
   Ref code is read-only and preserves an open editor's unsaved buffer.
   Filesystem changes refresh the graph; **code** restores the treemap.
+- **history** is a read-only view of the commits that touched the opened
+  folder (`git log -- .`), newest first, in a floating list at the left: each
+  commit is one line with its short hash, message, author and commit time; a
+  narrow list cuts the message first. Drag the list's right edge to change its
+  width, which is saved in `bin/ns_lens/layout`. The
+  list loads 150 commits at a time and reads the next page as it scrolls near
+  the end. A click or Up/Down (Page Up/Down a page) selects a commit, and the
+  map becomes a treemap of the files that commit changed, paths relative to
+  the opened folder, each leaf's area following its changed lines. A merge is
+  compared with its first parent; a rename shows its old path deleted and its
+  new path added. A floating panel at the right holds the commit's message,
+  author, date, parents and line counts, with **copy hash**, **copy message**
+  and **copy commit** buttons. Details are lazy: the list only reads one line
+  per commit, a commit's message and file list are read when it is selected,
+  and a file's diff is read on a worker only once its leaf is on screen large
+  enough for its rows to show, or when it is selected. Before that a leaf
+  shows its added and deleted share in green and red; after, its diff rows
+  (hunks, added and deleted lines with context) flow in columns, as bars from
+  afar and as text up close. Right click selects a file and flies to it, a
+  left click selects it, and a left click on its path row copies the path.
+  The selected file adds **copy path** and **copy diff** to the panel;
+  Cmd+C copies the selected file's diff, or the whole commit when no file is
+  selected, and Escape clears the file selection. Nothing in this mode can be
+  edited. A commit, pull or branch switch made in Lens reloads the list. A
+  diff past 64 KiB keeps its last part. Leaving history returns to the map
+  and camera it came from; history mode itself is not restored when the
+  project opens again.
 - Text and minimap share their line order (including inline Git deletion rows),
   column flow, font scale and perspective squeeze, so LOD switches preserve geometry.
   Glyphs appear at 0.18 scale and editing starts at 0.5, bringing code into view farther away.

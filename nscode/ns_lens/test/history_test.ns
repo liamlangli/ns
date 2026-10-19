@@ -1,0 +1,225 @@
+// History mode: the commit list, a commit's files as a treemap, and each
+// file's diff read only when asked for, against a scratch repository whose
+// opened folder is below its root.
+use std
+use os
+use view
+use gpu
+use ui
+use editor
+use workspace
+use task
+
+fn git(folder: str, args: str) str {
+    let out = os_git_run(folder, args)
+    assert os_git_status() == 0
+    return out
+}
+
+fn make_repo(folder: str) {
+    os_make_dirs(folder)
+    git(folder, "init\n-q")
+    git(folder, "config\nuser.name\nns_lens test")
+    git(folder, "config\nuser.email\nlens@example.com")
+    git(folder, "config\ncommit.gpgsign\nfalse")
+    git(folder, "config\ncore.hooksPath\n/dev/null")
+}
+
+fn commit(folder: str, message: str) {
+    git(folder, "add\n-A")
+    git(folder, "commit\n-q\n-m\n" + message)
+}
+
+// Tick the workers until nothing is reading.
+fn settle() {
+    let deadline = os_time() + 20.0
+    lens_history_tick()
+    loop lens_history_busy() && os_time() < deadline {
+        sleep(1)
+        lens_history_tick()
+    }
+    assert lens_history_busy() == false
+}
+
+fn check_parsers() {
+    let sep = "\u{1f}"
+    let page = "aaa" + sep + "a1" + sep + "Ann" + sep + "2026-10-19 10:00" + sep + "second" + "\n"
+    page = page + "bbb" + sep + "b2" + sep + "Bob" + sep + "2026-10-18 09:00" + sep + "first: with" + sep + "unit" + "\n"
+    g_lens_history_count = 0
+    assert lens_history_log_apply(page, 0) == 2
+    assert g_lens_history_count == 2 && g_lens_history_more == false
+    assert g_lens_history_short[1] == "b2" && g_lens_history_author[0] == "Ann"
+    assert g_lens_history_subject[1] == "first: with"
+    // A later page appends only at the end it was read from.
+    assert lens_history_log_apply(page, 5) == 0
+    assert lens_history_log_apply(page, 2) == 2 && g_lens_history_count == 4
+
+    lens_history_files_apply("3\t1\tsrc/a.ns\n-\t-\timg.png\n0\t9\told.ns\n", "M\tsrc/a.ns\nA\timg.png\nD\told.ns\n")
+    assert g_lens_history_files == 3
+    assert g_lens_history_kind[0] == LENS_GIT_MODIFIED && g_lens_history_kind[1] == LENS_GIT_ADDED && g_lens_history_kind[2] == LENS_GIT_DELETED
+    assert g_lens_history_binary[1] == 1 && g_lens_history_add[0] == 3 && g_lens_history_del[2] == 9
+    assert g_lens_history_added == 3 && g_lens_history_deleted == 10
+    // The leaves tile the map without gaps.
+    let area: f64 = 0.0
+    for f in 0 to g_lens_history_files {
+        area = area + g_lens_history_w[f] * g_lens_history_h[f]
+        assert g_lens_history_fit[f] > 0.0
+    }
+    assert area > 1079000.0 && area < 1081000.0
+
+    let diff = "diff --git a/src/a.ns b/src/a.ns\nindex 1..2 100644\n--- a/src/a.ns\n+++ b/src/a.ns\n@@ -1,2 +1,4 @@\n fn a() {\n-\tx\n+\ty\n+\tz\n+\tw\n }\n"
+    lens_history_diff_apply(0, diff)
+    assert g_lens_history_state[0] == LENS_HISTORY_DIFF_READY
+    assert g_lens_history_rows[0] == 7
+    let row0 = g_lens_history_row0[0]
+    assert g_lens_history_row_kind[row0] == LENS_HISTORY_HUNK
+    assert g_lens_history_row_kind[row0 + 2] == LENS_HISTORY_DEL
+    assert g_lens_history_row_kind[row0 + 3] == LENS_HISTORY_ADD
+    assert lens_history_row_text(0, row0 + 3) == "+    y"
+    lens_history_diff_apply(1, "diff --git a/img.png b/img.png\nnew file mode 100644\nindex 0..1\nBinary files /dev/null and b/img.png differ\n")
+    assert g_lens_history_rows[1] == 2
+    assert g_lens_history_row_kind[g_lens_history_row0[1] + 1] == LENS_HISTORY_META
+
+    // Wrapping never splits a UTF-8 character and marks a cut message.
+    let lines = lens_history_wrap("\u{4fee}\u{590d}\u{5206}\u{652f}\nnext", 4, 8)
+    assert lines.len == 5
+    assert lines[0] == "\u{4fee}" && lines[4] == "next"
+    let cut = lens_history_wrap("a\nb\nc\nd", 10, 2)
+    assert cut.len == 2 && cut[1] == "b ..."
+    lens_history_clear_detail()
+    g_lens_history_count = 0
+}
+
+fn render(r: ref ui_renderer, v: ref view, frames: i32) {
+    for n in 0 to frames {
+        ui_begin_frame(r)
+        render_lens(r, v, 1280, 800)
+        ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+    }
+}
+
+fn main() {
+    check_parsers()
+    print("history parsers: passed\n")
+    let stamp = os_time_us() % 1000000000
+    let base = "/tmp/ns_lens_history_" + itos(stamp as i32)
+    os_make_dirs(base)
+    let probe = os_git_run(base, "--version")
+    if os_git_status() != 0 {
+        print("history_test: git unavailable, skipping repository checks\n")
+        return
+    }
+    make_repo(base)
+    let root = base + "/proj"
+    assert os_make_dirs(root + "/src") != 0
+    assert os_write_file_atomic(root + "/src/a.ns", "fn a() {\n    print(\"a\")\n}\n") != 0
+    assert os_write_file_atomic(base + "/outside.txt", "one\n") != 0
+    commit(base, "first")
+    assert os_write_file_atomic(root + "/src/a.ns", "fn a() {\n    print(\"b\")\n    print(\"c\")\n}\n") != 0
+    assert os_write_file_atomic(root + "/src/b.ns", "fn b() {\n}\n") != 0
+    commit(base, "second\n-m\nThe body explains the change.")
+    // A commit outside the opened folder is not part of its history.
+    assert os_write_file_atomic(base + "/outside.txt", "two\n") != 0
+    commit(base, "outside")
+
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    lens_rebuild()
+    lens_set_mode(LENS_MODE_HISTORY)
+    assert g_lens_view_mode == LENS_MODE_HISTORY
+    assert lens_mode_label(LENS_MODE_HISTORY) == "history" && lens_mode_key_label(LENS_MODE_HISTORY) == "cmd+5"
+    assert lens_mode_at(4) == LENS_MODE_HISTORY && lens_mode_at(3) == LENS_MODE_FULL
+    // No workspace file is a leaf in history mode.
+    assert lens_file_count() == 0
+    settle()
+    settle()
+    assert g_lens_history_count == 2
+    assert g_lens_history_subject[0] == "second" && g_lens_history_subject[1] == "first"
+    assert g_lens_history_selected == 0
+    assert g_lens_history_detail_ready && g_lens_history_detail_error == ""
+    assert g_lens_history_message == "second\n\nThe body explains the change."
+    assert g_lens_history_author_line == "ns_lens test <lens@example.com>"
+    // Paths are relative to the opened folder; no diff is read yet.
+    assert g_lens_history_files == 2
+    assert g_lens_history_path[0] == "src/a.ns" && g_lens_history_kind[0] == LENS_GIT_MODIFIED
+    assert g_lens_history_path[1] == "src/b.ns" && g_lens_history_kind[1] == LENS_GIT_ADDED
+    assert g_lens_history_add[0] == 2 && g_lens_history_del[0] == 1
+    assert g_lens_history_state[0] == LENS_HISTORY_DIFF_NONE && g_lens_history_state[1] == LENS_HISTORY_DIFF_NONE
+    assert g_lens_history_row_count == 0
+
+    // Selecting a file reads its diff alone.
+    lens_history_select_file(0, true)
+    settle()
+    assert g_lens_history_state[0] == LENS_HISTORY_DIFF_READY
+    assert g_lens_history_state[1] == LENS_HISTORY_DIFF_NONE
+    assert g_lens_history_rows[0] == 6
+    assert lens_history_row_text(0, g_lens_history_row0[0] + 4) == "+    print(\"c\")"
+
+    // The next commit replaces the files; the root commit has no parents.
+    lens_history_select(1)
+    assert g_lens_history_files == 0 && g_lens_history_detail_ready == false
+    settle()
+    assert g_lens_history_files == 1 && g_lens_history_kind[0] == LENS_GIT_ADDED
+    assert g_lens_history_parents == ""
+    assert lens_history_commit_text() == "commit " + g_lens_history_full_hash + "\nAuthor: ns_lens test <lens@example.com>\nDate:   " + g_lens_history_date_line + "\n\nfirst\n"
+
+    // A new commit marks the list stale; it reloads keeping the selection.
+    assert os_write_file_atomic(root + "/src/c.ns", "let c = 1\n") != 0
+    commit(base, "third")
+    g_lens_history_stale = true
+    settle()
+    settle()
+    assert g_lens_history_count == 3 && g_lens_history_subject[0] == "third"
+    assert g_lens_history_selected == 2 && g_lens_history_subject[2] == "first"
+
+    // The list's right edge resizes it within the window; the width is saved
+    // with the project's layout.
+    g_lens_view_w = 1280.0
+    g_lens_history_list_w = 400.0
+    assert lens_history_panel_w() == 400.0
+    assert lens_history_edge_at(LENS_HISTORY_MARGIN + 400.0, lens_history_list_y() + 10.0)
+    assert lens_history_edge_at(LENS_HISTORY_MARGIN + 300.0, lens_history_list_y() + 10.0) == false
+    g_lens_history_list_w = 100.0
+    assert lens_history_panel_w() == LENS_HISTORY_LIST_MIN_W
+    g_lens_history_list_w = 5000.0
+    assert lens_history_panel_w() == 1280.0 - LENS_HISTORY_INFO_W - LENS_HISTORY_MARGIN * 4.0 - 160.0
+    g_lens_history_list_w = 420.0
+    assert lens_search_find(panel_state_view_text(), 0, panel_state_view_text().len, "history.list_w=420", false) >= 0
+
+    let v = view_create("history test", 1280, 800)
+    // Arrow keys walk the commits.
+    view_on_key_action(v, 265, 0)
+    assert lens_history_keys(v) && g_lens_history_selected == 1
+    view_on_key_action(v, 265, 1)
+    settle()
+    if gpu_request_device(v) {
+        let r = ui_renderer_create(v)
+        g_mouse_x = -100.0
+        g_mouse_y = -100.0
+        g_lens_mode_open = true
+        render(r, v, 2)
+        g_lens_mode_open = false
+        // Close to the selected file its rows draw as glyphs.
+        lens_history_select_file(0, true)
+        settle()
+        g_lens_distance = g_lens_target_distance
+        g_lens_center_x = g_lens_target_x
+        g_lens_center_y = g_lens_target_y
+        render(r, v, 2)
+        assert g_lens_history_info_h > 0.0
+        assert g_lens_history_button_on[LENS_HISTORY_COPY_DIFF] != 0
+        lens_history_copy(v, LENS_HISTORY_COPY_PATH)
+        assert view_get_clipboard(v) == g_lens_history_path[0]
+        lens_history_copy(v, LENS_HISTORY_COPY_HASH)
+        assert view_get_clipboard(v) == g_lens_history_full_hash
+        ui_renderer_destroy(r)
+    }
+    // Leaving returns the camera the map had.
+    lens_set_mode(LENS_MODE_CODE)
+    assert g_lens_target_distance == g_lens_history_return_distance
+    assert lens_file_count() >= 2
+    view_close(v)
+    os_watch_stop()
+    print("history: passed\n")
+}

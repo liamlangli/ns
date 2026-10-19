@@ -165,6 +165,7 @@ fn lens_view_action(i: i32) {
 
 fn lens_hint_keys(i: i32) str {
     if i == 0 { return "wheel/pinch" }
+    if i == 1 && g_lens_view_mode == LENS_MODE_HISTORY { return "up/down" }
     if i == 1 { return "shift+wheel" }
     if i == 2 { return "left drag" }
     if i == 3 { return "right click" }
@@ -176,6 +177,7 @@ fn lens_hint_keys(i: i32) str {
 
 fn lens_hint_action(i: i32) str {
     if i == 0 { return "zoom" }
+    if i == 1 && g_lens_view_mode == LENS_MODE_HISTORY { return "commit" }
     if i == 1 { return "scroll code" }
     if i == 2 && g_lens_view_mode == LENS_MODE_REF { return "move cell / pan" }
     if i == 2 { return "pan" }
@@ -464,6 +466,10 @@ fn lens_menu_keys(v: ref view) {
         terminal_keys(v)
         return
     }
+    // History mode walks its commits with the arrow keys and copies with Cmd+C.
+    if lens_history_keys(v) {
+        return
+    }
     // With no file open for editing, typing naturally belongs to an open
     // terminal even if a click on the outline or map cleared its focus.
     if terminal_open() && g_lens_editing == false && terminal_key_input(v) {
@@ -479,7 +485,7 @@ fn lens_menu_keys(v: ref view) {
         } else if key_edge(v, 257) || key_edge(v, 335) {
             lens_commit_show()
         } else {
-            // Cmd+1..4 switch the map mode.
+            // Cmd+1..5 switch the map mode.
             lens_mode_shortcut_keys(v)
         }
     }

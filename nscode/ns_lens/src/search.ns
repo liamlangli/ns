@@ -266,6 +266,10 @@ fn lens_search_go(hit: i32) {
     if hit < 0 || hit >= g_lens_hit_count {
         return
     }
+    // A hit is a workspace file; history mode returns to the map it left.
+    if g_lens_view_mode == LENS_MODE_HISTORY {
+        lens_set_mode(g_lens_history_return_mode)
+    }
     let i = g_lens_hit_file[hit]
     if i < 0 || i >= g_workspace_count || g_lens_files[i] == 0 {
         return

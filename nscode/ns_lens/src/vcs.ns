@@ -415,6 +415,7 @@ fn lens_job_poll() {
         g_lens_change_poll = 0.0
         g_lens_git_poll = 0.0
         g_lens_patch_wanted = true
+        g_lens_history_stale = true
     }
     // Commit & Push pushes once its commit lands, ahead of a queued job, with
     // the upstream state the commit job just read.

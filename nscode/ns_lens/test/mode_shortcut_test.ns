@@ -1,4 +1,4 @@
-// Cmd+1..4 switch the map between code, ref, change and full, and the mode
+// Cmd+1..5 switch the map between code, ref, change, full and history, and the mode
 // menu names each shortcut.
 use std
 use os
@@ -51,6 +51,12 @@ fn main() {
     check("1 selects code", lens_mode_shortcut_keys(v) && g_lens_view_mode == LENS_MODE_CODE)
     release(v, 49)
     press(v, 53)
+    check("5 selects history", lens_mode_shortcut_keys(v) && g_lens_view_mode == LENS_MODE_HISTORY)
+    release(v, 53)
+    press(v, 49)
+    check("1 leaves history", lens_mode_shortcut_keys(v) && g_lens_view_mode == LENS_MODE_CODE)
+    release(v, 49)
+    press(v, 54)
     let before = g_lens_view_mode
     check("other digits leave the mode alone", lens_mode_shortcut_keys(v) == false && g_lens_view_mode == before)
 

@@ -357,6 +357,10 @@ fn lens_entry_shown(index: i32) bool {
     if g_lens_scope_path != "" && lens_scope_contains(index) == false {
         return false
     }
+    // History mode tiles a commit's files instead of the workspace's.
+    if g_lens_view_mode == LENS_MODE_HISTORY {
+        return false
+    }
     if g_lens_view_mode == LENS_MODE_FULL {
         return true
     }
@@ -416,6 +420,18 @@ fn lens_scope_set(index: i32) {
     } else {
         lens_rebuild()
     }
+    lens_map_home()
+}
+
+// Frame the whole map. History mode keeps its commit in view and frames the
+// map it returns to instead.
+fn lens_map_home() {
+    if g_lens_view_mode == LENS_MODE_HISTORY {
+        g_lens_history_return_x = 0.0
+        g_lens_history_return_y = 0.0
+        g_lens_history_return_distance = 1600.0
+        return
+    }
     g_lens_target_x = 0.0
     g_lens_target_y = 0.0
     g_lens_target_distance = 1600.0
@@ -428,9 +444,7 @@ fn lens_scope_clear() {
     g_lens_scope = -1
     g_lens_scope_path = ""
     lens_rebuild()
-    g_lens_target_x = 0.0
-    g_lens_target_y = 0.0
-    g_lens_target_distance = 1600.0
+    lens_map_home()
 }
 
 fn lens_include_file(index: i32) {
@@ -466,6 +480,12 @@ fn lens_set_mode(mode: i32) {
     if mode == g_lens_view_mode {
         return
     }
+    let from = g_lens_view_mode
+    // History mode has its own camera; the map's comes back first, so Ref
+    // remembers the map rather than the commit.
+    if from == LENS_MODE_HISTORY {
+        lens_history_leave()
+    }
     if mode == LENS_MODE_REF {
         g_lens_ref_return_distance = g_lens_target_distance
         g_lens_ref_return_x = g_lens_target_x
@@ -486,6 +506,9 @@ fn lens_set_mode(mode: i32) {
     g_lens_ref_drag = -1
     lens_rebuild()
     g_lens_changes_dirty = false
+    if mode == LENS_MODE_HISTORY {
+        lens_history_enter(from)
+    }
 }
 
 fn lens_rebuild() {
@@ -815,14 +838,18 @@ fn lens_mode_y() f64 { return main_menu_h() + (LENS_TOP_BAR_H - LENS_MODE_H) * 0
 
 fn lens_mode_popup_y() f64 { return lens_mode_y() + LENS_MODE_H + 2.0 }
 
+lit LENS_MODE_ROWS = 5
+
 fn lens_mode_at(row: i32) i32 {
     if row == 1 { return LENS_MODE_REF }
+    if row == 4 { return LENS_MODE_HISTORY }
     if row > 1 { return row - 1 }
     return LENS_MODE_CODE
 }
 
 fn lens_mode_label(mode: i32) str {
     if mode == LENS_MODE_REF { return "ref" }
+    if mode == LENS_MODE_HISTORY { return "history" }
     if mode == LENS_MODE_CHANGE {
         return "change"
     }
@@ -836,10 +863,11 @@ fn lens_mode_key_label(mode: i32) str {
     if mode == LENS_MODE_REF { return "cmd+2" }
     if mode == LENS_MODE_CHANGE { return "cmd+3" }
     if mode == LENS_MODE_FULL { return "cmd+4" }
+    if mode == LENS_MODE_HISTORY { return "cmd+5" }
     return "cmd+1"
 }
 
-// Cmd+1..4 selects code, ref, change and full. The caller has already checked
+// Cmd+1..5 selects code, ref, change, full and history. The caller has already checked
 // that the command modifier is down, so a matching digit belongs to Lens.
 fn lens_mode_shortcut_keys(v: ref view) bool {
     if key_edge(v, 49) {
@@ -858,6 +886,10 @@ fn lens_mode_shortcut_keys(v: ref view) bool {
         lens_set_mode(LENS_MODE_FULL)
         return true
     }
+    if key_edge(v, 53) {
+        lens_set_mode(LENS_MODE_HISTORY)
+        return true
+    }
     return false
 }
 
@@ -865,7 +897,7 @@ fn lens_mode_handle(v: ref view, w: f64) {
     let x = lens_mode_x()
     let y = lens_mode_y()
     let pop_y = lens_mode_popup_y()
-    let pop_h = LENS_MODE_ITEM * 4.0
+    let pop_h = LENS_MODE_ITEM * (LENS_MODE_ROWS as f64)
     g_lens_mode_block = g_lens_mode_open && raw_hit(v, x, pop_y, LENS_MODE_MENU_W, pop_h)
     if v.mouse_pressed == false {
         return
@@ -889,8 +921,8 @@ fn lens_mode_handle(v: ref view, w: f64) {
         if row < 0 {
             row = 0
         }
-        if row > 3 {
-            row = 3
+        if row > LENS_MODE_ROWS - 1 {
+            row = LENS_MODE_ROWS - 1
         }
         g_lens_mode_open = false
         v.mouse_pressed = false
@@ -918,10 +950,10 @@ fn lens_draw_mode_menu(r: ref ui_renderer, v: ref view, w: f64) {
         return
     }
     let pop_y = lens_mode_popup_y()
-    let pop_h = LENS_MODE_ITEM * 4.0
+    let pop_h = LENS_MODE_ITEM * (LENS_MODE_ROWS as f64)
     ui_fill_round_rect(r, x, pop_y, LENS_MODE_MENU_W, pop_h, 3.0, col_popup_bg(), 0.0)
     ui_stroke_round_rect(r, x, pop_y, LENS_MODE_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
-    for row in 0 to 4 {
+    for row in 0 to LENS_MODE_ROWS {
         let i = lens_mode_at(row)
         let iy = pop_y + (row as f64) * LENS_MODE_ITEM
         let hot = raw_hit(v, x, iy, LENS_MODE_MENU_W, LENS_MODE_ITEM)
@@ -1038,13 +1070,17 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     if lens_menu_blocks() == false {
         terminal_mouse(v, w, h)
         outline_mouse(v, w, h)
+        // The history panels sit under the outline and the terminal.
+        if lens_history_active() && !outline_blocks_pointer(v) && !terminal_blocks_pointer(v) {
+            lens_history_mouse(v, w, h)
+        }
     }
     if g_lens_view_mode == LENS_MODE_REF { lens_ref_tick() }
     // The map is laid out flat and seen through the plane camera: every map
     // interaction runs on the flat plane, under the unprojected pointer.
     let screen_x = g_mouse_x
     let screen_y = g_mouse_y
-    let over_panel = outline_blocks_pointer(v) || terminal_blocks_pointer(v)
+    let over_panel = outline_blocks_pointer(v) || terminal_blocks_pointer(v) || lens_history_blocks_pointer(v, w)
     let over_map = g_lens_mode_block == false && lens_menu_blocks() == false && over_panel == false && !lens_ref_depth_hit(v, w) && hit(v, 0.0, bar_bottom, map_w, h - STATUS_BAR_H - bar_bottom)
     if over_map && v.mouse_middle_down {
         g_lens_tilt = clamp(g_lens_tilt + (screen_y - g_lens_screen_drag_y) * 0.25, 0.0, LENS_MAX_TILT)
@@ -1079,6 +1115,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     panel_state_tick(moving)
     lens_search_tick()
     lens_changes_poll()
+    if lens_history_active() || lens_history_busy() { lens_history_tick() }
     if g_lens_view_mode == LENS_MODE_CHANGE && moving == false && os_time() >= g_lens_change_poll {
         g_lens_change_poll = os_time() + 2.0
         lens_changes_request(false)
@@ -1290,6 +1327,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         }
     }
     if g_lens_view_mode == LENS_MODE_REF { lens_ref_links(r, w, top, body_h) }
+    if lens_history_active() { lens_history_draw_map(r, v, w, top, body_h, over_map, moving) }
     if v.mouse_released || !v.mouse_down {
         g_lens_label_press = -1
     }
@@ -1301,7 +1339,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     g_mouse_x = screen_x
     g_mouse_y = screen_y
     ui_fill_rect(r, 0.0, top, w, LENS_TOP_BAR_H, col_bar(), 0.0)
-    if lens_file_count() == 0 {
+    if lens_history_active() {
+        lens_history_note(r, w, top, body_h)
+    } else if lens_file_count() == 0 {
         let note = "No source files in "
         if g_lens_view_mode == LENS_MODE_CHANGE && g_lens_change_root != g_workspace_root {
             note = "Listing changed files in "
@@ -1340,6 +1380,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     draw_status_bar(r, 0.0, h - STATUS_BAR_H, w, lens_detail_of(code_ready, code_total, bars_ready, bars_total))
     if g_lens_view_mode == LENS_MODE_REF { lens_ref_controls(r, v, w) }
     lens_draw_overlay(r, w, h)
+    if lens_history_active() { lens_history_draw_panels(r, v, w, h) }
     outline_draw(r, v, w, h)
     terminal_draw(r, v, w, h)
     lens_draw_mode_menu(r, v, w)
@@ -1354,7 +1395,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         // A panel action or terminal chunk changed what this frame should show.
         g_lens_input_dirty = false
         view_request_frame_after(v, 1)
-    } else if read_budget == 0 || g_lens_io_running || g_lens_change_running || g_lens_close_view || lens_job_visible() || g_lens_search_running || terminal_needs_frames() {
+    } else if read_budget == 0 || g_lens_io_running || g_lens_change_running || lens_history_busy() || g_lens_close_view || lens_job_visible() || g_lens_search_running || terminal_needs_frames() {
         view_request_frame_after(v, 16)
     } else {
         // Idle polling keeps file watching alive without drawing 60 empty frames.
@@ -1767,6 +1808,9 @@ fn lens_wheel_rate(nearest: f64) f64 {
 // fits the window; stop there rather than diving into the blank space between
 // glyphs.
 fn lens_zoom_nearest(mx: f64, my: f64, w: f64, top: f64, body_h: f64) f64 {
+    if lens_history_active() {
+        return lens_history_nearest(mx, my, w, top, body_h)
+    }
     let fit: f64 = 1.0
     for index in 0 to g_workspace_count {
         if g_lens_files[index] != 0 && lens_ref_visible(index) {

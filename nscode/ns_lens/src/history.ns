@@ -1,0 +1,1667 @@
+// History mode (Cmd+5): the opened folder's commits in a floating list on the
+// left, the selected commit's details in a floating panel on the right, and
+// the files that commit changed as a treemap on the map. Everything is read
+// only. Git runs on workers: the list a page at a time, a commit's details
+// and file list when it is selected, and each file's diff only when its leaf
+// is on screen at a size where its rows would show, or when it is selected.
+use std
+use os
+use view
+use ui
+use task
+
+lit LENS_MODE_HISTORY = 4
+// Commits per `git log` page; os_git_run keeps the last 64 KiB of output.
+lit LENS_HISTORY_PAGE = 150
+lit LENS_HISTORY_COMMITS = 16384
+lit LENS_HISTORY_FILES = 4096
+lit LENS_HISTORY_ROWS = 262144
+// os_git_run keeps the last 64 KiB; a diff that long lost its start.
+lit LENS_HISTORY_OUTPUT_MAX = 65536
+// The list shows each commit on one line: short hash, message, then author
+// and date at the right end. Its right edge drags to resize it.
+lit LENS_HISTORY_LIST_W = 560.0
+lit LENS_HISTORY_LIST_MIN_W = 260.0
+lit LENS_HISTORY_PAD = 10.0
+// Pointer reach on either side of the right edge.
+lit LENS_HISTORY_GRAB = 4.0
+lit LENS_HISTORY_TITLE_H = 26.0
+lit LENS_HISTORY_ROW_H = 22.0
+lit LENS_HISTORY_INFO_W = 380.0
+lit LENS_HISTORY_MARGIN = 8.0
+lit LENS_HISTORY_LINE_H = 17.0
+lit LENS_HISTORY_BUTTON_H = 22.0
+lit LENS_HISTORY_BODY_LINES = 14
+lit LENS_HISTORY_BUTTONS = 5
+// A diff column is this many characters wide; a glyph advances this fraction
+// of the row height.
+lit LENS_HISTORY_COLUMN_CHARS = 100.0
+lit LENS_HISTORY_CHAR = 0.6
+lit LENS_HISTORY_MAX_COLUMNS = 64
+// Screen row heights: glyphs from the first, bars from the second. A leaf
+// whose rows would be at least LENS_HISTORY_LOAD_PX tall loads its diff.
+lit LENS_HISTORY_GLYPH_PX = 6.0
+lit LENS_HISTORY_BAR_PX = 0.35
+lit LENS_HISTORY_LOAD_PX = 0.8
+// Closest zoom: a row at this many screen pixels.
+lit LENS_HISTORY_NEAREST_PX = 48.0
+// Worker slots: one page of the list, one commit's details, one file's diff.
+lit LENS_HISTORY_JOB_LOG = 0
+lit LENS_HISTORY_JOB_COMMIT = 1
+lit LENS_HISTORY_JOB_DIFF = 2
+lit LENS_HISTORY_JOBS = 3
+lit LENS_HISTORY_STEPS = 3
+// Diff row kinds.
+lit LENS_HISTORY_CONTEXT = 0
+lit LENS_HISTORY_ADD = 1
+lit LENS_HISTORY_DEL = 2
+lit LENS_HISTORY_HUNK = 3
+lit LENS_HISTORY_META = 4
+// A file's diff: not asked for, on a worker, rows ready, or Git failed.
+lit LENS_HISTORY_DIFF_NONE = 0
+lit LENS_HISTORY_DIFF_LOADING = 1
+lit LENS_HISTORY_DIFF_READY = 2
+lit LENS_HISTORY_DIFF_FAILED = 3
+// Copy buttons in the details panel.
+lit LENS_HISTORY_COPY_HASH = 0
+lit LENS_HISTORY_COPY_MESSAGE = 1
+lit LENS_HISTORY_COPY_COMMIT = 2
+lit LENS_HISTORY_COPY_PATH = 3
+lit LENS_HISTORY_COPY_DIFF = 4
+
+// The commit list of g_lens_history_root, newest first.
+let g_lens_history_root = ""
+let g_lens_history_stale = false
+let g_lens_history_error = ""
+let g_lens_history_count: i32 = 0
+// The last page was full, so older commits may remain.
+let g_lens_history_more = false
+let g_lens_history_hash = [str](16384)
+let g_lens_history_short = [str](16384)
+let g_lens_history_author = [str](16384)
+let g_lens_history_date = [str](16384)
+let g_lens_history_subject = [str](16384)
+let g_lens_history_selected: i32 = -1
+// Requested list width; lens_history_panel_w fits it to the window. A drag
+// on the right edge sets it.
+let g_lens_history_list_w: f64 = LENS_HISTORY_LIST_W
+let g_lens_history_drag = false
+let g_lens_history_drag_x: f64 = 0.0
+let g_lens_history_drag_from: f64 = 0.0
+// List scroll in pixels.
+let g_lens_history_scroll: f64 = 0.0
+// The mode and the map camera history mode returns to.
+let g_lens_history_return_mode: i32 = 0
+let g_lens_history_return_x: f64 = 0.0
+let g_lens_history_return_y: f64 = 0.0
+let g_lens_history_return_distance: f64 = 1600.0
+
+// The selected commit's details; `detail_hash` names the commit they are for.
+let g_lens_history_detail_hash = ""
+let g_lens_history_detail_ready = false
+let g_lens_history_detail_error = ""
+let g_lens_history_full_hash = ""
+let g_lens_history_author_line = ""
+let g_lens_history_date_line = ""
+let g_lens_history_committer_line = ""
+let g_lens_history_parents = ""
+let g_lens_history_message = ""
+let g_lens_history_added: i32 = 0
+let g_lens_history_deleted: i32 = 0
+
+// The changed files of the selected commit, in Git's path order, and their
+// treemap rectangles in map units.
+let g_lens_history_files: i32 = 0
+let g_lens_history_path = [str](4096)
+let g_lens_history_kind = [i32](4096)
+let g_lens_history_add = [i32](4096)
+let g_lens_history_del = [i32](4096)
+let g_lens_history_binary = [i32](4096)
+let g_lens_history_x = [f64](4096)
+let g_lens_history_y = [f64](4096)
+let g_lens_history_w = [f64](4096)
+let g_lens_history_h = [f64](4096)
+let g_lens_history_weight = [f64](4096)
+let g_lens_history_state = [i32](4096)
+let g_lens_history_diff = [str](4096)
+// Each loaded diff's rows in the shared row table, and its column flow: the
+// row height in map units, the column count and the rows per column.
+let g_lens_history_row0 = [i32](4096)
+let g_lens_history_rows = [i32](4096)
+let g_lens_history_fit = [f64](4096)
+let g_lens_history_columns = [i32](4096)
+let g_lens_history_per_column = [i32](4096)
+let g_lens_history_row_start = [i32](262144)
+let g_lens_history_row_len = [i32](262144)
+let g_lens_history_row_kind = [i32](262144)
+let g_lens_history_row_count: i32 = 0
+// Base row height in map units before each leaf's own fit.
+let g_lens_history_row_world: f64 = 1.0
+let g_lens_history_file_selected: i32 = -1
+// A diff asked for while the diff worker was busy; -1 for none.
+let g_lens_history_diff_wanted: i32 = -1
+// Copy diff waits for that file's diff.
+let g_lens_history_copy_pending: i32 = -1
+// Left press on a leaf, to tell a click from a pan.
+let g_lens_history_press: i32 = -1
+let g_lens_history_press_x: f64 = 0.0
+let g_lens_history_press_y: f64 = 0.0
+
+// Panel rectangles and copy buttons as last drawn, for the next frame's input.
+let g_lens_history_info_h: f64 = 0.0
+let g_lens_history_button_x = [f64](5)
+let g_lens_history_button_y = [f64](5)
+let g_lens_history_button_w = [f64](5)
+let g_lens_history_button_on = [i32](5)
+
+// Worker slots. Main thread: busy, request tag and root. Shared under the
+// lock: done, Git status and each step's output.
+let g_lens_history_lock: ref os_lock = nil
+let g_lens_history_lock_ready = false
+let g_lens_history_busy = [i32](3)
+let g_lens_history_job_tag = [str](3)
+let g_lens_history_job_root = [str](3)
+let g_lens_history_done = [i32](3)
+let g_lens_history_status = [i32](3)
+let g_lens_history_texts = [str](9)
+
+fn lens_history_active() bool {
+    return g_lens_view_mode == LENS_MODE_HISTORY
+}
+
+fn lens_history_busy() bool {
+    for slot in 0 to LENS_HISTORY_JOBS {
+        if g_lens_history_busy[slot] != 0 {
+            return true
+        }
+    }
+    return false
+}
+
+// Run `steps` (os_git_run argument lists) in order on a worker for `slot`,
+// stopping at the first that fails. False when the slot is still busy.
+fn lens_history_run(slot: i32, steps: [str], tag: str) bool {
+    if g_lens_history_busy[slot] != 0 || g_workspace_root == "" {
+        return false
+    }
+    if g_lens_history_lock_ready == false {
+        g_lens_history_lock = os_lock_create()
+        g_lens_history_lock_ready = true
+    }
+    let root = g_workspace_root
+    let lock = g_lens_history_lock
+    let done = g_lens_history_done
+    let codes = g_lens_history_status
+    let texts = g_lens_history_texts
+    done[slot] = 0
+    g_lens_history_busy[slot] = 1
+    g_lens_history_job_tag[slot] = tag
+    g_lens_history_job_root[slot] = root
+    let pending = dispatch(queue_worker) { in
+        let status: i32 = 0
+        let out = [str](3)
+        let k: i32 = 0
+        for step in steps {
+            if status == 0 && k < LENS_HISTORY_STEPS {
+                out[k] = os_git_run(root, step)
+                status = os_git_status()
+            }
+            k = k + 1
+        }
+        os_lock_acquire(lock)
+        for n in 0 to LENS_HISTORY_STEPS {
+            texts[slot * LENS_HISTORY_STEPS + n] = out[n]
+        }
+        codes[slot] = status
+        done[slot] = 1
+        os_lock_release(lock)
+    }
+    return true
+}
+
+fn lens_history_log_steps(skip: i32) [str] {
+    let steps = [str](1)
+    steps[0] = "log\n--no-color\n-n\n" + itos(LENS_HISTORY_PAGE) + "\n--skip=" + itos(skip) + "\n--date=format:%Y-%m-%d %H:%M\n--format=%H%x1f%h%x1f%an%x1f%ad%x1f%s\n--\n."
+    return steps
+}
+
+// The details, the line counts and the change letters of one commit, paths
+// relative to the opened folder. A merge is compared with its first parent;
+// a rename reads as its old path deleted and its new path added.
+fn lens_history_commit_steps(hash: str) [str] {
+    let steps = [str](3)
+    steps[0] = "show\n-s\n--no-color\n--date=format:%Y-%m-%d %H:%M:%S %z\n--format=%H%n%an <%ae>%n%ad%n%cn <%ce>%n%cd%n%P%n%B\n" + hash
+    steps[1] = "-c\ncore.quotePath=false\nshow\n--no-color\n--format=\n--numstat\n--no-renames\n--relative\n--diff-merges=first-parent\n" + hash
+    steps[2] = "-c\ncore.quotePath=false\nshow\n--no-color\n--format=\n--name-status\n--no-renames\n--relative\n--diff-merges=first-parent\n" + hash
+    return steps
+}
+
+fn lens_history_diff_steps(hash: str, path: str) [str] {
+    let steps = [str](1)
+    steps[0] = "--literal-pathspecs\n-c\ncore.quotePath=false\nshow\n--no-color\n--no-ext-diff\n--format=\n--no-renames\n--relative\n--diff-merges=first-parent\n-U3\n" + hash + "\n--\n" + path
+    return steps
+}
+
+// Field `n` of a line split by byte 31 (Git's %x1f).
+fn lens_history_field(line: str, n: i32) str {
+    let field: i32 = 0
+    let start: i32 = 0
+    for i in 0 to line.len + 1 {
+        if i == line.len || ((line[i] as i32) & 255) == 31 {
+            if field == n {
+                return substr(line, start, i - start)
+            }
+            field = field + 1
+            start = i + 1
+        }
+    }
+    return ""
+}
+
+fn lens_history_fields(line: str) i32 {
+    let count: i32 = 1
+    for i in 0 to line.len {
+        if ((line[i] as i32) & 255) == 31 {
+            count = count + 1
+        }
+    }
+    return count
+}
+
+// Adopt one page of `git log` read at `skip`. The first page replaces the
+// list and keeps the selected commit when it is still there; later pages
+// append. Returns the commits the page held.
+fn lens_history_log_apply(text: str, skip: i32) i32 {
+    let keep = ""
+    if skip == 0 {
+        if g_lens_history_selected >= 0 && g_lens_history_selected < g_lens_history_count {
+            keep = g_lens_history_hash[g_lens_history_selected]
+        }
+        for i in 0 to g_lens_history_count {
+            g_lens_history_hash[i] = ""
+            g_lens_history_short[i] = ""
+            g_lens_history_author[i] = ""
+            g_lens_history_date[i] = ""
+            g_lens_history_subject[i] = ""
+        }
+        g_lens_history_count = 0
+        g_lens_history_selected = -1
+    } else if skip != g_lens_history_count {
+        return 0
+    }
+    let page: i32 = 0
+    let start: i32 = 0
+    for i in 0 to text.len + 1 {
+        if i == text.len || ((text[i] as i32) & 255) == 10 {
+            let line = substr(text, start, i - start)
+            start = i + 1
+            if lens_history_fields(line) >= 5 && g_lens_history_count < LENS_HISTORY_COMMITS {
+                let n = g_lens_history_count
+                g_lens_history_hash[n] = lens_history_field(line, 0)
+                g_lens_history_short[n] = lens_history_field(line, 1)
+                g_lens_history_author[n] = lens_history_field(line, 2)
+                g_lens_history_date[n] = lens_history_field(line, 3)
+                g_lens_history_subject[n] = lens_history_field(line, 4)
+                if keep != "" && g_lens_history_hash[n] == keep {
+                    g_lens_history_selected = n
+                }
+                g_lens_history_count = n + 1
+                page = page + 1
+            }
+        }
+    }
+    g_lens_history_more = page >= LENS_HISTORY_PAGE && g_lens_history_count < LENS_HISTORY_COMMITS
+    return page
+}
+
+fn lens_history_clear_files() {
+    for f in 0 to g_lens_history_files {
+        g_lens_history_path[f] = ""
+        g_lens_history_diff[f] = ""
+        g_lens_history_state[f] = LENS_HISTORY_DIFF_NONE
+        g_lens_history_rows[f] = 0
+    }
+    g_lens_history_files = 0
+    g_lens_history_row_count = 0
+    g_lens_history_file_selected = -1
+    g_lens_history_diff_wanted = -1
+    g_lens_history_copy_pending = -1
+    g_lens_history_added = 0
+    g_lens_history_deleted = 0
+}
+
+fn lens_history_clear_detail() {
+    lens_history_clear_files()
+    g_lens_history_detail_hash = ""
+    g_lens_history_detail_ready = false
+    g_lens_history_detail_error = ""
+    g_lens_history_full_hash = ""
+    g_lens_history_author_line = ""
+    g_lens_history_date_line = ""
+    g_lens_history_committer_line = ""
+    g_lens_history_parents = ""
+    g_lens_history_message = ""
+}
+
+// A non-negative decimal at the start of `text`; -1 when there is none (a
+// binary file's numstat count is "-").
+fn lens_history_number(text: str) i32 {
+    let n: i32 = 0
+    let digits: i32 = 0
+    for i in 0 to text.len {
+        let c = (text[i] as i32) & 255
+        if c < 48 || c > 57 {
+            break
+        }
+        n = n * 10 + (c - 48)
+        digits = digits + 1
+    }
+    if digits == 0 {
+        return -1
+    }
+    return n
+}
+
+// The byte offset of the `n`th tab in `line`, or -1.
+fn lens_history_tab(line: str, n: i32) i32 {
+    let seen: i32 = 0
+    for i in 0 to line.len {
+        if ((line[i] as i32) & 255) == 9 {
+            if seen == n {
+                return i
+            }
+            seen = seen + 1
+        }
+    }
+    return -1
+}
+
+// `show -s` lines: hash, author, date, committer, commit date, parents, then
+// the message.
+fn lens_history_header_apply(text: str) {
+    let line: i32 = 0
+    let start: i32 = 0
+    let i: i32 = 0
+    loop i < text.len && line < 6 {
+        if ((text[i] as i32) & 255) == 10 {
+            let value = substr(text, start, i - start)
+            if line == 0 { g_lens_history_full_hash = value }
+            if line == 1 { g_lens_history_author_line = value }
+            if line == 2 { g_lens_history_date_line = value }
+            if line == 3 { g_lens_history_committer_line = value }
+            // Line 4, the commit date, is not shown.
+            if line == 5 { g_lens_history_parents = value }
+            line = line + 1
+            start = i + 1
+        }
+        i = i + 1
+    }
+    let end = text.len
+    loop end > start {
+        let c = (text[end - 1] as i32) & 255
+        if c != 10 && c != 13 && c != 32 {
+            break
+        }
+        end = end - 1
+    }
+    g_lens_history_message = substr(text, start, end - start)
+}
+
+// Adopt a commit's numstat and name-status listings: one leaf per changed
+// file, weighted by its changed lines.
+fn lens_history_files_apply(numstat: str, names: str) {
+    lens_history_clear_files()
+    let kinds = [str: i32](8192)
+    let start: i32 = 0
+    for i in 0 to names.len + 1 {
+        if i == names.len || ((names[i] as i32) & 255) == 10 {
+            let line = substr(names, start, i - start)
+            start = i + 1
+            let tab = lens_history_tab(line, 0)
+            if tab > 0 {
+                kinds[substr(line, tab + 1, line.len - tab - 1)] = lens_git_kind((line[0] as i32) & 255)
+            }
+        }
+    }
+    start = 0
+    for i in 0 to numstat.len + 1 {
+        if i == numstat.len || ((numstat[i] as i32) & 255) == 10 {
+            let line = substr(numstat, start, i - start)
+            start = i + 1
+            let t0 = lens_history_tab(line, 0)
+            let t1 = lens_history_tab(line, 1)
+            if t0 > 0 && t1 > t0 && g_lens_history_files < LENS_HISTORY_FILES {
+                let f = g_lens_history_files
+                let path = substr(line, t1 + 1, line.len - t1 - 1)
+                let adds = lens_history_number(substr(line, 0, t0))
+                let dels = lens_history_number(substr(line, t0 + 1, t1 - t0 - 1))
+                g_lens_history_path[f] = path
+                g_lens_history_binary[f] = 0
+                if adds < 0 || dels < 0 {
+                    g_lens_history_binary[f] = 1
+                    adds = 0
+                    dels = 0
+                }
+                g_lens_history_add[f] = adds
+                g_lens_history_del[f] = dels
+                g_lens_history_kind[f] = LENS_GIT_MODIFIED
+                if has(kinds, path) {
+                    g_lens_history_kind[f] = kinds[path]
+                }
+                g_lens_history_state[f] = LENS_HISTORY_DIFF_NONE
+                g_lens_history_diff[f] = ""
+                g_lens_history_rows[f] = 0
+                g_lens_history_added = g_lens_history_added + adds
+                g_lens_history_deleted = g_lens_history_deleted + dels
+                g_lens_history_files = f + 1
+            }
+        }
+    }
+    lens_history_layout()
+}
+
+// Rows a file is expected to show before its diff arrives: its changed lines
+// plus room for hunk headers and context.
+fn lens_history_estimate(f: i32) i32 {
+    return g_lens_history_add[f] + g_lens_history_del[f] + 8
+}
+
+// Binary weighted partitions over Git's path order, so files of one folder
+// stay together, like the code map.
+fn lens_history_partition(first: i32, end: i32, x: f64, y: f64, w: f64, h: f64) {
+    if end <= first {
+        return
+    }
+    if end == first + 1 {
+        g_lens_history_x[first] = x
+        g_lens_history_y[first] = y
+        g_lens_history_w[first] = w
+        g_lens_history_h[first] = h
+        return
+    }
+    let total: f64 = 0.0
+    for j in first to end {
+        total = total + g_lens_history_weight[j]
+    }
+    let split = first + 1
+    let left = g_lens_history_weight[first]
+    loop split < end - 1 && left < total * 0.5 {
+        left = left + g_lens_history_weight[split]
+        split = split + 1
+    }
+    let ratio = left / total
+    if w >= h {
+        lens_history_partition(first, split, x, y, w * ratio, h)
+        lens_history_partition(split, end, x + w * ratio, y, w * (1.0 - ratio), h)
+    } else {
+        lens_history_partition(first, split, x, y, w, h * ratio)
+        lens_history_partition(split, end, x, y + h * ratio, w, h * (1.0 - ratio))
+    }
+}
+
+// The commit's files tile the same 1200 x 900 map the code map uses. One base
+// row height gives each expected row the same area; every leaf then fits its
+// own rows into newspaper columns.
+fn lens_history_layout() {
+    let rows: f64 = 0.0
+    for f in 0 to g_lens_history_files {
+        g_lens_history_weight[f] = lens_history_estimate(f) as f64
+        rows = rows + g_lens_history_weight[f]
+    }
+    let column = LENS_HISTORY_COLUMN_CHARS * LENS_HISTORY_CHAR + 2.0
+    g_lens_history_row_world = sqrt(1080000.0 / clamp(rows * column, 1.0, 1000000000000.0))
+    lens_history_partition(0, g_lens_history_files, -600.0, -450.0, 1200.0, 900.0)
+    for f in 0 to g_lens_history_files {
+        lens_history_fit_rows(f, lens_history_estimate(f))
+    }
+}
+
+// The largest row height (map units) at which `rows` rows plus the path row
+// fit leaf `f` in newspaper columns, at most three times the base height.
+fn lens_history_fit_rows(f: i32, rows: i32) {
+    let base = g_lens_history_row_world
+    let column = base * (LENS_HISTORY_COLUMN_CHARS * LENS_HISTORY_CHAR + 2.0)
+    let width = clamp(g_lens_history_w[f] - base * 0.5, base * 0.01, 1000000000.0)
+    let height = clamp(g_lens_history_h[f], base * 0.01, 1000000000.0)
+    let count = clamp_i(rows, 1, 100000000)
+    let best: f64 = 0.0
+    let best_columns: i32 = 1
+    for c in 1 to LENS_HISTORY_MAX_COLUMNS + 1 {
+        let per = (count + c - 1) / c
+        let fit_w = width / ((c as f64) * column)
+        let fit_h = height / (((per as f64) + 1.5) * base)
+        let fit = fit_w
+        if fit_h < fit {
+            fit = fit_h
+        }
+        if fit > best {
+            best = fit
+            best_columns = c
+        }
+        if per <= 1 {
+            break
+        }
+    }
+    g_lens_history_fit[f] = base * clamp(best, 0.0001, 3.0)
+    g_lens_history_columns[f] = best_columns
+    g_lens_history_per_column[f] = (count + best_columns - 1) / best_columns
+}
+
+fn lens_history_row_add(start: i32, len: i32, kind: i32) bool {
+    if g_lens_history_row_count >= LENS_HISTORY_ROWS {
+        return false
+    }
+    let n = g_lens_history_row_count
+    g_lens_history_row_start[n] = start
+    g_lens_history_row_len[n] = len
+    g_lens_history_row_kind[n] = kind
+    g_lens_history_row_count = n + 1
+    return true
+}
+
+// The kind of a diff body line from its first byte.
+fn lens_history_line_kind(text: str, start: i32, len: i32) i32 {
+    if len <= 0 {
+        return LENS_HISTORY_CONTEXT
+    }
+    let c = (text[start] as i32) & 255
+    if c == 43 { return LENS_HISTORY_ADD }
+    if c == 45 { return LENS_HISTORY_DEL }
+    if c == 64 && len >= 2 && ((text[start + 1] as i32) & 255) == 64 { return LENS_HISTORY_HUNK }
+    if c == 32 { return LENS_HISTORY_CONTEXT }
+    return LENS_HISTORY_META
+}
+
+// Rows of a file's diff in the shared table: the hunks, without the header
+// that names the blobs. A binary or mode-only change keeps Git's one line.
+fn lens_history_diff_apply(f: i32, text: str) {
+    g_lens_history_diff[f] = text
+    g_lens_history_row0[f] = g_lens_history_row_count
+    let rows: i32 = 0
+    let body = false
+    let start: i32 = 0
+    let truncated = text.len >= LENS_HISTORY_OUTPUT_MAX
+    for i in 0 to text.len + 1 {
+        if i == text.len || ((text[i] as i32) & 255) == 10 {
+            let len = i - start
+            if len > 0 && ((text[start + len - 1] as i32) & 255) == 13 {
+                len = len - 1
+            }
+            if i < text.len || len > 0 {
+                let kind = lens_history_line_kind(text, start, len)
+                if kind == LENS_HISTORY_HUNK {
+                    body = true
+                }
+                let header = len >= 11 && substr(text, start, 11) == "diff --git "
+                if header {
+                    body = false
+                }
+                let note = len >= 12 && (substr(text, start, 12) == "Binary files" || substr(text, start, 12) == "new file mod" || substr(text, start, 12) == "deleted file" || substr(text, start, 12) == "old mode 100" || substr(text, start, 12) == "new mode 100")
+                if body || note {
+                    if lens_history_row_add(start, len, kind) {
+                        rows = rows + 1
+                    }
+                }
+            }
+            start = i + 1
+        }
+    }
+    g_lens_history_rows[f] = rows
+    if truncated || rows == 0 {
+        // A row with no bytes of the diff: drawn from its kind alone.
+        if lens_history_row_add(-1, 0, LENS_HISTORY_META) {
+            g_lens_history_rows[f] = rows + 1
+        }
+    }
+    g_lens_history_state[f] = LENS_HISTORY_DIFF_READY
+    lens_history_fit_rows(f, g_lens_history_rows[f])
+}
+
+// Text of row `n` of the shared table, tabs as four spaces.
+fn lens_history_row_text(f: i32, n: i32) str {
+    let start = g_lens_history_row_start[n]
+    if start < 0 {
+        if g_lens_history_rows[f] <= 1 {
+            return "(no text changes)"
+        }
+        return "... diff longer than 64 KiB: earlier lines left out"
+    }
+    let line = substr(g_lens_history_diff[f], start, g_lens_history_row_len[n])
+    let tabs = false
+    for i in 0 to line.len {
+        if ((line[i] as i32) & 255) == 9 {
+            tabs = true
+            break
+        }
+    }
+    if tabs == false {
+        return line
+    }
+    let out = ""
+    let from: i32 = 0
+    for i in 0 to line.len {
+        if ((line[i] as i32) & 255) == 9 {
+            out = out + substr(line, from, i - from) + "    "
+            from = i + 1
+        }
+    }
+    return out + substr(line, from, line.len - from)
+}
+
+// Select commit `i` of the list: its details and files load on a worker.
+fn lens_history_select(i: i32) {
+    if i < 0 || i >= g_lens_history_count {
+        return
+    }
+    g_lens_history_selected = i
+    lens_history_reveal(i)
+    if g_lens_history_hash[i] == g_lens_history_detail_hash {
+        return
+    }
+    lens_history_clear_detail()
+    g_lens_history_detail_hash = g_lens_history_hash[i]
+    lens_history_request()
+}
+
+// Scroll the list so row `i` shows.
+fn lens_history_reveal(i: i32) {
+    let view = lens_history_list_rows_h()
+    let y = (i as f64) * LENS_HISTORY_ROW_H
+    if y < g_lens_history_scroll {
+        g_lens_history_scroll = y
+    }
+    if y + LENS_HISTORY_ROW_H > g_lens_history_scroll + view {
+        g_lens_history_scroll = y + LENS_HISTORY_ROW_H - view
+    }
+    lens_history_clamp_scroll()
+}
+
+fn lens_history_clamp_scroll() {
+    let content = (g_lens_history_count as f64) * LENS_HISTORY_ROW_H
+    g_lens_history_scroll = clamp(g_lens_history_scroll, 0.0, clamp(content - lens_history_list_rows_h(), 0.0, 1000000000.0))
+}
+
+// Start whatever the view needs and no worker is reading yet: the list of a
+// newly opened or changed folder, the next page near the end of the list,
+// the selected commit's details, and a wanted diff.
+fn lens_history_request() {
+    if g_workspace_root == "" {
+        return
+    }
+    if g_lens_history_root != g_workspace_root || g_lens_history_stale {
+        if g_lens_history_busy[LENS_HISTORY_JOB_LOG] == 0 {
+            if g_lens_history_root != g_workspace_root {
+                g_lens_history_root = g_workspace_root
+                g_lens_history_count = 0
+                g_lens_history_selected = -1
+                g_lens_history_scroll = 0.0
+                g_lens_history_error = ""
+                lens_history_clear_detail()
+            }
+            g_lens_history_stale = false
+            lens_history_run(LENS_HISTORY_JOB_LOG, lens_history_log_steps(0), "0")
+        }
+    } else if g_lens_history_more && g_lens_history_busy[LENS_HISTORY_JOB_LOG] == 0 {
+        let shown_end = (g_lens_history_scroll + lens_history_list_rows_h()) / LENS_HISTORY_ROW_H
+        if shown_end + 30.0 >= g_lens_history_count as f64 {
+            lens_history_run(LENS_HISTORY_JOB_LOG, lens_history_log_steps(g_lens_history_count), itos(g_lens_history_count))
+        }
+    }
+    if g_lens_history_detail_hash != "" && g_lens_history_detail_ready == false && g_lens_history_busy[LENS_HISTORY_JOB_COMMIT] == 0 {
+        lens_history_run(LENS_HISTORY_JOB_COMMIT, lens_history_commit_steps(g_lens_history_detail_hash), g_lens_history_detail_hash)
+    }
+    let f = g_lens_history_diff_wanted
+    if f >= 0 && f < g_lens_history_files && g_lens_history_busy[LENS_HISTORY_JOB_DIFF] == 0 {
+        g_lens_history_diff_wanted = -1
+        if g_lens_history_state[f] == LENS_HISTORY_DIFF_NONE {
+            g_lens_history_state[f] = LENS_HISTORY_DIFF_LOADING
+            lens_history_run(LENS_HISTORY_JOB_DIFF, lens_history_diff_steps(g_lens_history_detail_hash, g_lens_history_path[f]), g_lens_history_detail_hash + "\n" + g_lens_history_path[f])
+        }
+    }
+}
+
+// Ask for file `f`'s diff; the next idle diff worker reads it.
+fn lens_history_want(f: i32) {
+    if f < 0 || f >= g_lens_history_files || g_lens_history_state[f] != LENS_HISTORY_DIFF_NONE {
+        return
+    }
+    if g_lens_history_diff_wanted < 0 || f == g_lens_history_file_selected {
+        g_lens_history_diff_wanted = f
+    }
+}
+
+// Adopt finished worker results that still belong to the shown folder and
+// commit.
+fn lens_history_poll() {
+    if g_lens_history_lock_ready == false {
+        return
+    }
+    for slot in 0 to LENS_HISTORY_JOBS {
+        if g_lens_history_busy[slot] != 0 && os_lock_try_acquire(g_lens_history_lock) {
+            let ready = g_lens_history_done[slot] != 0
+            let status = g_lens_history_status[slot]
+            let a = g_lens_history_texts[slot * LENS_HISTORY_STEPS]
+            let b = g_lens_history_texts[slot * LENS_HISTORY_STEPS + 1]
+            let c = g_lens_history_texts[slot * LENS_HISTORY_STEPS + 2]
+            if ready {
+                for n in 0 to LENS_HISTORY_STEPS {
+                    g_lens_history_texts[slot * LENS_HISTORY_STEPS + n] = ""
+                }
+            }
+            os_lock_release(g_lens_history_lock)
+            if ready {
+                g_lens_history_busy[slot] = 0
+                if g_lens_history_job_root[slot] == g_workspace_root {
+                    lens_history_finish(slot, g_lens_history_job_tag[slot], status, a, b, c)
+                }
+            }
+        }
+    }
+}
+
+fn lens_history_finish(slot: i32, tag: str, status: i32, a: str, b: str, c: str) {
+    if slot == LENS_HISTORY_JOB_LOG {
+        if g_lens_history_root != g_workspace_root {
+            return
+        }
+        let skip = lens_history_number(tag)
+        if status != 0 {
+            if skip == 0 {
+                lens_history_log_apply("", 0)
+                lens_history_clear_detail()
+                g_lens_history_error = lens_git_error(a)
+                if g_lens_history_error == "" {
+                    g_lens_history_error = "Git history is unavailable"
+                }
+            }
+            g_lens_history_more = false
+            return
+        }
+        g_lens_history_error = ""
+        lens_history_log_apply(a, skip)
+        lens_history_clamp_scroll()
+        if g_lens_history_selected < 0 && g_lens_history_count > 0 {
+            lens_history_select(0)
+        }
+        return
+    }
+    if slot == LENS_HISTORY_JOB_COMMIT {
+        if tag != g_lens_history_detail_hash {
+            return
+        }
+        g_lens_history_detail_ready = true
+        if status != 0 {
+            g_lens_history_detail_error = lens_git_error(a + b + c)
+            if g_lens_history_detail_error == "" {
+                g_lens_history_detail_error = "Git could not read this commit"
+            }
+            return
+        }
+        lens_history_header_apply(a)
+        lens_history_files_apply(b, c)
+        lens_history_frame()
+        return
+    }
+    let cut = lens_line_end(tag, 0)
+    let hash = substr(tag, 0, cut)
+    let path = substr(tag, cut + 1, tag.len - cut - 1)
+    if hash != g_lens_history_detail_hash {
+        return
+    }
+    for f in 0 to g_lens_history_files {
+        if g_lens_history_path[f] == path && g_lens_history_state[f] == LENS_HISTORY_DIFF_LOADING {
+            if status != 0 {
+                g_lens_history_state[f] = LENS_HISTORY_DIFF_FAILED
+                g_lens_message = "diff failed: " + lens_git_error(a)
+            } else {
+                lens_history_diff_apply(f, a)
+            }
+            if g_lens_history_copy_pending == f {
+                g_lens_history_copy_pending = -1
+                if status == 0 {
+                    lens_history_copy_text(g_lens_history_diff[f], "diff of " + path)
+                }
+            }
+            return
+        }
+    }
+}
+
+// Each frame in history mode: adopt finished reads, then start the next.
+fn lens_history_tick() {
+    lens_history_poll()
+    lens_history_request()
+}
+
+// The free part of the window between the two panels.
+fn lens_history_free_x0() f64 { return LENS_HISTORY_MARGIN * 2.0 + lens_history_panel_w() }
+
+fn lens_history_free_x1() f64 { return g_lens_view_w - LENS_HISTORY_MARGIN * 2.0 - LENS_HISTORY_INFO_W }
+
+// Fly the camera to the whole commit, centred in the room the panels leave.
+fn lens_history_frame() {
+    let x0 = lens_history_free_x0()
+    let x1 = lens_history_free_x1()
+    if x1 - x0 < 200.0 {
+        x0 = 0.0
+        x1 = g_lens_view_w
+    }
+    let room_w = x1 - x0
+    let room_h = clamp(g_lens_body_h - LENS_TOP_BAR_H - STATUS_BAR_H - 32.0, 100.0, 100000.0)
+    let distance = clamp(800.0 * 1200.0 / room_w, 800.0 * 900.0 / room_h, 1000000.0) * 1.04
+    distance = clamp(distance, 1.0, 6000.0)
+    let shift_px = (x0 + x1) * 0.5 - g_lens_view_w * 0.5
+    let shift_py = (LENS_TOP_BAR_H - STATUS_BAR_H) * 0.5
+    g_lens_target_x = -shift_px * distance / 800.0
+    g_lens_target_y = -shift_py * distance / 800.0
+    g_lens_target_distance = distance
+}
+
+// Fly to file `f`: the whole leaf when its rows stay readable, otherwise its
+// first rows at a readable size.
+fn lens_history_focus(f: i32) {
+    if f < 0 || f >= g_lens_history_files {
+        return
+    }
+    let room_w = clamp(lens_history_free_x1() - lens_history_free_x0(), 200.0, 100000.0)
+    let room_h = clamp(g_lens_body_h - LENS_TOP_BAR_H - STATUS_BAR_H - 32.0, 100.0, 100000.0)
+    let whole = clamp(800.0 * g_lens_history_w[f] / room_w, 800.0 * g_lens_history_h[f] / room_h, 1000000.0) * 1.08
+    let read = 800.0 * g_lens_history_fit[f] / 14.0
+    let distance = clamp(whole, 0.01, 6000.0)
+    let shift_px = (lens_history_free_x0() + lens_history_free_x1()) * 0.5 - g_lens_view_w * 0.5
+    if lens_history_free_x1() - lens_history_free_x0() < 200.0 {
+        shift_px = 0.0
+    }
+    let cx = g_lens_history_x[f] + g_lens_history_w[f] * 0.5
+    let cy = g_lens_history_y[f] + g_lens_history_h[f] * 0.5
+    if read < whole {
+        distance = clamp(read, 0.01, 6000.0)
+        let view = distance / 800.0
+        cx = g_lens_history_x[f] + clamp(g_lens_history_w[f] * 0.5, 0.0, room_w * 0.5 * view)
+        cy = g_lens_history_y[f] + clamp(g_lens_history_h[f] * 0.5, 0.0, room_h * 0.5 * view)
+    }
+    g_lens_target_x = cx - shift_px * distance / 800.0
+    g_lens_target_y = cy
+    g_lens_target_distance = distance
+}
+
+fn lens_history_select_file(f: i32, focus: bool) {
+    if f < 0 || f >= g_lens_history_files {
+        return
+    }
+    g_lens_history_file_selected = f
+    lens_history_want(f)
+    if focus {
+        lens_history_focus(f)
+    }
+}
+
+// Closest camera distance in history mode: rows of the leaf under the
+// pointer (or the smallest rows) at LENS_HISTORY_NEAREST_PX.
+fn lens_history_nearest(mx: f64, my: f64, w: f64, top: f64, body_h: f64) f64 {
+    let fit: f64 = 1000000.0
+    for f in 0 to g_lens_history_files {
+        let leaf = lens_history_project(f, w, top, body_h)
+        if mx >= leaf.x && mx < leaf.x + leaf.w && my >= leaf.y && my < leaf.y + leaf.h {
+            fit = g_lens_history_fit[f]
+            break
+        }
+        if g_lens_history_fit[f] < fit {
+            fit = g_lens_history_fit[f]
+        }
+    }
+    if g_lens_history_files == 0 {
+        return 6000.0
+    }
+    return clamp(800.0 * fit / LENS_HISTORY_NEAREST_PX, 0.001, 6000.0)
+}
+
+fn lens_history_project(f: i32, w: f64, top: f64, body_h: f64) lens_leaf_rect {
+    let scale: f64 = 800.0 / clamp(g_lens_distance, 0.001, LENS_DISTANCE_LIMIT)
+    let px: f64 = w * 0.5 + (g_lens_history_x[f] - g_lens_center_x) * scale
+    let py: f64 = top + body_h * 0.5 + (g_lens_history_y[f] - g_lens_center_y) * scale
+    return lens_leaf_rect(px, py, g_lens_history_w[f] * scale, g_lens_history_h[f] * scale, g_lens_distance, scale, scale)
+}
+
+fn col_history_kind(kind: i32, alpha: u32) u32 {
+    let color = col_muted()
+    if kind == LENS_HISTORY_ADD {
+        color = col_git_kind(LENS_GIT_ADDED)
+    } else if kind == LENS_HISTORY_DEL {
+        color = col_git_kind(LENS_GIT_DELETED)
+    } else if kind == LENS_HISTORY_HUNK {
+        color = col_blue()
+    }
+    return (color & 0x00ffffffu) | (alpha << 24)
+}
+
+fn lens_history_counts(adds: i32, dels: i32) str {
+    return "+" + itos(adds) + " -" + itos(dels)
+}
+
+// The commit's files on the map, drawn inside the plane camera. A leaf shows
+// its rows as glyphs up close, as bars further out, and as a green/red split
+// of its line counts before its diff has loaded.
+fn lens_history_draw_map(r: ref ui_renderer, v: ref view, w: f64, top: f64, body_h: f64, over_map: bool, moving: bool) {
+    let vx0 = g_lens_view_x0
+    let vy0 = g_lens_view_y0
+    let vx1 = g_lens_view_x1
+    let vy1 = g_lens_view_y1
+    let hovered_file: i32 = -1
+    let best_want: i32 = -1
+    let best_px: f64 = 0.0
+    for f in 0 to g_lens_history_files {
+        let leaf = lens_history_project(f, w, top, body_h)
+        if leaf.w <= 1.0 || leaf.h <= 1.0 || leaf.x >= vx1 || leaf.x + leaf.w <= vx0 || leaf.y >= vy1 || leaf.y + leaf.h <= vy0 {
+            continue
+        }
+        let content = lens_leaf_content(leaf, vx0, vy0, vx1, vy1)
+        let on_screen = leaf.x >= vx0 && leaf.y >= vy0 && leaf.x + leaf.w <= vx1 && leaf.y + leaf.h <= vy1
+        let selected = f == g_lens_history_file_selected
+        let border = col_muted()
+        if selected {
+            border = col_accent()
+        }
+        if on_screen && leaf.w >= 12.0 && leaf.h >= 12.0 {
+            let stroke: f64 = 1.0
+            if selected {
+                stroke = 2.0
+            }
+            ui_fill_round_rect(r, leaf.x + 1.0, leaf.y + 1.0, leaf.w - 2.0, leaf.h - 2.0, LENS_CORNER_RADIUS, col_editor_panel_hi(), 0.0)
+            ui_stroke_round_rect(r, leaf.x + 1.0, leaf.y + 1.0, leaf.w - 2.0, leaf.h - 2.0, LENS_CORNER_RADIUS, stroke, border, 0.0)
+        } else if content.w > 1.0 && content.h > 1.0 {
+            ui_fill_rect(r, content.x, content.y, content.w, content.h, col_editor_panel_hi(), 0.0)
+        }
+        let row_px = g_lens_history_fit[f] * leaf.scale * lens_depth_gain(clamp(leaf.y + leaf.h * 0.5, vy0, vy1))
+        let state = g_lens_history_state[f]
+        ui_push_clip(r, content.x, content.y, content.w, content.h)
+        if state == LENS_HISTORY_DIFF_READY {
+            lens_history_draw_rows(r, f, leaf, content)
+        } else {
+            lens_history_draw_split(r, f, leaf, content, state == LENS_HISTORY_DIFF_LOADING)
+        }
+        let header = row_px >= LENS_HISTORY_GLYPH_PX
+        if header {
+            lens_history_draw_header(r, f, leaf, content)
+        }
+        ui_pop_clip(r)
+        if header == false {
+            lens_draw_far_name(r, content, lens_history_name(g_lens_history_path[f]), selected)
+        }
+        if state == LENS_HISTORY_DIFF_NONE && row_px >= LENS_HISTORY_LOAD_PX && moving == false && content.w * content.h > best_px {
+            best_px = content.w * content.h
+            best_want = f
+        }
+        if over_map && hit(v, leaf.x, leaf.y, leaf.w, leaf.h) {
+            hovered_file = f
+        }
+    }
+    if best_want >= 0 {
+        lens_history_want(best_want)
+    }
+    // A right click selects and focuses a file; a left click without a drag
+    // selects it, and on its path row copies the path.
+    if v.mouse_right_pressed && hovered_file >= 0 {
+        lens_history_select_file(hovered_file, true)
+        v.mouse_right_pressed = false
+    }
+    if v.mouse_pressed && over_map {
+        g_lens_history_press = hovered_file
+        g_lens_history_press_x = g_mouse_x
+        g_lens_history_press_y = g_mouse_y
+    }
+    if v.mouse_released && g_lens_history_press >= 0 && hovered_file == g_lens_history_press {
+        let dx = g_mouse_x - g_lens_history_press_x
+        let dy = g_mouse_y - g_lens_history_press_y
+        if dx * dx + dy * dy <= 16.0 {
+            let f = hovered_file
+            let leaf = lens_history_project(f, w, top, body_h)
+            let row_px = g_lens_history_fit[f] * leaf.scale
+            if row_px >= LENS_HISTORY_GLYPH_PX && g_mouse_y < leaf.y + row_px * 1.25 {
+                lens_history_copy_text(g_lens_history_path[f], g_lens_history_path[f])
+            }
+            lens_history_select_file(f, false)
+        }
+    }
+    if v.mouse_released || !v.mouse_down {
+        g_lens_history_press = -1
+    }
+}
+
+fn lens_history_name(path: str) str {
+    let cut = path.len
+    loop cut > 0 && ((path[cut - 1] as i32) & 255) != 47 {
+        cut = cut - 1
+    }
+    return substr(path, cut, path.len - cut)
+}
+
+// The path row: the path, the change letter and the line counts, in the
+// leaf's row height.
+fn lens_history_draw_header(r: ref ui_renderer, f: i32, leaf: lens_leaf_rect, content: lens_leaf_rect) {
+    let row_px = g_lens_history_fit[f] * leaf.scale
+    let font_px = row_px * 0.72
+    let x = leaf.x + row_px * 0.4
+    let ty = ui_text_v_center_y(r, leaf.y + 1.0, row_px * 1.25, font_px, CODE_FONT())
+    let color = col_text()
+    if f == g_lens_history_file_selected {
+        color = col_accent()
+    }
+    let letter = lens_git_letter(g_lens_history_kind[f])
+    ui_draw_text(r, x, ty, letter, font_px, col_git_kind(g_lens_history_kind[f]), CODE_FONT())
+    let px = x + ui_mono_char_width(r, font_px, CODE_FONT()) * 2.0
+    let path = g_lens_history_path[f]
+    ui_draw_text(r, px, ty, path, font_px, color, CODE_FONT())
+    ui_draw_text(r, px + font_px * 0.06, ty, path, font_px, color, CODE_FONT())
+    let counts = lens_history_counts(g_lens_history_add[f], g_lens_history_del[f])
+    if g_lens_history_binary[f] != 0 {
+        counts = "binary"
+    }
+    let cx = px + ui_text_width(r, path, font_px, CODE_FONT()) + font_px * 1.5
+    ui_draw_text(r, cx, ty, counts, font_px, col_muted(), CODE_FONT())
+}
+
+// Before the diff is read: the body split between added and deleted lines.
+fn lens_history_draw_split(r: ref ui_renderer, f: i32, leaf: lens_leaf_rect, content: lens_leaf_rect, loading: bool) {
+    let row_px = g_lens_history_fit[f] * leaf.scale
+    let top = leaf.y + row_px * 1.25
+    let h = leaf.y + leaf.h - 2.0 - top
+    let total = g_lens_history_add[f] + g_lens_history_del[f]
+    if h <= 1.0 || total <= 0 {
+        return
+    }
+    let inner_w = leaf.w - 4.0
+    let add_w = inner_w * (g_lens_history_add[f] as f64) / (total as f64)
+    ui_fill_rect(r, leaf.x + 2.0, top, add_w, h, col_history_kind(LENS_HISTORY_ADD, 40u), 0.0)
+    ui_fill_rect(r, leaf.x + 2.0 + add_w, top, inner_w - add_w, h, col_history_kind(LENS_HISTORY_DEL, 40u), 0.0)
+    if loading && row_px >= LENS_HISTORY_GLYPH_PX {
+        ui_draw_text(r, leaf.x + row_px * 0.4, top + row_px * 0.2, "loading diff...", row_px * 0.72, col_muted(), CODE_FONT())
+    }
+}
+
+// A loaded diff in newspaper columns. Rows at glyph size show their text over
+// a green or red background; smaller rows are bars as long as their text.
+fn lens_history_draw_rows(r: ref ui_renderer, f: i32, leaf: lens_leaf_rect, content: lens_leaf_rect) {
+    let row_px = g_lens_history_fit[f] * leaf.scale
+    if row_px < LENS_HISTORY_BAR_PX {
+        lens_history_draw_split(r, f, leaf, content, false)
+        return
+    }
+    let glyphs = row_px >= LENS_HISTORY_GLYPH_PX
+    let char_px = row_px * LENS_HISTORY_CHAR
+    let column_px = row_px * (LENS_HISTORY_COLUMN_CHARS * LENS_HISTORY_CHAR + 2.0)
+    let body_y = leaf.y + row_px * 1.25
+    let per = clamp_i(g_lens_history_per_column[f], 1, 100000000)
+    let rows = g_lens_history_rows[f]
+    let row0 = g_lens_history_row0[f]
+    let bottom = content.y + content.h
+    let right = content.x + content.w
+    let font_px = row_px * 0.72
+    if glyphs {
+        char_px = ui_mono_char_width(r, font_px, CODE_FONT())
+    }
+    for c in 0 to g_lens_history_columns[f] {
+        let cx = leaf.x + row_px * 0.4 + (c as f64) * column_px
+        if cx >= right {
+            break
+        }
+        if cx + column_px <= content.x {
+            continue
+        }
+        let first = c * per
+        let last = clamp_i(first + per, 0, rows)
+        let r0 = clamp_i(lens_floor_i((content.y - body_y) / row_px), 0, per)
+        let r1 = clamp_i(lens_ceil_i((bottom - body_y) / row_px) + 1, 0, per)
+        let col_w = column_px - row_px * 1.2
+        if glyphs {
+            ui_push_clip(r, cx, content.y, clamp(col_w, 0.0, right - cx), content.h)
+        }
+        for local in r0 to r1 {
+            let n = first + local
+            if n >= last {
+                break
+            }
+            let row = row0 + n
+            let kind = g_lens_history_row_kind[row]
+            let y = body_y + (local as f64) * row_px
+            if glyphs {
+                if kind == LENS_HISTORY_ADD || kind == LENS_HISTORY_DEL {
+                    ui_fill_rect(r, cx - row_px * 0.2, y, col_w + row_px * 0.2, row_px, col_history_kind(kind, 48u), 0.0)
+                }
+                let ink = col_text()
+                if kind == LENS_HISTORY_HUNK || kind == LENS_HISTORY_META {
+                    ink = col_history_kind(kind, 255u)
+                }
+                let ty = ui_text_v_center_y(r, y, row_px, font_px, CODE_FONT())
+                ui_draw_text(r, cx, ty, lens_history_row_text(f, row), font_px, ink, CODE_FONT())
+            } else {
+                let len = g_lens_history_row_len[row]
+                if g_lens_history_row_start[row] < 0 {
+                    len = 40
+                }
+                let bar_w = clamp((len as f64) * char_px, char_px, col_w)
+                let bar_h = clamp(row_px * 0.7, 0.5, 1000000.0)
+                let alpha: u32 = 150u
+                if kind == LENS_HISTORY_CONTEXT {
+                    alpha = 70u
+                }
+                ui_fill_rect(r, cx, y + (row_px - bar_h) * 0.5, bar_w, bar_h, col_history_kind(kind, alpha), 0.0)
+            }
+        }
+        if glyphs {
+            ui_pop_clip(r)
+        }
+    }
+}
+
+// Below the top bar, beside the map's left edge, ending above the hints.
+fn lens_history_list_y() f64 { return main_menu_h() + LENS_TOP_BAR_H + LENS_HISTORY_MARGIN }
+
+fn lens_history_list_h() f64 {
+    let bottom = g_lens_canvas_h - 28.0 - LENS_ACTIVITY_H - 4.0 - LENS_HINT_LINE_H * (LENS_HINT_COUNT as f64) - LENS_HISTORY_MARGIN
+    return clamp(bottom - lens_history_list_y(), LENS_HISTORY_TITLE_H + LENS_HISTORY_ROW_H * 2.0, 100000.0)
+}
+
+fn lens_history_list_rows_h() f64 {
+    return lens_history_list_h() - LENS_HISTORY_TITLE_H
+}
+
+fn lens_history_rows_y() f64 {
+    return lens_history_list_y() + LENS_HISTORY_TITLE_H
+}
+
+// The list's width: as dragged, leaving the details panel and some map.
+fn lens_history_panel_w() f64 {
+    let room = g_lens_view_w - LENS_HISTORY_INFO_W - LENS_HISTORY_MARGIN * 4.0 - 160.0
+    return clamp(g_lens_history_list_w, LENS_HISTORY_LIST_MIN_W, clamp(room, LENS_HISTORY_LIST_MIN_W, 100000.0))
+}
+
+// Whether the pointer is on the list's right edge.
+fn lens_history_edge_at(mx: f64, my: f64) bool {
+    let y = lens_history_list_y()
+    let edge = LENS_HISTORY_MARGIN + lens_history_panel_w()
+    return my >= y && my < y + lens_history_list_h() && mx >= edge - LENS_HISTORY_GRAB && mx <= edge + LENS_HISTORY_GRAB
+}
+
+fn lens_history_info_x(w: f64) f64 { return w - LENS_HISTORY_MARGIN - LENS_HISTORY_INFO_W }
+
+fn lens_history_blocks_pointer(v: ref view, w: f64) bool {
+    if lens_history_active() == false {
+        return false
+    }
+    if g_lens_history_drag || lens_history_edge_at(g_mouse_x, g_mouse_y) {
+        return true
+    }
+    if raw_hit(v, LENS_HISTORY_MARGIN, lens_history_list_y(), lens_history_panel_w(), lens_history_list_h()) {
+        return true
+    }
+    return g_lens_history_info_h > 0.0 && raw_hit(v, lens_history_info_x(w), lens_history_list_y(), LENS_HISTORY_INFO_W, g_lens_history_info_h)
+}
+
+// Panel input, in screen coordinates: the list's right edge drags to resize
+// it, the wheel scrolls the list, a click on a row selects that commit, and
+// the details panel's buttons copy.
+fn lens_history_mouse(v: ref view, w: f64, h: f64) {
+    lens_history_flush_clip(v)
+    if g_lens_history_drag {
+        if v.mouse_down {
+            g_lens_history_list_w = g_lens_history_drag_from + g_mouse_x - g_lens_history_drag_x
+            g_lens_history_list_w = lens_history_panel_w()
+        } else {
+            g_lens_history_drag = false
+        }
+        v.mouse_pressed = false
+        v.mouse_right_pressed = false
+        return
+    }
+    if v.mouse_pressed && lens_history_edge_at(g_mouse_x, g_mouse_y) {
+        g_lens_history_drag = true
+        g_lens_history_drag_x = g_mouse_x
+        g_lens_history_drag_from = lens_history_panel_w()
+        v.mouse_pressed = false
+        return
+    }
+    let x = LENS_HISTORY_MARGIN
+    let y = lens_history_list_y()
+    let rows_y = lens_history_rows_y()
+    if raw_hit(v, x, y, lens_history_panel_w(), lens_history_list_h()) {
+        if v.scroll_y != 0.0 {
+            g_lens_history_scroll = g_lens_history_scroll - v.scroll_y * 24.0
+            lens_history_clamp_scroll()
+            v.scroll_y = 0.0
+        }
+        if v.mouse_pressed {
+            if g_mouse_y >= rows_y {
+                let i = ((g_mouse_y - rows_y + g_lens_history_scroll) / LENS_HISTORY_ROW_H) as i32
+                lens_history_select(i)
+            }
+            v.mouse_pressed = false
+        }
+        v.mouse_right_pressed = false
+        return
+    }
+    let ix = lens_history_info_x(w)
+    if g_lens_history_info_h > 0.0 && raw_hit(v, ix, y, LENS_HISTORY_INFO_W, g_lens_history_info_h) {
+        if v.mouse_pressed {
+            for b in 0 to LENS_HISTORY_BUTTONS {
+                if g_lens_history_button_on[b] != 0 && raw_hit(v, g_lens_history_button_x[b], g_lens_history_button_y[b], g_lens_history_button_w[b], LENS_HISTORY_BUTTON_H) {
+                    lens_history_copy(v, b)
+                }
+            }
+            v.mouse_pressed = false
+        }
+        v.scroll_y = 0.0
+        v.mouse_right_pressed = false
+    }
+}
+
+// The clipboard copy waits for the next frame's view; a diff read on a worker
+// is copied when it arrives.
+let g_lens_history_clip = ""
+let g_lens_history_clip_ready = false
+
+fn lens_history_copy_text(text: str, label: str) {
+    g_lens_history_clip = text
+    g_lens_history_clip_ready = true
+    g_lens_message = "Copied " + label
+}
+
+// Hand a pending copy to the clipboard.
+fn lens_history_flush_clip(v: ref view) {
+    if g_lens_history_clip_ready {
+        view_set_clipboard(v, g_lens_history_clip)
+        g_lens_history_clip_ready = false
+        g_lens_history_clip = ""
+    }
+}
+
+// The whole commit as `git show -s` prints it, for Copy commit.
+fn lens_history_commit_text() str {
+    let text = "commit " + g_lens_history_full_hash + "\n"
+    text = text + "Author: " + g_lens_history_author_line + "\n"
+    text = text + "Date:   " + g_lens_history_date_line + "\n\n"
+    return text + g_lens_history_message + "\n"
+}
+
+fn lens_history_copy(v: ref view, action: i32) {
+    if action == LENS_HISTORY_COPY_HASH {
+        lens_history_copy_text(g_lens_history_full_hash, "commit hash")
+    } else if action == LENS_HISTORY_COPY_MESSAGE {
+        lens_history_copy_text(g_lens_history_message, "commit message")
+    } else if action == LENS_HISTORY_COPY_COMMIT {
+        lens_history_copy_text(lens_history_commit_text(), "commit")
+    } else {
+        let f = g_lens_history_file_selected
+        if f < 0 || f >= g_lens_history_files {
+            return
+        }
+        if action == LENS_HISTORY_COPY_PATH {
+            lens_history_copy_text(g_lens_history_path[f], g_lens_history_path[f])
+        } else if g_lens_history_state[f] == LENS_HISTORY_DIFF_READY {
+            lens_history_copy_text(g_lens_history_diff[f], "diff of " + g_lens_history_path[f])
+        } else {
+            g_lens_history_copy_pending = f
+            lens_history_want(f)
+            g_lens_history_diff_wanted = f
+            g_lens_message = "reading diff of " + g_lens_history_path[f] + "..."
+        }
+    }
+    lens_history_flush_clip(v)
+}
+
+// Keys while history mode shows and nothing else takes them: Up/Down and
+// Page Up/Down walk the commits, Cmd+C copies the selected file's diff, or
+// the commit when no file is selected.
+fn lens_history_keys(v: ref view) bool {
+    if lens_history_active() == false {
+        return false
+    }
+    if cmd_down(v) {
+        if key_edge(v, 67) {
+            if g_lens_history_file_selected >= 0 {
+                lens_history_copy(v, LENS_HISTORY_COPY_DIFF)
+            } else if g_lens_history_full_hash != "" {
+                lens_history_copy(v, LENS_HISTORY_COPY_COMMIT)
+            }
+            return true
+        }
+        return false
+    }
+    let page = clamp_i((lens_history_list_rows_h() / LENS_HISTORY_ROW_H) as i32 - 1, 1, 100)
+    if key_edge(v, 264) {
+        lens_history_select(clamp_i(g_lens_history_selected + 1, 0, g_lens_history_count - 1))
+        return true
+    }
+    if key_edge(v, 265) {
+        lens_history_select(clamp_i(g_lens_history_selected - 1, 0, g_lens_history_count - 1))
+        return true
+    }
+    if key_edge(v, 267) {
+        lens_history_select(clamp_i(g_lens_history_selected + page, 0, g_lens_history_count - 1))
+        return true
+    }
+    if key_edge(v, 266) {
+        lens_history_select(clamp_i(g_lens_history_selected - page, 0, g_lens_history_count - 1))
+        return true
+    }
+    if key_edge(v, 256) && g_lens_history_file_selected >= 0 {
+        g_lens_history_file_selected = -1
+        lens_history_frame()
+        return true
+    }
+    return false
+}
+
+// Enter history mode from `from`, remembering the map camera to return to.
+fn lens_history_enter(from: i32) {
+    g_lens_history_return_mode = from
+    g_lens_history_return_x = g_lens_target_x
+    g_lens_history_return_y = g_lens_target_y
+    g_lens_history_return_distance = g_lens_target_distance
+    lens_history_request()
+    lens_history_frame()
+}
+
+fn lens_history_leave() {
+    g_lens_target_x = g_lens_history_return_x
+    g_lens_target_y = g_lens_history_return_y
+    g_lens_target_distance = g_lens_history_return_distance
+}
+
+// Split `text` into lines no wider than `cols` characters at a UTF-8
+// boundary, at most `max` of them; the last is cut short with "...".
+fn lens_history_wrap(text: str, cols: i32, max: i32) [str] {
+    let lines = [str](max)
+    let count: i32 = 0
+    let start: i32 = 0
+    let width = clamp_i(cols, 4, 10000)
+    loop start <= text.len && count < max {
+        let end = lens_line_end(text, start)
+        let line = substr(text, start, end - start)
+        if line.len == 0 {
+            lines[count] = ""
+            count = count + 1
+        }
+        let from: i32 = 0
+        loop from < line.len && count < max {
+            let cut = clamp_i(from + width, from, line.len)
+            loop cut < line.len && cut > from + 1 && (((line[cut] as i32) & 255) & 192) == 128 {
+                cut = cut - 1
+            }
+            lines[count] = substr(line, from, cut - from)
+            count = count + 1
+            from = cut
+        }
+        start = end + 1
+    }
+    if start <= text.len && count == max && max > 0 {
+        lines[max - 1] = lines[max - 1] + " ..."
+    }
+    let out = [str](count)
+    for i in 0 to count {
+        out[i] = lines[i]
+    }
+    return out
+}
+
+fn lens_history_draw_panels(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    lens_history_draw_list(r, v)
+    lens_history_draw_info(r, v, w, h)
+}
+
+fn lens_history_draw_list(r: ref ui_renderer, v: ref view) {
+    let x = LENS_HISTORY_MARGIN
+    let y = lens_history_list_y()
+    let pw = lens_history_panel_w()
+    let ph = lens_history_list_h()
+    let resizing = g_lens_history_drag || lens_history_edge_at(g_mouse_x, g_mouse_y)
+    ui_fill_round_rect(r, x, y, pw, ph, 3.0, lens_float_color(col_popup_bg()), 0.0)
+    ui_stroke_round_rect(r, x, y, pw, ph, 3.0, 1.0, col_muted(), 0.0)
+    if resizing {
+        ui_fill_rect(r, x + pw - 1.0, y + 3.0, 2.0, ph - 6.0, col_accent(), 0.0)
+    }
+    let title = "history"
+    if g_lens_history_count > 0 {
+        title = title + "  " + itos(g_lens_history_count)
+        if g_lens_history_more {
+            title = title + "+"
+        }
+        title = title + " commits"
+    }
+    if g_lens_history_busy[LENS_HISTORY_JOB_LOG] != 0 {
+        title = title + "  loading..."
+    }
+    let ty = ui_text_v_center_y(r, y, LENS_HISTORY_TITLE_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, x + LENS_HISTORY_PAD, ty, pw - LENS_HISTORY_PAD * 2.0, LENS_HISTORY_TITLE_H, title, small_px(), col_text())
+    ui_fill_rect(r, x + 1.0, y + LENS_HISTORY_TITLE_H - 1.0, pw - 2.0, 1.0, col_editor_sel(), 0.0)
+    let rows_y = lens_history_rows_y()
+    let rows_h = lens_history_list_rows_h()
+    let left = x + LENS_HISTORY_PAD
+    let right = x + pw - LENS_HISTORY_PAD
+    if g_lens_history_count == 0 {
+        let note = "reading commits..."
+        if g_lens_history_error != "" {
+            note = g_lens_history_error
+        } else if g_lens_history_busy[LENS_HISTORY_JOB_LOG] == 0 && g_lens_history_root == g_workspace_root {
+            note = "No commits under this folder"
+        }
+        draw_text_clipped(r, left, rows_y + 8.0, right - left, 20.0, note, small_px(), col_muted())
+        return
+    }
+    let gap = ui_mono_char_width(r, small_px(), FONT_MONO()) * 2.0
+    ui_push_clip(r, x + 1.0, rows_y, pw - 2.0, rows_h - 1.0)
+    let first = clamp_i((g_lens_history_scroll / LENS_HISTORY_ROW_H) as i32, 0, g_lens_history_count)
+    let last = clamp_i(((g_lens_history_scroll + rows_h) / LENS_HISTORY_ROW_H) as i32 + 1, 0, g_lens_history_count)
+    for i in first to last {
+        let ry = rows_y + (i as f64) * LENS_HISTORY_ROW_H - g_lens_history_scroll
+        let hot = raw_hit(v, x, ry, pw, LENS_HISTORY_ROW_H) && g_mouse_y >= rows_y && resizing == false
+        if i == g_lens_history_selected {
+            ui_fill_rect(r, x + 1.0, ry, pw - 2.0, LENS_HISTORY_ROW_H, col_popup_hi(), 0.0)
+            ui_fill_rect(r, x + 1.0, ry, 2.0, LENS_HISTORY_ROW_H, col_accent(), 0.0)
+        } else if hot {
+            ui_fill_rect(r, x + 1.0, ry, pw - 2.0, LENS_HISTORY_ROW_H, col_editor_panel_hi(), 0.0)
+        }
+        let subject_color = col_text()
+        if i == g_lens_history_selected {
+            subject_color = col_accent()
+        }
+        // One line: hash, message, and author and date at the right end.
+        // A narrow list cuts the message first, then the author.
+        let ty = ui_text_v_center_y(r, ry, LENS_HISTORY_ROW_H, small_px(), FONT_MONO())
+        let short = g_lens_history_short[i]
+        let short_w = ui_text_width(r, short, small_px(), FONT_MONO())
+        draw_text_clipped(r, left, ty, clamp(short_w, 0.0, right - left), LENS_HISTORY_ROW_H, short, small_px(), col_blue())
+        let date = g_lens_history_date[i]
+        let date_w = ui_text_width(r, date, small_px(), FONT_MONO())
+        let date_x = clamp(right - date_w, left + short_w + gap, right)
+        draw_text_clipped(r, date_x, ty, right - date_x, LENS_HISTORY_ROW_H, date, small_px(), col_muted())
+        let author = g_lens_history_author[i]
+        let author_w = clamp(ui_text_width(r, author, small_px(), FONT_MONO()), 0.0, (right - left) * 0.25)
+        let author_x = clamp(date_x - gap - author_w, left + short_w + gap, date_x)
+        draw_text_clipped(r, author_x, ty, date_x - gap - author_x, LENS_HISTORY_ROW_H, author, small_px(), col_muted())
+        let subject_x = left + short_w + gap
+        draw_text_clipped(r, subject_x, ty, author_x - gap - subject_x, LENS_HISTORY_ROW_H, g_lens_history_subject[i], small_px(), subject_color)
+    }
+    ui_pop_clip(r)
+    // A scroll thumb when the list is longer than the panel.
+    let content = (g_lens_history_count as f64) * LENS_HISTORY_ROW_H
+    if content > rows_h {
+        let thumb = clamp(rows_h * rows_h / content, 16.0, rows_h)
+        let ty0 = rows_y + (rows_h - thumb) * g_lens_history_scroll / clamp(content - rows_h, 1.0, 1000000000.0)
+        ui_fill_rect(r, x + pw - 4.0, ty0, 2.0, thumb, col_muted(), 0.0)
+    }
+}
+
+fn lens_history_button(r: ref ui_renderer, v: ref view, b: i32, x: f64, y: f64, w: f64, label: str) {
+    g_lens_history_button_x[b] = x
+    g_lens_history_button_y[b] = y
+    g_lens_history_button_w[b] = w
+    g_lens_history_button_on[b] = 1
+    lens_draw_button(r, v, x, y, w, LENS_HISTORY_BUTTON_H, label, false)
+}
+
+// One label/value row of the details panel; returns the next row's y.
+fn lens_history_info_row(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: str) f64 {
+    let ty = ui_text_v_center_y(r, y, LENS_HISTORY_LINE_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, x, ty, 64.0, LENS_HISTORY_LINE_H, label, small_px(), col_muted())
+    draw_text_clipped(r, x + 64.0, ty, w - 64.0, LENS_HISTORY_LINE_H, value, small_px(), col_text())
+    return y + LENS_HISTORY_LINE_H
+}
+
+// The selected commit: message, author, dates and parents, its line counts
+// and copy buttons, then the selected file with its own. Only as tall as its
+// contents.
+fn lens_history_draw_info(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    for b in 0 to LENS_HISTORY_BUTTONS {
+        g_lens_history_button_on[b] = 0
+    }
+    g_lens_history_info_h = 0.0
+    if g_lens_history_selected < 0 || g_lens_history_selected >= g_lens_history_count {
+        return
+    }
+    let x = lens_history_info_x(w)
+    let y = lens_history_list_y()
+    let pw = LENS_HISTORY_INFO_W
+    let inner_x = x + 12.0
+    let inner_w = pw - 24.0
+    let max_h = clamp(h - STATUS_BAR_H - LENS_HISTORY_MARGIN - y, 80.0, 100000.0)
+    let char_w = clamp(ui_mono_char_width(r, small_px(), FONT_MONO()), 1.0, 100.0)
+    let cols = (inner_w / char_w) as i32
+    // Measure first: the panel's background goes under its rows.
+    let subject = lens_history_wrap(g_lens_history_subject[g_lens_history_selected], cols, 4)
+    let body_text = ""
+    let cut = lens_line_end(g_lens_history_message, 0)
+    if cut < g_lens_history_message.len {
+        body_text = substr(g_lens_history_message, cut + 1, g_lens_history_message.len - cut - 1)
+        loop body_text.len > 0 && ((body_text[0] as i32) & 255) == 10 {
+            body_text = substr(body_text, 1, body_text.len - 1)
+        }
+    }
+    let body = lens_history_wrap(body_text, cols, LENS_HISTORY_BODY_LINES)
+    if body_text == "" {
+        body = [str](0)
+    }
+    let rows = 1 + subject.len + 1 + 4 + 1
+    if body.len > 0 {
+        rows = rows + body.len + 1
+    }
+    let ph = 12.0 + (rows as f64) * LENS_HISTORY_LINE_H + LENS_HISTORY_BUTTON_H + 12.0
+    let f = g_lens_history_file_selected
+    if f >= 0 && f < g_lens_history_files {
+        ph = ph + 12.0 + LENS_HISTORY_LINE_H * 2.0 + LENS_HISTORY_BUTTON_H + 4.0
+    }
+    ph = clamp(ph, 40.0, max_h)
+    g_lens_history_info_h = ph
+    ui_fill_round_rect(r, x, y, pw, ph, 3.0, lens_float_color(col_popup_bg()), 0.0)
+    ui_stroke_round_rect(r, x, y, pw, ph, 3.0, 1.0, col_muted(), 0.0)
+    ui_push_clip(r, x + 1.0, y + 1.0, pw - 2.0, ph - 2.0)
+    let ry = y + 8.0
+    let short = g_lens_history_short[g_lens_history_selected]
+    let ty = ui_text_v_center_y(r, ry, LENS_HISTORY_LINE_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, inner_x, ty, inner_w, LENS_HISTORY_LINE_H, "commit " + short + "  (read only)", small_px(), col_muted())
+    ry = ry + LENS_HISTORY_LINE_H
+    for line in subject {
+        let sy = ui_text_v_center_y(r, ry, LENS_HISTORY_LINE_H, small_px(), FONT_MONO())
+        draw_text_clipped(r, inner_x, sy, inner_w, LENS_HISTORY_LINE_H, line, small_px(), col_accent())
+        draw_text_clipped(r, inner_x + 0.6, sy, inner_w, LENS_HISTORY_LINE_H, line, small_px(), col_accent())
+        ry = ry + LENS_HISTORY_LINE_H
+    }
+    ry = ry + LENS_HISTORY_LINE_H * 0.5
+    if g_lens_history_detail_ready == false {
+        draw_text_clipped(r, inner_x, ry, inner_w, LENS_HISTORY_LINE_H, "reading commit...", small_px(), col_muted())
+        ui_pop_clip(r)
+        return
+    }
+    if g_lens_history_detail_error != "" {
+        draw_text_clipped(r, inner_x, ry, inner_w, LENS_HISTORY_LINE_H, g_lens_history_detail_error, small_px(), col_git_kind(LENS_GIT_DELETED))
+        ui_pop_clip(r)
+        return
+    }
+    ry = lens_history_info_row(r, inner_x, ry, inner_w, "author", g_lens_history_author_line)
+    ry = lens_history_info_row(r, inner_x, ry, inner_w, "date", g_lens_history_date_line)
+    if g_lens_history_committer_line != g_lens_history_author_line {
+        ry = lens_history_info_row(r, inner_x, ry, inner_w, "commit", g_lens_history_committer_line)
+    } else {
+        ry = lens_history_info_row(r, inner_x, ry, inner_w, "hash", g_lens_history_full_hash)
+    }
+    let parents = g_lens_history_parents
+    if parents == "" {
+        parents = "(root commit)"
+    }
+    ry = lens_history_info_row(r, inner_x, ry, inner_w, "parents", parents)
+    if body.len > 0 {
+        ry = ry + LENS_HISTORY_LINE_H * 0.5
+        for line in body {
+            let by = ui_text_v_center_y(r, ry, LENS_HISTORY_LINE_H, small_px(), FONT_MONO())
+            draw_text_clipped(r, inner_x, by, inner_w, LENS_HISTORY_LINE_H, line, small_px(), col_text())
+            ry = ry + LENS_HISTORY_LINE_H
+        }
+        ry = ry + LENS_HISTORY_LINE_H * 0.5
+    }
+    let noun = " files  "
+    if g_lens_history_files == 1 {
+        noun = " file  "
+    }
+    let stats = itos(g_lens_history_files) + noun
+    let sy = ui_text_v_center_y(r, ry, LENS_HISTORY_LINE_H, small_px(), FONT_MONO())
+    let stats_w = ui_text_width(r, stats, small_px(), FONT_MONO())
+    draw_text_clipped(r, inner_x, sy, stats_w, LENS_HISTORY_LINE_H, stats, small_px(), col_text())
+    let add_text = "+" + itos(g_lens_history_added)
+    let add_w = ui_text_width(r, add_text, small_px(), FONT_MONO())
+    draw_text_clipped(r, inner_x + stats_w, sy, add_w, LENS_HISTORY_LINE_H, add_text, small_px(), col_git_kind(LENS_GIT_ADDED))
+    draw_text_clipped(r, inner_x + stats_w + add_w + 8.0, sy, 120.0, LENS_HISTORY_LINE_H, "-" + itos(g_lens_history_deleted), small_px(), col_git_kind(LENS_GIT_DELETED))
+    ry = ry + LENS_HISTORY_LINE_H + 6.0
+    let bw = (inner_w - 12.0) / 3.0
+    lens_history_button(r, v, LENS_HISTORY_COPY_HASH, inner_x, ry, bw, "copy hash")
+    lens_history_button(r, v, LENS_HISTORY_COPY_MESSAGE, inner_x + bw + 6.0, ry, bw, "copy message")
+    lens_history_button(r, v, LENS_HISTORY_COPY_COMMIT, inner_x + (bw + 6.0) * 2.0, ry, bw, "copy commit")
+    ry = ry + LENS_HISTORY_BUTTON_H + 6.0
+    if f >= 0 && f < g_lens_history_files {
+        ui_fill_rect(r, x + 1.0, ry, pw - 2.0, 1.0, col_editor_sel(), 0.0)
+        ry = ry + 6.0
+        let fy = ui_text_v_center_y(r, ry, LENS_HISTORY_LINE_H, small_px(), FONT_MONO())
+        let kind = g_lens_history_kind[f]
+        draw_text_clipped(r, inner_x, fy, 16.0, LENS_HISTORY_LINE_H, lens_git_letter(kind), small_px(), col_git_kind(kind))
+        draw_text_clipped(r, inner_x + 16.0, fy, inner_w - 16.0, LENS_HISTORY_LINE_H, g_lens_history_path[f], small_px(), col_git_kind(kind))
+        ry = ry + LENS_HISTORY_LINE_H
+        let detail = lens_history_counts(g_lens_history_add[f], g_lens_history_del[f])
+        if g_lens_history_binary[f] != 0 {
+            detail = "binary"
+        }
+        if g_lens_history_state[f] == LENS_HISTORY_DIFF_READY {
+            detail = detail + "  ·  " + itos(g_lens_history_rows[f]) + " diff rows"
+        } else if g_lens_history_state[f] == LENS_HISTORY_DIFF_LOADING {
+            detail = detail + "  ·  reading diff..."
+        }
+        let dy = ui_text_v_center_y(r, ry, LENS_HISTORY_LINE_H, small_px(), FONT_MONO())
+        draw_text_clipped(r, inner_x, dy, inner_w, LENS_HISTORY_LINE_H, detail, small_px(), col_muted())
+        ry = ry + LENS_HISTORY_LINE_H + 4.0
+        let fw = (inner_w - 6.0) / 2.0
+        lens_history_button(r, v, LENS_HISTORY_COPY_PATH, inner_x, ry, fw, "copy path")
+        lens_history_button(r, v, LENS_HISTORY_COPY_DIFF, inner_x + fw + 6.0, ry, fw, "copy diff")
+    }
+    ui_pop_clip(r)
+}
+
+// The map's note when the commit has nothing to tile.
+fn lens_history_note(r: ref ui_renderer, w: f64, top: f64, body_h: f64) {
+    let note = ""
+    if g_lens_history_selected < 0 {
+        if g_lens_history_count > 0 {
+            note = "Select a commit"
+        }
+    } else if g_lens_history_detail_ready == false {
+        note = "Reading commit..."
+    } else if g_lens_history_files == 0 && g_lens_history_detail_error == "" {
+        note = "This commit changes no files under " + g_workspace_root
+    }
+    if note != "" {
+        let x0 = lens_history_free_x0()
+        let x1 = lens_history_free_x1()
+        if x1 - x0 < 200.0 {
+            x0 = 0.0
+            x1 = w
+        }
+        draw_centered_text(r, x0, top, x1 - x0, body_h, note, small_px(), col_muted())
+    }
+}
