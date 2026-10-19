@@ -674,7 +674,8 @@ fn lens_draw_branch_icon(r: ref ui_renderer, x: f64, cy: f64, color: u32) {
 // detached commit, shortened past LENS_BRANCH_LABEL_W (the menu shows it
 // whole), and a caret toward the menu above. It lights up under the pointer
 // and while the menu is open. Returns the width it used, 0 outside a
-// repository.
+// repository. Uncommitted changes mark the name with a leading "*" in the
+// modified color.
 fn lens_draw_branch(r: ref ui_renderer, x: f64, y: f64) f64 {
     g_lens_branch_x = x
     g_lens_branch_y = y
@@ -682,13 +683,20 @@ fn lens_draw_branch(r: ref ui_renderer, x: f64, y: f64) f64 {
     if lens_branch_label() == "" {
         return 0.0
     }
+    let dirty = lens_git_dirty()
     let label = lens_fit_middle(r, lens_branch_label(), LENS_BRANCH_LABEL_W)
+    if dirty {
+        label = "*" + label
+    }
     let label_w = ui_text_width(r, label, small_px(), FONT_MONO())
     let w = label_w + 34.0
     g_lens_branch_w = w
     let color = col_text()
     if g_lens_branch == "" {
         color = col_muted()
+    }
+    if dirty {
+        color = col_git_kind(LENS_GIT_MODIFIED)
     }
     if g_lens_branch_open || lens_branch_button_at(g_mouse_x, g_mouse_y) {
         ui_fill_round_rect(r, x - 4.0, y + 4.0, w - 2.0, 20.0, 3.0, col_editor_panel_hi(), 0.0)

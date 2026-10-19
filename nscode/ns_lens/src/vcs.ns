@@ -632,6 +632,11 @@ fn lens_entry_git_kind(index: i32) i32 {
     return LENS_GIT_NONE
 }
 
+// Whether the opened folder has uncommitted changes, as of the last listing.
+fn lens_git_dirty() bool {
+    return g_lens_git_states_root == g_workspace_root && g_lens_git_states_text != ""
+}
+
 // The change view's file list. `git status` takes tens of milliseconds, too
 // long for a frame, so a worker runs it and the main thread adopts the
 // listing in a later frame. Each line is "K path", K the change's letter.
