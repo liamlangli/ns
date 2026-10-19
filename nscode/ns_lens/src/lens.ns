@@ -1118,8 +1118,9 @@ fn lens_edge_cursor(edges: i32) i32 {
 // The pointer shape after this frame's panel input: a resize in progress keeps
 // its cursor wherever the pointer goes; otherwise the frontmost panel under
 // the pointer (terminal, outline, then the history list) shows the resize
-// cursor on its draggable frame. A press that is dragging anything else, the
-// map included, keeps the arrow.
+// cursor on its draggable frame, and the terminal's text grid an I-beam. A
+// press that is dragging anything else, the map included, keeps the arrow;
+// a terminal text selection keeps the I-beam.
 fn lens_pointer_cursor(v: ref view) i32 {
     if g_terminal_resize_edges != PANEL_EDGE_NONE {
         return lens_edge_cursor(g_terminal_resize_edges)
@@ -1130,11 +1131,18 @@ fn lens_pointer_cursor(v: ref view) i32 {
     if g_lens_history_drag {
         return VIEW_CURSOR_RESIZE_EW
     }
+    if g_term_selecting {
+        return VIEW_CURSOR_TEXT
+    }
     if v.mouse_down || lens_menu_blocks() || g_lens_mode_block {
         return VIEW_CURSOR_ARROW
     }
     if g_terminal_open && raw_hit(v, g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h) {
-        return lens_edge_cursor(panel_edge_mask(g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h))
+        let edges = panel_edge_mask(g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h)
+        if edges == PANEL_EDGE_NONE && terminal_grid_hit(v) {
+            return VIEW_CURSOR_TEXT
+        }
+        return lens_edge_cursor(edges)
     }
     if g_outline_open && raw_hit(v, g_outline_x, g_outline_y, g_outline_w, g_outline_h) {
         return lens_edge_cursor(panel_edge_mask(g_outline_x, g_outline_y, g_outline_w, g_outline_h))

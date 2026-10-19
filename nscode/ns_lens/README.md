@@ -144,7 +144,10 @@ snaps back to orthographic.
     (colours, cursor addressing, erase, scroll regions, alternate screens,
     wide characters) and sends keys back, so prompts, `vim`, `less` and build
     commands work. Click the panel to give it the keyboard; Cmd+V pastes,
-    Cmd+K clears, and the wheel scrolls the retained scrollback. **restart**
+    Cmd+K clears, and the wheel scrolls the retained scrollback. Drag across
+    the text to select it (past the top or bottom edge scrolls the history),
+    double-click to pick a word, triple-click for the whole line, and Cmd+C
+    copies the selection. **restart**
     starts a new shell, and closing the panel keeps the running shell alive so
     a build continues while the panel is hidden. Reopen it from **View**. The
     panel's size is sent to the shell, so terminal-aware programs reflow.

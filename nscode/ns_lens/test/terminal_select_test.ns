@@ -1,0 +1,67 @@
+use std
+use editor
+
+fn check(name: str, ok: bool) {
+    if ok {
+        print("ok   " + name + unescape("\n"))
+    } else {
+        print("FAIL " + name + unescape("\n"))
+        assert false
+    }
+}
+
+fn select_span(line0: i32, col0: i32, line1: i32, col1: i32) {
+    g_term_sel_active = true
+    g_term_sel_anchor_line = line0
+    g_term_sel_anchor_col = col0
+    g_term_sel_head_line = line1
+    g_term_sel_head_col = col1
+}
+
+fn main() {
+    g_term_cols = 20
+    g_term_rows = 3
+    term_full_reset()
+    check("reset leaves no selection", terminal_has_selection() == false)
+    term_feed_text("hello world\r\nsecond line\r\nthird")
+    let base = g_term_hist_total
+
+    select_span(base, 0, base, 5)
+    check("one line span", terminal_selected_text() == "hello")
+    select_span(base, 11, base, 6)
+    check("a backwards drag selects the same text", terminal_selected_text() == "world")
+    select_span(base, 6, base + 1, 6)
+    check("multi-line span joins rows", terminal_selected_text() == "world\nsecond")
+    select_span(base, 0, base, 20)
+    check("trailing blanks are dropped", terminal_selected_text() == "hello world")
+    select_span(base, 3, base, 3)
+    check("an empty span is no selection", terminal_has_selection() == false && terminal_selected_text() == "")
+
+    terminal_select_word(base + 1, 9)
+    check("word pick stops at blanks", terminal_selected_text() == "line")
+    terminal_select_word(base, 5)
+    check("word pick on a blank takes one cell", g_term_sel_head_col - g_term_sel_anchor_col == 1)
+
+    // Output that scrolls the selected line into the history keeps the text.
+    select_span(base, 0, base, 5)
+    term_feed_text("\r\nfourth\r\nfifth")
+    check("history grew", g_term_hist_total == base + 2)
+    check("selection follows its text into the history", terminal_selected_text() == "hello")
+    check("visible rows map to absolute lines", terminal_view_line(0) == g_term_hist_total)
+
+    // Wide characters copy once.
+    term_full_reset()
+    term_feed_text("a\u{4e2d}b")
+    let line = g_term_hist_total
+    select_span(line, 0, line, 4)
+    check("wide character copies once", terminal_selected_text() == "a\u{4e2d}b")
+
+    // Clearing the history or switching screens drops the selection.
+    select_span(line, 0, line, 2)
+    term_feed_text("\u{1b}[?1049h")
+    check("alternate screen clears the selection", terminal_has_selection() == false)
+    term_feed_text("\u{1b}[?1049l")
+    select_span(line, 0, line, 2)
+    term_feed_text("\u{1b}[3J")
+    check("erasing the scrollback clears the selection", terminal_has_selection() == false)
+}

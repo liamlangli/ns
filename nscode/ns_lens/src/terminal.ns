@@ -84,6 +84,27 @@ let g_term_hist_attrs = [i32](TERM_HISTORY_LINES * TERM_MAX_COLS)
 let g_term_hist_head: i32 = 0
 let g_term_hist_count: i32 = 0
 let g_term_offset: i32 = 0
+// Every line ever pushed into the scrollback. A selection addresses absolute
+// lines, where screen row r is line g_term_hist_total + r, so selected text
+// stays put while new output scrolls it up into the history.
+let g_term_hist_total: i32 = 0
+
+// Text selection. The anchor is where the press landed, the head follows the
+// pointer; both are cell boundaries, so a selection covers [start, end).
+let g_term_sel_active = false
+let g_term_selecting = false
+let g_term_sel_anchor_line: i32 = 0
+let g_term_sel_anchor_col: i32 = 0
+let g_term_sel_head_line: i32 = 0
+let g_term_sel_head_col: i32 = 0
+let g_term_sel_click_time: f64 = 0.0
+let g_term_sel_click_line: i32 = 0
+let g_term_sel_click_count: i32 = 0
+// Grid placement from the last drawn frame, for mapping the pointer to cells.
+let g_term_grid_x: f64 = 0.0
+let g_term_grid_y: f64 = 0.0
+let g_term_cell_w: f64 = 8.0
+let g_term_line_h: f64 = 16.0
 
 // Parser state that survives between reads.
 let g_term_state: i32 = TERM_GROUND
@@ -313,6 +334,7 @@ fn term_clear_history() {
     g_term_hist_head = 0
     g_term_hist_count = 0
     g_term_offset = 0
+    terminal_select_clear()
 }
 
 fn term_push_history_row(row: i32) {
@@ -329,6 +351,7 @@ fn term_push_history_row(row: i32) {
         }
     }
     g_term_hist_head = (g_term_hist_head + 1) % TERM_HISTORY_LINES
+    g_term_hist_total = g_term_hist_total + 1
     if g_term_hist_count < TERM_HISTORY_LINES {
         g_term_hist_count = g_term_hist_count + 1
     }
@@ -719,6 +742,7 @@ fn term_alt_enter(clear: bool) {
     g_term_main_bottom = g_term_scroll_bottom
     g_term_alt = true
     g_term_offset = 0
+    terminal_select_clear()
     if clear {
         let attr = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
         for r in 0 to g_term_rows {
@@ -747,6 +771,7 @@ fn term_alt_leave() {
     g_term_alt = false
     g_term_offset = 0
     g_term_cursor_visible = true
+    terminal_select_clear()
     term_restore_cursor()
 }
 
@@ -1457,6 +1482,10 @@ fn terminal_keys(v: ref view) {
             terminal_paste(v)
             return
         }
+        if key_edge(v, 67) {
+            terminal_copy(v)
+            return
+        }
         if key_edge(v, 79) {
             lens_open_project()
             return
@@ -1578,6 +1607,242 @@ fn terminal_keys(v: ref view) {
     terminal_send(send)
 }
 
+// ---- selection -------------------------------------------------------------
+
+fn terminal_select_clear() {
+    g_term_sel_active = false
+    g_term_selecting = false
+}
+
+// The code point at an absolute line and column; lines that left the
+// scrollback ring, or lie past the screen, read as blanks.
+fn terminal_line_char(line: i32, col: i32) i32 {
+    let source = line - g_term_hist_total
+    if source >= 0 {
+        return terminal_row_char(source, col)
+    }
+    return terminal_hist_char(g_term_hist_count + source, col)
+}
+
+fn terminal_view_line(view_row: i32) i32 {
+    return g_term_hist_total + view_row - g_term_offset
+}
+
+fn terminal_grid_h() f64 {
+    return (g_term_rows as f64) * g_term_line_h
+}
+
+fn terminal_grid_hit(v: ref view) bool {
+    return raw_hit(v, g_term_grid_x, g_term_grid_y, (g_term_cols as f64) * g_term_cell_w, terminal_grid_h())
+}
+
+// The visible row under the pointer, clamped into the grid.
+fn terminal_pointer_row() i32 {
+    let row = ((g_mouse_y - g_term_grid_y) / g_term_line_h) as i32
+    if g_mouse_y < g_term_grid_y {
+        row = 0
+    }
+    return clamp_i(row, 0, g_term_rows - 1)
+}
+
+// The cell boundary nearest the pointer, 0 to g_term_cols.
+fn terminal_pointer_boundary() i32 {
+    let at = (g_mouse_x - g_term_grid_x) / g_term_cell_w + 0.5
+    if at < 0.0 {
+        return 0
+    }
+    return clamp_i(at as i32, 0, g_term_cols)
+}
+
+// The cell under the pointer, 0 to g_term_cols - 1.
+fn terminal_pointer_col() i32 {
+    let at = (g_mouse_x - g_term_grid_x) / g_term_cell_w
+    if at < 0.0 {
+        return 0
+    }
+    return clamp_i(at as i32, 0, g_term_cols - 1)
+}
+
+fn terminal_sel_head_first() bool {
+    if g_term_sel_head_line != g_term_sel_anchor_line {
+        return g_term_sel_head_line < g_term_sel_anchor_line
+    }
+    return g_term_sel_head_col < g_term_sel_anchor_col
+}
+
+fn terminal_sel_start_line() i32 {
+    if terminal_sel_head_first() {
+        return g_term_sel_head_line
+    }
+    return g_term_sel_anchor_line
+}
+
+fn terminal_sel_start_col() i32 {
+    if terminal_sel_head_first() {
+        return g_term_sel_head_col
+    }
+    return g_term_sel_anchor_col
+}
+
+fn terminal_sel_end_line() i32 {
+    if terminal_sel_head_first() {
+        return g_term_sel_anchor_line
+    }
+    return g_term_sel_head_line
+}
+
+fn terminal_sel_end_col() i32 {
+    if terminal_sel_head_first() {
+        return g_term_sel_anchor_col
+    }
+    return g_term_sel_head_col
+}
+
+fn terminal_has_selection() bool {
+    if g_term_sel_active == false {
+        return false
+    }
+    return g_term_sel_anchor_line != g_term_sel_head_line || g_term_sel_anchor_col != g_term_sel_head_col
+}
+
+// The selected column span [col0, col1) on one absolute line, or col0 == col1
+// when the line is outside the selection.
+fn terminal_sel_col0(line: i32) i32 {
+    if line == terminal_sel_start_line() {
+        return terminal_sel_start_col()
+    }
+    return 0
+}
+
+fn terminal_sel_col1(line: i32) i32 {
+    if line < terminal_sel_start_line() || line > terminal_sel_end_line() {
+        return 0
+    }
+    if line == terminal_sel_end_line() {
+        return terminal_sel_end_col()
+    }
+    return g_term_cols
+}
+
+// Characters a double click keeps together: letters, digits, everything past
+// ASCII, the second cell of a wide character, and the usual path punctuation.
+fn terminal_word_char(cp: i32) bool {
+    if cp == -1 || cp > 127 {
+        return true
+    }
+    if (cp >= 48 && cp <= 57) || (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122) {
+        return true
+    }
+    return cp == 95 || cp == 45 || cp == 46 || cp == 47 || cp == 126 || cp == 43 || cp == 64 || cp == 37 || cp == 35
+}
+
+fn terminal_select_word(line: i32, col: i32) {
+    g_term_sel_anchor_line = line
+    g_term_sel_head_line = line
+    if terminal_word_char(terminal_line_char(line, col)) == false {
+        g_term_sel_anchor_col = col
+        g_term_sel_head_col = col + 1
+        return
+    }
+    let a = col
+    loop a > 0 && terminal_word_char(terminal_line_char(line, a - 1)) {
+        a = a - 1
+    }
+    let b = col + 1
+    loop b < g_term_cols && terminal_word_char(terminal_line_char(line, b)) {
+        b = b + 1
+    }
+    g_term_sel_anchor_col = a
+    g_term_sel_head_col = b
+}
+
+// A press in the grid starts a selection; a second and third press in quick
+// succession on the same line pick the word and then the whole line.
+fn terminal_select_press() {
+    let line = terminal_view_line(terminal_pointer_row())
+    let now = os_time()
+    if now - g_term_sel_click_time < 0.45 && line == g_term_sel_click_line && g_term_sel_click_count < 3 {
+        g_term_sel_click_count = g_term_sel_click_count + 1
+    } else {
+        g_term_sel_click_count = 1
+    }
+    g_term_sel_click_time = now
+    g_term_sel_click_line = line
+    g_term_sel_active = true
+    if g_term_sel_click_count == 2 {
+        terminal_select_word(line, terminal_pointer_col())
+        return
+    }
+    if g_term_sel_click_count == 3 {
+        g_term_sel_anchor_line = line
+        g_term_sel_anchor_col = 0
+        g_term_sel_head_line = line
+        g_term_sel_head_col = g_term_cols
+        return
+    }
+    g_term_selecting = true
+    g_term_sel_anchor_line = line
+    g_term_sel_anchor_col = terminal_pointer_boundary()
+    g_term_sel_head_line = line
+    g_term_sel_head_col = g_term_sel_anchor_col
+}
+
+// Dragging past the top or bottom of the grid scrolls the history a line per
+// frame, so a selection can reach text that is out of view.
+fn terminal_select_drag() {
+    if g_mouse_y < g_term_grid_y {
+        g_term_offset = clamp_i(g_term_offset + 1, 0, g_term_hist_count)
+    } else if g_mouse_y >= g_term_grid_y + terminal_grid_h() {
+        g_term_offset = clamp_i(g_term_offset - 1, 0, g_term_hist_count)
+    }
+    g_term_sel_head_line = terminal_view_line(terminal_pointer_row())
+    if g_mouse_y < g_term_grid_y {
+        g_term_sel_head_col = 0
+    } else if g_mouse_y >= g_term_grid_y + terminal_grid_h() {
+        g_term_sel_head_col = g_term_cols
+    } else {
+        g_term_sel_head_col = terminal_pointer_boundary()
+    }
+}
+
+// The selected text, one line per terminal row with trailing blanks dropped.
+fn terminal_selected_text() str {
+    if terminal_has_selection() == false {
+        return ""
+    }
+    let first = terminal_sel_start_line()
+    let last = terminal_sel_end_line()
+    let out = ""
+    for line in first to last + 1 {
+        let text = ""
+        let kept = 0
+        for col in terminal_sel_col0(line) to terminal_sel_col1(line) {
+            let cp = terminal_line_char(line, col)
+            if cp != -1 {
+                if cp < 32 {
+                    cp = 32
+                }
+                text = text + terminal_cp_str(cp)
+                if cp != 32 {
+                    kept = text.len
+                }
+            }
+        }
+        out = out + substr(text, 0, kept)
+        if line < last {
+            out = out + "\n"
+        }
+    }
+    return out
+}
+
+fn terminal_copy(v: ref view) {
+    let text = terminal_selected_text()
+    if text != "" {
+        view_set_clipboard(v, text)
+    }
+}
+
 // ---- terminal panel --------------------------------------------------------
 
 fn terminal_title_button_restart_x() f64 {
@@ -1633,6 +1898,11 @@ fn terminal_mouse(v: ref view, w: f64, h: f64) {
             v.mouse_pressed = false
             return
         }
+        if terminal_grid_hit(v) {
+            terminal_select_press()
+        } else {
+            terminal_select_clear()
+        }
         g_terminal_focus = true
         v.mouse_pressed = false
         v.mouse_right_pressed = false
@@ -1653,6 +1923,10 @@ fn terminal_mouse(v: ref view, w: f64, h: f64) {
         g_term_offset = clamp_i(g_term_offset + step, 0, g_term_hist_count)
         v.scroll_y = 0.0
     }
+    if g_term_selecting && v.mouse_down {
+        terminal_select_drag()
+        return
+    }
     if g_terminal_dragging && v.mouse_down {
         g_terminal_x = g_mouse_x - g_terminal_grab_x
         g_terminal_y = g_mouse_y - g_terminal_grab_y
@@ -1670,6 +1944,7 @@ fn terminal_mouse(v: ref view, w: f64, h: f64) {
     }
     if v.mouse_released || !v.mouse_down {
         let moved = g_terminal_dragging || g_terminal_resize_edges != PANEL_EDGE_NONE
+        g_term_selecting = false
         g_terminal_dragging = false
         g_terminal_resize_edges = PANEL_EDGE_NONE
         if moved {
@@ -1777,6 +2052,15 @@ fn terminal_draw_row(r: ref ui_renderer, view_row: i32, x: f64, y: f64, cw: f64,
             ui_fill_rect(r, x + (start as f64) * cw, y, ((col - start) as f64) * cw, lh, color, 0.0)
         }
     }
+    // Selection highlight, under the glyphs.
+    if terminal_has_selection() {
+        let line = terminal_view_line(view_row)
+        let c0 = terminal_sel_col0(line)
+        let c1 = terminal_sel_col1(line)
+        if c1 > c0 {
+            ui_fill_rect(r, x + (c0 as f64) * cw, y, ((c1 - c0) as f64) * cw, lh, col_editor_sel(), 0.0)
+        }
+    }
     // Text runs, trimmed to non-blank cells so a row of spaces submits no text.
     col = 0
     loop col < g_term_cols {
@@ -1875,6 +2159,10 @@ fn terminal_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let lh = clamp(TERM_FONT_PX() * 1.3, 8.0, 40.0)
     let cols = clamp_i((gw / cw) as i32, 2, TERM_MAX_COLS)
     let rows = clamp_i((gh / lh) as i32, 2, TERM_MAX_ROWS)
+    g_term_grid_x = gx
+    g_term_grid_y = gy
+    g_term_cell_w = cw
+    g_term_line_h = lh
     if g_terminal_handle > 0 && (cols != g_term_cols || rows != g_term_rows) {
         term_resize(cols, rows)
     }
@@ -1904,10 +2192,12 @@ fn terminal_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         } else {
             status = "shell exited  ·  restart to open a new one"
         }
+    } else if terminal_has_selection() && g_terminal_focus {
+        status = "cmd+C copies the selection  ·  click clears it"
     } else if g_term_offset > 0 {
         status = "scrollback -" + itos(g_term_offset)
     } else if g_terminal_focus {
-        status = "cmd+V paste  ·  esc interrupts  ·  wheel scrolls back"
+        status = "drag selects  ·  cmd+V paste  ·  esc interrupts  ·  wheel scrolls back"
     } else {
         status = "click to type"
     }
