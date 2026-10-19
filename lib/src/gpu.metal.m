@@ -1081,7 +1081,12 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
     // texture does not reliably reproduce on iOS devices; using one path on
     // macOS too keeps it the path that is tested.
     if (block_compressed && !transient_render_target) resource_options = MTLResourceStorageModePrivate;
-    if (usage & TEXTURE_USAGE_WRITE) resource_options = MTLResourceStorageModePrivate;
+    // A texture the GPU renders or writes is its own to fill: shared storage
+    // only costs bandwidth there, and the Metal validation layer flags it. A
+    // CPU upload into one still lands through the blit.
+    if ((usage & TEXTURE_USAGE_WRITE) || ((usage & TEXTURE_USAGE_RENDER_TARGET) && !transient_render_target)) {
+        resource_options = MTLResourceStorageModePrivate;
+    }
     desc.resourceOptions = resource_options;
     desc.usage = 0;
     if (usage == TEXTURE_USAGE_DEFAULT || (usage & TEXTURE_USAGE_READ)) desc.usage |= MTLTextureUsageShaderRead;
