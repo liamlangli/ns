@@ -770,6 +770,14 @@ static void ns_cpu_gen_inst(ns_cpu_gen *g, i32 pos, i32 index) {
         ns_cpu_gen_rt_call(g, ns_cpu_gen_dst(g, inst->dst), "ns_rt_scope_leave", args, 3);
     } break;
     case NS_SSA_OP_PIN: {
+        if (inst->b >= 0) {
+            i32 args[4] = {ns_cpu_gen_reg(g, inst->b),
+                           inst->a >= 0 ? ns_cpu_gen_reg(g, inst->a) : ns_cpu_gen_imm(g, 0),
+                           ns_cpu_gen_imm(g, (u64)(u32)(inst->a >= 0 ? inst->target0 : 3)),
+                           ns_cpu_gen_imm(g, (u64)(u32)(inst->c > 0 ? inst->c : 0))};
+            ns_cpu_gen_rt_call(g, g->sink, "ns_rt_pin_in", args, 4);
+            break;
+        }
         if (inst->target0 == 3 || inst->a < 0) {
             ns_cpu_gen_rt_call(g, g->sink, "ns_rt_pin_all", ns_null, 0);
             break;

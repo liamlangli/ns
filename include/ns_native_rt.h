@@ -44,6 +44,10 @@ void ns_rt_pin_str(int64_t str);
 void ns_rt_pin_array(int64_t arr, int64_t stride);
 void ns_rt_pin_all(void);
 void ns_rt_pin_ref(int64_t addr);
+// Pin `value` as the matching form above (`kind`: 0 block, 1 str, 2 array,
+// 3 all, 4 ref) unless `container`, which it is being stored into, is a block
+// the running call allocated and has not published.
+void ns_rt_pin_in(int64_t container, int64_t value, int64_t kind, int64_t size);
 int64_t ns_rt_load(int64_t addr, int64_t off, int64_t size);
 void ns_rt_store(int64_t addr, int64_t off, int64_t val, int64_t size);
 void ns_rt_copy(int64_t dst, int64_t doff, int64_t src, int64_t size);

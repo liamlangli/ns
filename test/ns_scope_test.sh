@@ -73,4 +73,50 @@ case "$out" in
         ;;
 esac
 
+# Storing into containers - a fresh local one, or the caller's from a worker
+# thread - and dispatching a worker every frame used to pin the whole frame for
+# good. 200000 frames of 16 KiB scratch is about 3 GiB.
+cat > "$tmp/publish.ns" <<'NS'
+use std
+use task
+
+let checksum = 0
+
+fn frame(round: i32) {
+    let scratch = [f32](4096)
+    scratch[0] = round as f32
+    let local = [str](1)
+    local[0] = `l{round}`
+    let out = [str](1)
+    let pending = dispatch(queue_worker) { in
+        let tmp = [f32](4096)
+        tmp[1] = 3.0
+        out[0] = `w{round}`
+    }
+    wait(pending)
+    checksum = (checksum + (scratch[0] as i32) + out[0].len + local[0].len) % 1000003
+}
+
+fn main() {
+    for round in 0 to 200000 {
+        frame(round)
+    }
+    print(`checksum {checksum}\n`)
+}
+NS
+
+"$ns" build --exe "$tmp/publish.ns" -o "$tmp/publish" >/dev/null
+if ! out=$("$tmp/publish" 2>"$tmp/publish.err"); then
+    printf '%s\n' "FAIL: storing into containers and dispatching workers leaked the heap." >&2
+    sed -n '1,5p' "$tmp/publish.err" >&2
+    exit 1
+fi
+case "$out" in
+    "checksum "*) ;;
+    *)
+        printf '%s\n' "FAIL: unexpected output: $out" >&2
+        exit 1
+        ;;
+esac
+
 printf '%s\n' "PASS: released memory is reused, so a long run stays inside the heap."

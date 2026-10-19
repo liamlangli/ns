@@ -347,7 +347,35 @@ static void test_batch_gpu_pressure(void) {
     gpu_commit();
 }
 
+// A Chinese glyph drawn in Latin text from the Chinese face is moved so its
+// middle meets the middle of the Latin capitals beside it, whatever line
+// metrics each face brings. The numbers are baloo2's H and gensen's 中.
+static void test_mixed_faces_share_a_middle(void) {
+    ui_renderer *r = calloc(1, sizeof(*r));
+    assert(r);
+    ui_vertex vertices[64];
+    r->rect = r->safe_rect = (ui_rect){0, 0, 200, 100};
+    r->vertices = vertices;
+    r->vertex_capacity = 64;
+    ui_glyph latin[] = {{.code = 'H', .width = 38, .height = 44, .y_offset = 32, .x_advance = 43}};
+    ui_glyph chinese[] = {{.code = 0x4E2D, .width = 38, .height = 43, .y_offset = 4, .x_advance = 42}};
+    r->fonts[UI_FONT_MAIN] = (ui_font){.glyphs = latin, .glyph_count = 1, .texture_width = 512, .texture_height = 416, .font_size = 64};
+    r->fonts[UI_FONT_ZH] = (ui_font){.glyphs = chinese, .glyph_count = 1, .texture_width = 2541, .texture_height = 2620, .font_size = 42};
+    ui_detect_cap_metrics(&r->fonts[UI_FONT_MAIN]);
+    ui_detect_cap_metrics(&r->fonts[UI_FONT_ZH]);
+    assert(r->fonts[UI_FONT_MAIN].middle == 54.0 && r->fonts[UI_FONT_ZH].middle == 25.5);
+    ui_draw_text(r, 0, 10, "H\xe4\xb8\xad", 20, 0xffffffffu, UI_FONT_MAIN);
+    assert(r->vertex_count == 12);
+    // Each quad's top and bottom: its first vertex and its third.
+    const f64 latin_middle = (vertices[0].y + vertices[2].y) * 0.5;
+    const f64 chinese_middle = (vertices[6].y + vertices[8].y) * 0.5;
+    assert(fabs(latin_middle - (10 + 54.0 * 20 / 64)) < 1e-4);
+    assert(fabs(chinese_middle - latin_middle) < 1e-4);
+    free(r);
+}
+
 int main(void) {
+    test_mixed_faces_share_a_middle();
     test_batch_gpu_pressure();
     test_one_draw();
     test_batch_text_range("@@AB\nA!!", 2, 4, "AB\nA");

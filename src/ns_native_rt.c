@@ -121,18 +121,131 @@ static int ns_rt_thread_eq(ns_rt_thread a, ns_rt_thread b) { return pthread_equa
 #endif
 
 // The bump pointer is shared by every thread, so a scope may only drop what its
-// own thread put on top of the heap. `ns_rt_run` is the current unbroken run of
-// allocations by one thread: another thread allocating starts a new run, and a
-// scope whose mark sits below the run it is leaving keeps its memory instead of
-// dropping a region that now interleaves someone else's live data.
-static ns_rt_thread ns_rt_run_owner;
-static uint32_t ns_rt_run_base = 0;
-static int ns_rt_run_valid = 0;
+// own thread put on top of the heap. A run is an unbroken stretch of
+// allocations by one thread, and `ns_rt_runs` lists them in address order:
+// another thread allocating starts a new run, and a scope whose region holds
+// someone else's live run keeps its memory instead of dropping data that
+// thread still uses. A task thread that ends marks its runs dead - what it
+// left behind is either pinned or garbage - so they no longer stop the thread
+// that dispatched it from releasing its own temporaries around them.
+typedef struct {
+    ns_rt_thread owner;
+    uint32_t base;
+    int dead;
+} ns_rt_run;
+static ns_rt_run *ns_rt_runs = NULL;
+static int32_t ns_rt_run_n = 0;
+static int32_t ns_rt_run_cap = 0;
 
 // Allocations that must outlive every scope: a string literal is materialized
 // once and cached forever, so releasing past it would leave the cache holding a
 // recycled address.
 static _Atomic uint32_t ns_rt_floor = 0;
+
+// A running task reads what its closure and arguments captured, all of which
+// was allocated before it was spawned. Each running task holds the heap below
+// its spawn point until it ends; `ns_rt_hold` is the highest such hold, and no
+// scope releases below it meanwhile. Unlike the floor, a hold goes away.
+#define NS_RT_HOLD_MAX 256
+static uint32_t ns_rt_holds[NS_RT_HOLD_MAX];
+static int32_t ns_rt_hold_n = 0;
+static _Atomic uint32_t ns_rt_hold = 0;
+
+// Everything below this address is kept, whichever thread asks. Heap lock held.
+static uint32_t ns_rt_keep_locked(void) {
+    uint32_t hold = atomic_load_explicit(&ns_rt_hold, memory_order_relaxed);
+    return ns_rt_floor > hold ? ns_rt_floor : hold;
+}
+
+// A value stored into a container that is itself still in some scope's region
+// only has to live as long as that container. Such a store records an owned
+// pin, {owner: the container, top: the end of the value}, instead of raising
+// the floor for good: a release to T keeps the top of every pin whose owner
+// survives it (owner < T), and forgets the pins whose owner it drops.
+//
+// Only the pins no other pin dominates are kept - one with a lower owner and a
+// higher top keeps at least as much for at least as long - so the list is
+// ordered by owner with ascending tops.
+typedef struct {
+    uint32_t owner;
+    uint32_t top;
+} ns_rt_owned;
+static ns_rt_owned *ns_rt_owned_pins = NULL;
+static int32_t ns_rt_owned_n = 0;
+static int32_t ns_rt_owned_cap = 0;
+
+// Heap lock held.
+static void ns_rt_owned_add(uint32_t owner, uint32_t top) {
+    int32_t lo = 0, hi = ns_rt_owned_n;
+    while (lo < hi) {
+        int32_t mid = (lo + hi) / 2;
+        if (ns_rt_owned_pins[mid].owner < owner) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo > 0 && ns_rt_owned_pins[lo - 1].top >= top) return;
+    if (lo < ns_rt_owned_n && ns_rt_owned_pins[lo].owner == owner && ns_rt_owned_pins[lo].top >= top) return;
+    int32_t end = lo;
+    while (end < ns_rt_owned_n && ns_rt_owned_pins[end].top <= top) end++;
+    if (end == lo) {
+        if (ns_rt_owned_n == ns_rt_owned_cap) {
+            int32_t cap = ns_rt_owned_cap ? ns_rt_owned_cap * 2 : 256;
+            ns_rt_owned *pins = (ns_rt_owned *)realloc(ns_rt_owned_pins, (size_t)cap * sizeof(*pins));
+            if (!pins) abort();
+            ns_rt_owned_pins = pins;
+            ns_rt_owned_cap = cap;
+        }
+        memmove(ns_rt_owned_pins + lo + 1, ns_rt_owned_pins + lo,
+                (size_t)(ns_rt_owned_n - lo) * sizeof(*ns_rt_owned_pins));
+        ns_rt_owned_n++;
+    } else if (end > lo + 1) {
+        memmove(ns_rt_owned_pins + lo + 1, ns_rt_owned_pins + end,
+                (size_t)(ns_rt_owned_n - end) * sizeof(*ns_rt_owned_pins));
+        ns_rt_owned_n -= end - lo - 1;
+    }
+    ns_rt_owned_pins[lo].owner = owner;
+    ns_rt_owned_pins[lo].top = top;
+}
+
+// Heap lock held. The lowest address a release aiming at `target` may drop to:
+// raised past every owned pin whose owner stays, until no pin moves it.
+static uint32_t ns_rt_owned_target(uint32_t target) {
+    int32_t i = 0;
+    while (i < ns_rt_owned_n && ns_rt_owned_pins[i].owner < target) {
+        if (ns_rt_owned_pins[i].top > target) target = ns_rt_owned_pins[i].top;
+        i++;
+    }
+    return target;
+}
+
+// Heap lock held. The region from `top` up is gone, and the pins it owned with
+// it; pins already below what is kept for good need no record.
+static void ns_rt_owned_trim(uint32_t top) {
+    while (ns_rt_owned_n > 0 && ns_rt_owned_pins[ns_rt_owned_n - 1].owner >= top) ns_rt_owned_n--;
+    int32_t drop = 0;
+    while (drop < ns_rt_owned_n && ns_rt_owned_pins[drop].top <= ns_rt_floor) drop++;
+    if (drop > 0) {
+        memmove(ns_rt_owned_pins, ns_rt_owned_pins + drop,
+                (size_t)(ns_rt_owned_n - drop) * sizeof(*ns_rt_owned_pins));
+        ns_rt_owned_n -= drop;
+    }
+}
+
+// Each thread's open scope marks, innermost last. Only ns_rt_pin_in reads
+// them, to tell a container the running call built from one it was handed.
+// A leave that does not match the innermost mark poisons the stack, and a
+// poisoned thread pins everything as it did before.
+#define NS_RT_SCOPE_DEPTH_MAX 4096
+static __thread uint32_t ns_rt_scope_marks[NS_RT_SCOPE_DEPTH_MAX];
+static __thread int32_t ns_rt_scope_depth = 0;
+static __thread int ns_rt_scope_poisoned = 0;
+
+// A release another thread's live run blocked. The scope at that depth has
+// ended and returned nothing in its region, so once that thread is done the
+// region is garbage; the next scope at the same depth that releases retries
+// it. Any allocation by the code around those scopes - which may be holding
+// on to it - drops the retry instead.
+static __thread uint32_t ns_rt_deferred_mark = 0;
+static __thread int32_t ns_rt_deferred_depth = 0;
 
 // How far the heap has ever been used. Committing a page zeroes it, so an
 // allocation that has never been handed out is already blank; one that comes
@@ -257,8 +370,10 @@ void ns_rt_reset(void) {
     ns_rt_used = 16;
     ns_rt_high = 16;
     ns_rt_floor = 0;
-    ns_rt_run_valid = 0;
-    ns_rt_run_base = 0;
+    ns_rt_run_n = 0;
+    ns_rt_owned_n = 0;
+    ns_rt_hold_n = 0;
+    ns_rt_hold = 0;
     if (ns_rt_mem && ns_rt_cap) memset(ns_rt_mem, 0, ns_rt_cap);
     if (ns_rt_globals) memset(ns_rt_globals, 0, ns_rt_global_capacity * sizeof(*ns_rt_globals));
     ns_rt_cb_n = 0;
@@ -284,6 +399,63 @@ void ns_rt_set_strtab(const char **tab, const int32_t *lens, int n) {
     for (int i = 0; i < n; ++i) ns_rt_intern(i);
 }
 
+// Runs entirely below what is kept can never be released into again, and two
+// neighbouring dead runs, or two of the same live thread, are one run.
+static void ns_rt_run_compact(void) {
+    uint32_t keep = ns_rt_keep_locked();
+    int32_t first = 0;
+    while (first + 1 < ns_rt_run_n && ns_rt_runs[first + 1].base <= keep) first++;
+    int32_t n = 0;
+    for (int32_t i = first; i < ns_rt_run_n; ++i) {
+        ns_rt_run r = ns_rt_runs[i];
+        if (n > 0) {
+            ns_rt_run *prev = &ns_rt_runs[n - 1];
+            if ((prev->dead && r.dead) ||
+                (!prev->dead && !r.dead && ns_rt_thread_eq(prev->owner, r.owner))) {
+                continue;
+            }
+        }
+        ns_rt_runs[n++] = r;
+    }
+    ns_rt_run_n = n;
+}
+
+// Heap lock held. Record that `self` allocated at `addr`, the top of the heap.
+static void ns_rt_run_push(ns_rt_thread self, uint32_t addr) {
+    if (ns_rt_run_n > 0) {
+        ns_rt_run *top = &ns_rt_runs[ns_rt_run_n - 1];
+        if (!top->dead && ns_rt_thread_eq(top->owner, self)) return;
+    }
+    if (ns_rt_run_n == ns_rt_run_cap) ns_rt_run_compact();
+    if (ns_rt_run_n == ns_rt_run_cap) {
+        int32_t cap = ns_rt_run_cap ? ns_rt_run_cap * 2 : 64;
+        ns_rt_run *runs = (ns_rt_run *)realloc(ns_rt_runs, (size_t)cap * sizeof(*runs));
+        if (!runs) abort();
+        ns_rt_runs = runs;
+        ns_rt_run_cap = cap;
+    }
+    ns_rt_runs[ns_rt_run_n].owner = self;
+    ns_rt_runs[ns_rt_run_n].base = addr;
+    ns_rt_runs[ns_rt_run_n].dead = 0;
+    ns_rt_run_n++;
+}
+
+// Heap lock held. Whether every allocation in [target, used) belongs to `self`
+// or to a thread that has ended.
+static int ns_rt_run_releasable(ns_rt_thread self, uint32_t target) {
+    for (int32_t i = ns_rt_run_n - 1; i >= 0; --i) {
+        ns_rt_run *r = &ns_rt_runs[i];
+        if (!r->dead && !ns_rt_thread_eq(r->owner, self)) return 0;
+        if (r->base <= target) return 1;
+    }
+    return ns_rt_run_n > 0;
+}
+
+// Heap lock held. Forget the runs above `top`, the new top of the heap.
+static void ns_rt_run_trim(uint32_t top) {
+    while (ns_rt_run_n > 0 && ns_rt_runs[ns_rt_run_n - 1].base >= top) ns_rt_run_n--;
+}
+
 int64_t ns_rt_alloc(int64_t size) {
     if (size < 0) size = 0;
     if ((uint64_t)size > (uint64_t)UINT32_MAX) {
@@ -301,13 +473,9 @@ int64_t ns_rt_alloc(int64_t size) {
         memset(ns_rt_mem + addr, 0, (size_t)(stop - addr));
     }
     if (ns_rt_used > ns_rt_high) ns_rt_high = ns_rt_used;
-    ns_rt_thread self = ns_rt_self();
-    if (!ns_rt_run_valid || !ns_rt_thread_eq(ns_rt_run_owner, self)) {
-        ns_rt_run_owner = self;
-        ns_rt_run_base = addr;
-        ns_rt_run_valid = 1;
-    }
+    ns_rt_run_push(ns_rt_self(), addr);
     ns_rt_heap_unlock();
+    if (ns_rt_deferred_mark && ns_rt_scope_depth < ns_rt_deferred_depth) ns_rt_deferred_mark = 0;
     return (int64_t)addr;
 }
 
@@ -329,11 +497,14 @@ int64_t ns_rt_clone(int64_t src, int64_t size) {
     return dst;
 }
 
+
 int64_t ns_rt_scope_enter(void) {
     ns_rt_heap_lock();
     ns_rt_init_locked();
     uint32_t mark = (ns_rt_used + 7u) & ~7u;
     ns_rt_heap_unlock();
+    if (ns_rt_scope_depth < NS_RT_SCOPE_DEPTH_MAX) ns_rt_scope_marks[ns_rt_scope_depth] = mark;
+    ns_rt_scope_depth++;
     return (int64_t)mark;
 }
 
@@ -415,27 +586,161 @@ void ns_rt_pin_ref(int64_t addr) {
     if (addr > 0 && (uint64_t)addr <= UINT32_MAX) ns_rt_pin_all();
 }
 
+static void ns_rt_pin_kind(int64_t value, int64_t kind, int64_t size) {
+    switch (kind) {
+    case 0: ns_rt_pin(value, size); break;
+    case 1: ns_rt_pin_str(value); break;
+    case 2: ns_rt_pin_array(value, size); break;
+    case 4: ns_rt_pin_ref(value); break;
+    default: ns_rt_pin_all(); break;
+    }
+}
+
+// Heap lock held. The end of everything a value of this pin kind reaches, or 0
+// when it reaches nothing in the heap.
+static uint32_t ns_rt_pin_top(int64_t value, int64_t kind, int64_t size) {
+    if (kind == 3) return ns_rt_used;
+    if (value <= 0 || (uint64_t)value >= (uint64_t)ns_rt_used) return 0;
+    uint32_t addr = (uint32_t)value;
+    uint64_t top = addr;
+    switch (kind) {
+    case 0:
+        top = (uint64_t)addr + (uint64_t)(size > 0 ? size : 0);
+        break;
+    case 1: {
+        int32_t bytes = 0, len = 0;
+        ns_rt_str_parts(value, &bytes, &len);
+        top = (uint64_t)addr + 8;
+        if (bytes > 0 && len > 0 && (uint64_t)(uint32_t)bytes + (uint32_t)len > top) {
+            top = (uint64_t)(uint32_t)bytes + (uint32_t)len;
+        }
+    } break;
+    case 2: {
+        int32_t data = (int32_t)ns_rt_load(value, 0, 4);
+        int32_t count = (int32_t)ns_rt_load(value, 4, 4);
+        top = (uint64_t)addr + 16;
+        if (data > 0 && count > 0 && size > 0) {
+            uint64_t end = (uint64_t)(uint32_t)data + (uint64_t)count * (uint64_t)size;
+            if (end > top) top = end;
+        }
+    } break;
+    default:
+        top = ns_rt_used;
+        break;
+    }
+    return top > ns_rt_used ? ns_rt_used : (uint32_t)top;
+}
+
+// Pin `value`, which is being stored into `container`, for as long as the
+// container lives rather than for good.
+//
+// A container the running call allocated, that nothing has kept yet, needs no
+// pin at all: it is released together with what it holds, and when it escapes
+// it is pinned whole, which keeps everything allocated before it. It counts as
+// the call's own when it lies at or above this thread's innermost scope mark
+// and above everything kept for this call. A container another thread
+// allocated there is only reachable through something that thread published,
+// which kept it; one a running task captured lies below that task's hold.
+//
+// Any other container still in some scope's region gets an owned pin. Only a
+// container kept for good - a global's, or one handed to a native library -
+// raises the floor.
+//
+// Pinning everything for good kept, for the life of the process, every
+// temporary allocated before the stored value: filling a fresh struct or
+// dictionary, or a caller's array from a worker, leaked the whole region.
+void ns_rt_pin_in(int64_t container, int64_t value, int64_t kind, int64_t size) {
+    if (container <= 0 || (uint64_t)container > UINT32_MAX) {
+        ns_rt_pin_kind(value, kind, size);
+        return;
+    }
+    ns_rt_heap_lock();
+    if (!ns_rt_mem || (uint64_t)container >= (uint64_t)ns_rt_used) {
+        ns_rt_heap_unlock();
+        ns_rt_pin_kind(value, kind, size);
+        return;
+    }
+    uint32_t owner = (uint32_t)container;
+    uint32_t keep = ns_rt_keep_locked();
+    if (!ns_rt_scope_poisoned && ns_rt_scope_depth > 0 && ns_rt_scope_depth <= NS_RT_SCOPE_DEPTH_MAX) {
+        uint32_t mark = ns_rt_scope_marks[ns_rt_scope_depth - 1];
+        uint32_t release = ns_rt_owned_target(mark > keep ? mark : keep);
+        if (owner >= mark && owner >= release) {
+            ns_rt_heap_unlock();
+            return;
+        }
+    }
+    uint32_t top = ns_rt_pin_top(value, kind, size);
+    if (owner < ns_rt_floor) {
+        ns_rt_raise_floor(top);
+    } else if (top > ns_rt_floor) {
+        ns_rt_owned_add(owner, top);
+    }
+    ns_rt_heap_unlock();
+}
+
 int64_t ns_rt_scope_leave(int64_t mark, int64_t value, int64_t size) {
+    int32_t depth = ns_rt_scope_depth;
+    if (ns_rt_deferred_mark && depth < ns_rt_deferred_depth) ns_rt_deferred_mark = 0;
+    if (ns_rt_scope_depth > 0) {
+        ns_rt_scope_depth--;
+        if (ns_rt_scope_depth < NS_RT_SCOPE_DEPTH_MAX &&
+            (int64_t)ns_rt_scope_marks[ns_rt_scope_depth] != mark) {
+            ns_rt_scope_poisoned = 1;
+        }
+    } else {
+        ns_rt_scope_poisoned = 1;
+    }
     if (mark <= 0 || (uint64_t)mark > (uint64_t)UINT32_MAX) return value;
     uint32_t target = (uint32_t)mark;
     int64_t result = value;
     ns_rt_heap_lock();
     // Whatever was pinned inside the call stays, and the release starts above
     // it: the rest of the region is this call's own dead temporaries.
-    if (target < ns_rt_floor) target = ns_rt_floor;
-    if (target <= ns_rt_used && ns_rt_run_valid &&
-        ns_rt_thread_eq(ns_rt_run_owner, ns_rt_self()) && ns_rt_run_base <= target) {
+    // Values stored into containers that outlive the call stay too.
+    uint32_t keep = ns_rt_keep_locked();
+    if (target < keep) target = keep;
+    target = ns_rt_owned_target(target);
+    ns_rt_thread self = ns_rt_self();
+    if (target <= ns_rt_used && ns_rt_run_releasable(self, target)) {
         if (value < (int64_t)target || value >= (int64_t)ns_rt_used) {
             ns_rt_used = target;
+            ns_rt_run_trim(target);
+            ns_rt_owned_trim(target);
+            uint32_t older = ns_rt_deferred_mark;
+            if (older && depth == ns_rt_deferred_depth) {
+                if (older < keep) older = keep;
+                older = ns_rt_owned_target(older);
+                if (older >= ns_rt_used) {
+                    ns_rt_deferred_mark = 0;
+                } else if (ns_rt_run_releasable(self, older)) {
+                    ns_rt_used = older;
+                    ns_rt_run_trim(older);
+                    ns_rt_owned_trim(older);
+                    ns_rt_deferred_mark = 0;
+                }
+            }
         } else if (size > 0 && value + size <= (int64_t)ns_rt_used) {
             // A struct result built inside the scope moves down to the release
             // point, so the caller reads the same bytes from live memory.
             memmove(ns_rt_mem + target, ns_rt_mem + (uint32_t)value, (size_t)size);
             ns_rt_used = target + (uint32_t)size;
             result = (int64_t)target;
+            ns_rt_run_trim(target);
+            ns_rt_owned_trim(target);
+            ns_rt_run_push(self, target);
         }
         // Any other heap result is one the scope cannot move: keeping the
         // region costs memory but never hands back a recycled address.
+    } else if (target < ns_rt_used) {
+        if (value >= (int64_t)target && value < (int64_t)ns_rt_used) {
+            ns_rt_deferred_mark = 0;
+        } else if (!ns_rt_deferred_mark || depth <= ns_rt_deferred_depth) {
+            if (!ns_rt_deferred_mark || target < ns_rt_deferred_mark || depth < ns_rt_deferred_depth) {
+                ns_rt_deferred_mark = target;
+            }
+            ns_rt_deferred_depth = depth;
+        }
     }
     ns_rt_heap_unlock();
     return result;
@@ -1364,6 +1669,8 @@ typedef struct ns_rt_task {
     int64_t args[4];
     int32_t nargs;
     int32_t queue;
+    int32_t returns;
+    uint32_t hold;
     volatile int32_t state;
     volatile int32_t cancel;
     int64_t result;
@@ -1416,6 +1723,50 @@ static int64_t ns_rt_task_invoke(ns_rt_task *t) {
     return r;
 }
 
+// Heap lock held for both.
+static void ns_rt_hold_update(void) {
+    uint32_t max = 0;
+    for (int32_t i = 0; i < ns_rt_hold_n; ++i) {
+        if (ns_rt_holds[i] > max) max = ns_rt_holds[i];
+    }
+    atomic_store_explicit(&ns_rt_hold, max, memory_order_release);
+}
+
+static void ns_rt_hold_add(ns_rt_task *t) {
+    t->hold = 0;
+    if (ns_rt_hold_n >= NS_RT_HOLD_MAX) {
+        // Too many tasks at once to track: keep their captures for good.
+        ns_rt_raise_floor(ns_rt_used);
+        return;
+    }
+    t->hold = ns_rt_used;
+    ns_rt_holds[ns_rt_hold_n++] = t->hold;
+    ns_rt_hold_update();
+}
+
+// A thread task has run to its end. Its result may be an address the awaiting
+// thread has yet to read, so a task that returns one keeps everything; then
+// its hold goes, and its runs stop belonging to a live thread.
+static void ns_rt_task_release(ns_rt_task *t) {
+    ns_rt_heap_lock();
+    if (t->returns) ns_rt_raise_floor(ns_rt_used);
+    if (t->hold) {
+        for (int32_t i = 0; i < ns_rt_hold_n; ++i) {
+            if (ns_rt_holds[i] == t->hold) {
+                ns_rt_holds[i] = ns_rt_holds[--ns_rt_hold_n];
+                break;
+            }
+        }
+        t->hold = 0;
+        ns_rt_hold_update();
+    }
+    ns_rt_thread self = ns_rt_self();
+    for (int32_t i = 0; i < ns_rt_run_n; ++i) {
+        if (!ns_rt_runs[i].dead && ns_rt_thread_eq(ns_rt_runs[i].owner, self)) ns_rt_runs[i].dead = 1;
+    }
+    ns_rt_heap_unlock();
+}
+
 static void ns_rt_task_finish(ns_rt_task *t, int64_t result, int cancelled) {
     ns_rt_task_lock(t);
     t->result = cancelled ? 0 : result;
@@ -1430,6 +1781,7 @@ static DWORD WINAPI ns_rt_task_thread(LPVOID arg) {
     ns_rt_task_self = t;
     t->state = 1;
     int64_t r = ns_rt_task_invoke(t);
+    ns_rt_task_release(t);
     ns_rt_task_finish(t, r, t->cancel);
     ns_rt_task_self = NULL;
     return 0;
@@ -1440,6 +1792,7 @@ static void *ns_rt_task_thread(void *arg) {
     ns_rt_task_self = t;
     t->state = 1;
     int64_t r = ns_rt_task_invoke(t);
+    ns_rt_task_release(t);
     ns_rt_task_finish(t, r, t->cancel);
     ns_rt_task_self = NULL;
     return NULL;
@@ -1459,9 +1812,9 @@ static int64_t ns_rt_task_box(ns_rt_task *t) {
     return box;
 }
 
-int64_t ns_rt_task_spawn(int64_t fn, int64_t env, int64_t nargs,
-                         int64_t a0, int64_t a1, int64_t a2, int64_t a3,
-                         int64_t queue) {
+static int64_t ns_rt_task_start(int64_t fn, int64_t env, int64_t nargs,
+                                int64_t a0, int64_t a1, int64_t a2, int64_t a3,
+                                int64_t queue, int32_t returns) {
     ns_rt_task *t = (ns_rt_task *)calloc(1, sizeof(ns_rt_task));
     if (!t) abort();
     t->fn = (void *)(uintptr_t)fn;
@@ -1472,6 +1825,7 @@ int64_t ns_rt_task_spawn(int64_t fn, int64_t env, int64_t nargs,
     t->args[3] = a3;
     t->nargs = nargs < 0 ? 0 : (nargs > 4 ? 4 : (int32_t)nargs);
     t->queue = (int32_t)queue;
+    t->returns = returns;
     t->state = 0;
 #ifdef _WIN32
     InitializeCriticalSection(&t->mu);
@@ -1490,6 +1844,12 @@ int64_t ns_rt_task_spawn(int64_t fn, int64_t env, int64_t nargs,
         ns_rt_task_self = prev;
         return handle;
     }
+    // The compiler does not pin what a task is handed (ns_ssa.c): the hold
+    // keeps it while the task runs.
+    ns_rt_heap_lock();
+    ns_rt_init_locked();
+    ns_rt_hold_add(t);
+    ns_rt_heap_unlock();
 #ifdef _WIN32
     t->thread = CreateThread(NULL, 0, ns_rt_task_thread, t, 0, NULL);
     t->started = t->thread != NULL;
@@ -1501,14 +1861,33 @@ int64_t ns_rt_task_spawn(int64_t fn, int64_t env, int64_t nargs,
     if (t->started) pthread_detach(t->thread);
 #endif
     if (!t->started) {
+        ns_rt_heap_lock();
+        if (t->hold) {
+            for (int32_t i = 0; i < ns_rt_hold_n; ++i) {
+                if (ns_rt_holds[i] == t->hold) {
+                    ns_rt_holds[i] = ns_rt_holds[--ns_rt_hold_n];
+                    break;
+                }
+            }
+            t->hold = 0;
+            ns_rt_hold_update();
+        }
+        ns_rt_heap_unlock();
         ns_rt_task_finish(t, 0, 1);
     }
     return handle;
 }
 
+int64_t ns_rt_task_spawn(int64_t fn, int64_t env, int64_t nargs,
+                         int64_t a0, int64_t a1, int64_t a2, int64_t a3,
+                         int64_t queue) {
+    return ns_rt_task_start(fn, env, nargs, a0, a1, a2, a3, queue, 1);
+}
+
+// A dispatched block returns nothing the caller can read.
 int64_t ns_rt_task_dispatch(int64_t queue, int64_t fnval) {
     int64_t code = fnval > 0 ? ns_rt_load(fnval, 0, 8) : 0;
-    return ns_rt_task_spawn(code, fnval, 0, 0, 0, 0, 0, queue);
+    return ns_rt_task_start(code, fnval, 0, 0, 0, 0, 0, queue, 0);
 }
 
 static void ns_rt_task_join_state(ns_rt_task *t) {

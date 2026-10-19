@@ -266,6 +266,9 @@ typedef struct ui_font {
     f64 line_height;
     f64 baseline;
     f64 cap_top;
+    // Where a line of this face is centred, down from the line top: the
+    // middle of 中 for a face that has it, else of the capitals.
+    f64 middle;
 } ui_font;
 
 // Margins of the drawable that platform chrome may cover, in logical points.
@@ -872,16 +875,19 @@ static ui_glyph *ui_font_glyph(ui_font *font, i32 code) {
 
 static void ui_detect_cap_metrics(ui_font *font) {
     static const i32 refs[] = {72, 77, 78, 73, 76, 69, 88, 84};
+    font->cap_top = round(font->font_size * 0.1);
+    font->baseline = round(font->font_size * 0.8);
     for (u32 i = 0; i < sizeof(refs) / sizeof(refs[0]); i++) {
         ui_glyph *g = ui_font_glyph(font, refs[i]);
         if (g && g->height > 0) {
             font->cap_top = g->y_offset;
             font->baseline = g->y_offset + g->height;
-            return;
+            break;
         }
     }
-    font->cap_top = round(font->font_size * 0.1);
-    font->baseline = round(font->font_size * 0.8);
+    font->middle = (font->cap_top + font->baseline) * 0.5;
+    ui_glyph *ideograph = ui_font_glyph(font, 0x4E2D);
+    if (ideograph && ideograph->height > 0) font->middle = ideograph->y_offset + ideograph->height * 0.5;
 }
 
 static ns_bool ui_load_font_face(char *json, const char *face_name, i32 tex_w, i32 tex_h, ui_font *font) {
@@ -3307,6 +3313,16 @@ static ns_bool ui_font_is_bitmap(ui_renderer *r, ui_font *font) {
     return font == &r->fonts[UI_FONT_BITMAP] || font == &r->fonts[UI_FONT_BITMAP_ZH];
 }
 
+// How far down, at font_px, a glyph that `font` draws in place of `primary`
+// moves so its middle meets the primary face's: each face lays its glyphs
+// out from its own line top, and Chinese would otherwise sit well above the
+// Latin beside it. The bitmap faces share one pixel grid and stay put.
+static f64 ui_fallback_shift(ui_renderer *r, ui_font *primary, ui_font *font, f64 font_px) {
+    if (font == primary || ui_font_is_bitmap(r, font) || ui_font_is_bitmap(r, primary) ||
+        primary->font_size <= 0.0 || font->font_size <= 0.0) return 0.0;
+    return primary->middle * (font_px / primary->font_size) - font->middle * (font_px / font->font_size);
+}
+
 static i32 ui_font_texture_id(ui_renderer *r, ui_font *font) {
     if (font == &r->fonts[UI_FONT_BITMAP]) return UI_FONT_BITMAP_TEXTURE;
     if (font == &r->fonts[UI_FONT_BITMAP_ZH]) return UI_FONT_BITMAP_ZH_TEXTURE;
@@ -3340,7 +3356,7 @@ void ui_draw_text_scaled(ui_renderer *r, f64 x, f64 y, const char *text, f64 fon
         f64 scale = font_px / font->font_size;
         if (g->width > 0 && g->height > 0) {
             f64 x0 = cx + g->x_offset * scale * scale_x;
-            f64 y0 = cy + g->y_offset * scale * scale_y;
+            f64 y0 = cy + (g->y_offset * scale + ui_fallback_shift(r, primary, font, font_px)) * scale_y;
             const ns_bool bitmap = ui_font_is_bitmap(r, font);
             if (bitmap && scale_x == 1.0 && scale_y == 1.0) {
                 x0 = floor(x0);
@@ -3413,7 +3429,7 @@ static void ui_rect_batch_text_range(ui_renderer *r, i32 batch_id, f64 x, f64 y,
             if (batch->kind == kind && batch->texture_id == texture_id && ui_rect_batch_reserve(batch, 6)) {
                 batch->dirty = true;
                 f32 x0 = (f32)(cx + g->x_offset * scale);
-                f32 y0 = (f32)(cy + g->y_offset * scale);
+                f32 y0 = (f32)(cy + g->y_offset * scale + ui_fallback_shift(r, primary, font, font_px));
                 f32 x1 = x0 + (f32)(g->width * scale);
                 f32 y1 = y0 + (f32)(g->height * scale);
                 f32 u0 = (f32)(g->atlas_x / font->texture_width);

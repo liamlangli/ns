@@ -1002,7 +1002,18 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     case NS_SSA_OP_PIN: {
         /* target0 selects how much of the value the runtime has to keep: a flat
          * block of inst->c bytes, a string and its bytes, an array and its
-         * payload of inst->c-byte elements, or everything allocated so far. */
+         * payload of inst->c-byte elements, or everything allocated so far.
+         * A store into a container (inst->b) lets the runtime skip the pin
+         * when that container is still the running call's own. */
+        if (inst->b >= 0) {
+            ns_aarch_load_value(c, NS_AARCH_X0, inst->b);
+            if (inst->a >= 0) ns_aarch_load_value(c, 1, inst->a);
+            else ns_aarch_emit_u32(c, ns_aarch_movz(1, 0, 0));
+            ns_aarch_emit_const_u64(c, 2, (u64)(u32)(inst->a >= 0 ? inst->target0 : 3));
+            ns_aarch_emit_const_u64(c, 3, (u64)(u32)(inst->c > 0 ? inst->c : 0));
+            ns_aarch_emit_rt_call(c, "ns_rt_pin_in");
+            break;
+        }
         if (inst->target0 == 3 || inst->a < 0) {
             ns_aarch_emit_rt_call(c, "ns_rt_pin_all");
             break;

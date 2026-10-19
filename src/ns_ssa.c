@@ -57,6 +57,7 @@ typedef struct ns_ssa_capture {
     ns_str name;
     i32 offset;
     ns_type type;
+    i32 loaded; /* the value read from the env on entry */
 } ns_ssa_capture;
 
 // One parameter waiting to be bound, so that binding - which may allocate a
@@ -836,7 +837,9 @@ static void ns_ssa_flush_captures(ns_ssa_builder *b, i32 ast) {
     for (i32 i = 0, l = (i32)ns_array_length(b->captures); i < l; ++i) {
         ns_ssa_capture *c = &b->captures[i];
         i32 val = ns_ssa_env_get_value(b->env, c->name, -1);
-        if (val < 0) continue;
+        /* Writing back the value the env already holds changes nothing, and
+         * would pin it - every capture of a block, on every return. */
+        if (val < 0 || val == c->loaded) continue;
         ns_ssa_emit_store_off(b, b->capture_env, val, c->offset, c->type, ast);
     }
 }
@@ -3533,7 +3536,7 @@ static ns_str ns_ssa_ensure_block_fn(ns_ssa_builder *b, i32 symbol_index) {
             b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].target0 =
                 ns_ssa_wasm32_size(b, cap_t);
             ns_ssa_env_bind(b, f->name, v, cap_t);
-            ns_ssa_capture cap = {.name = f->name, .offset = off, .type = cap_t};
+            ns_ssa_capture cap = {.name = f->name, .offset = off, .type = cap_t, .loaded = v};
             ns_array_push(b->captures, cap);
         }
     }
@@ -3874,13 +3877,30 @@ static ns_bool ns_ssa_scope_copies_bytes(ns_ssa_builder *b, ns_type t) {
  * that crosses one of those is pinned first. */
 static ns_bool ns_ssa_scope_call_pins_itself(ns_ssa_module *m, ns_ssa_inst *inst) {
     if (ns_str_equals(inst->module, ns_str_cstr("std"))) return true;
-    if (ns_str_equals(inst->module, ns_str_cstr("task"))) return false;
+    /* A task's closure and arguments are held by the runtime while it runs
+     * (ns_rt_task_start); pinning them kept every caller's region for good. */
+    if (ns_str_equals(inst->module, ns_str_cstr("task"))) return true;
     if (inst->module.len > 0 && !ns_str_equals(inst->module, ns_str_cstr("simd")) &&
         !ns_str_equals(inst->module, ns_str_cstr("shader"))) {
         return false;
     }
     if (inst->name.len == 0) return false;
-    if (inst->name.len > 6 && memcmp(inst->name.data, "ns_rt_", 6) == 0) return false;
+    if (inst->name.len > 6 && memcmp(inst->name.data, "ns_rt_", 6) == 0) {
+        /* These runtime helpers read their arguments and keep none of them.
+         * Pinning what they are passed - both halves of every concatenation
+         * and interpolation - kept each call's temporaries for good. */
+        static const char *const keep_nothing[] = {
+            "ns_rt_strcat", "ns_rt_itos", "ns_rt_utos", "ns_rt_btos", "ns_rt_fmtf",
+            "ns_rt_map_new", "ns_rt_map_get", "ns_rt_map_has", "ns_rt_map_remove",
+            "ns_rt_map_slot_live", "ns_rt_map_slot_key", "ns_rt_union_as", "ns_rt_task_await",
+            "ns_rt_task_spawn",
+            "ns_rt_shader_source_hash",
+        };
+        for (szt k = 0; k < sizeof(keep_nothing) / sizeof(keep_nothing[0]); ++k) {
+            if (ns_str_equals(inst->name, ns_str_cstr((char *)keep_nothing[k]))) return true;
+        }
+        return false;
+    }
     for (i32 i = 0, l = (i32)ns_array_length(m->fns); i < l; ++i) {
         if (ns_str_equals(m->fns[i].name, inst->name)) return true;
     }
@@ -3912,9 +3932,16 @@ static ns_bool ns_ssa_scope_arg_copied(ns_ssa_builder *b, ns_ssa_module *m, ns_s
     return ns_type_is(param, NS_TYPE_STRING) && !ns_type_is_array(param) && !ns_type_is_ref(param);
 }
 
-static ns_ssa_inst ns_ssa_scope_pin_inst(i32 value, i32 kind, i32 size, i32 ast) {
+/* `container`, when not -1, is the object the value is being stored into. A
+ * container this call built and has not published yet dies with the call or
+ * is pinned whole when it escapes (every container that holds an address pins
+ * as NS_SSA_PIN_ALL), so the runtime skips the pin for it (ns_rt_pin_in).
+ * Without that, filling a fresh struct or dictionary kept everything the call
+ * had allocated before it for the life of the process. */
+static ns_ssa_inst ns_ssa_scope_pin_inst(i32 value, i32 kind, i32 size, i32 container, i32 ast) {
     ns_ssa_inst pin = NS_SSA_INST_INIT(NS_SSA_OP_PIN, ast);
     pin.a = value;
+    pin.b = container;
     pin.c = size;
     pin.target0 = kind;
     pin.type = ns_type_void;
@@ -3931,6 +3958,18 @@ static ns_type *ns_ssa_scope_value_types(ns_ssa_fn *fn, i32 nvalues) {
         if (dst >= 0 && dst < nvalues) types[dst] = fn->insts[i].type;
     }
     return types;
+}
+
+/* Opcode that defines every value, so a store can tell a block the function
+ * just allocated from an address it was handed. */
+static ns_ssa_op *ns_ssa_scope_value_ops(ns_ssa_fn *fn, i32 nvalues) {
+    ns_ssa_op *ops = ns_malloc((szt)nvalues * sizeof(ns_ssa_op));
+    for (i32 i = 0; i < nvalues; ++i) ops[i] = NS_SSA_OP_PIN;
+    for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
+        i32 dst = fn->insts[i].dst;
+        if (dst >= 0 && dst < nvalues) ops[dst] = fn->insts[i].op;
+    }
+    return ops;
 }
 
 /* A call to a proved allocation-free ns function needs no heap scope. This
@@ -3997,6 +4036,7 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
     i32 result_size = scoped && ns_ssa_scope_struct_value(fn->ret)
         ? ns_ssa_wasm32_size(b, fn->ret) : 0;
     ns_type *types = ns_ssa_scope_value_types(fn, nvalues);
+    ns_ssa_op *ops = ns_ssa_scope_value_ops(fn, nvalues);
 
     for (i32 bi = 0, bl = (i32)ns_array_length(fn->blocks); bi < bl; ++bi) {
         i32 *old = fn->blocks[bi].insts;
@@ -4053,6 +4093,13 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
                     /* A copy: pushing pins below may move fn->insts. */
                     ns_ssa_inst callee = fn->insts[old[call]];
                     i32 nargs = callee.c > 0 ? callee.c : 0;
+                    /* The runtime's dictionary and set writers store their
+                     * key and value into the map, their first argument. */
+                    i32 map = -1;
+                    if (ns_str_equals(callee.name, ns_str_cstr("ns_rt_map_set")) ||
+                        ns_str_equals(callee.name, ns_str_cstr("ns_rt_map_insert"))) {
+                        map = fn->insts[old[i]].a;
+                    }
                     for (i32 a = i; a < call; ++a) {
                         i32 value = fn->insts[old[a]].a;
                         if (value < 0 || value >= nvalues) continue;
@@ -4064,7 +4111,8 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
                         else if (!ns_ssa_scope_pin_kind(b, types[value], &kind, &size)) continue;
                         i32 pin_index = (i32)ns_array_length(fn->insts);
                         ns_array_push(fn->insts,
-                                      ns_ssa_scope_pin_inst(value, kind, size, fn->insts[index].ast));
+                                      ns_ssa_scope_pin_inst(value, kind, size, value == map ? -1 : map,
+                                                            fn->insts[index].ast));
                         ns_array_push(*into, pin_index);
                     }
                 }
@@ -4089,6 +4137,7 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
             ns_array_push(out, index);
 
             i32 published = -1;
+            i32 container = -1;
             ns_type type = fn->insts[index].type;
             switch (fn->insts[index].op) {
             case NS_SSA_OP_GLOBAL_SET:
@@ -4097,6 +4146,14 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
             case NS_SSA_OP_STORE:
             case NS_SSA_OP_ARRAY_STORE:
                 if (!ns_ssa_scope_copies_bytes(b, type)) published = fn->insts[index].b;
+                /* An array element store addresses the array itself; a field
+                 * store only counts when its base is a block allocated here,
+                 * since any other base may sit inside an older object. */
+                container = fn->insts[index].a;
+                if (container < 0 || container >= nvalues ||
+                    (fn->insts[index].op == NS_SSA_OP_STORE && ops[container] != NS_SSA_OP_ALLOC)) {
+                    container = -1;
+                }
                 break;
             default:
                 break;
@@ -4106,7 +4163,9 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
                 if (ns_ssa_scope_pin_kind(b, type, &kind, &size)) {
                     i32 pin_index = (i32)ns_array_length(fn->insts);
                     ns_array_push(fn->insts,
-                                  ns_ssa_scope_pin_inst(published, kind, size, fn->insts[index].ast));
+                                  ns_ssa_scope_pin_inst(published, kind, size,
+                                                        published == container ? -1 : container,
+                                                        fn->insts[index].ast));
                     ns_array_push(*into, pin_index);
                 }
             }
@@ -4125,6 +4184,7 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
         fn->blocks[bi].insts = out;
     }
     ns_free(types);
+    ns_free(ops);
 }
 
 // NS_NO_SCOPE=1 compiles without any of this, which keeps the old behaviour of

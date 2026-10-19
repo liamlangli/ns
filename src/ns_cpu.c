@@ -217,6 +217,7 @@ static const ns_cpu_rt ns_cpu_rt_table[] = {
     NS_CPU_RT(ns_rt_task_cancelled, 1, 0),
     NS_CPU_RT(ns_rt_task_sleep, 1, 1),
     NS_CPU_RT(ns_rt_pin_ref, 1, 1),
+    NS_CPU_RT(ns_rt_pin_in, 4, 1),
 };
 #undef NS_CPU_RT
 
