@@ -59,9 +59,49 @@ static void test_allocation_free_scopes(void) {
     ns_ssa_module_free(m);
 }
 
+/* A native `str` parameter receives a C copy, so building a label every frame
+ * and handing it to a library must not pin it (and the frame below it). A
+ * string stored into a container is still published and keeps its pin. */
+static void test_native_str_args_unpinned(void) {
+    const char *source =
+        "use os\n"
+        "fn measure(name: str) i64 { let text = \"n=\" + name\n return os_file_size(text) }\n"
+        "fn keep(name: str) [str] { let a = [str](1)\n a[0] = \"x\" + name\n return a }\n"
+        "fn main() i32 { let k = keep(\"a\")\n return measure(\"b\") as i32 }\n";
+    ns_ast_ctx ctx = {0};
+    ns_return_bool parsed = ns_ast_parse(&ctx, ns_str_cstr((i8 *)source), ns_str_cstr("<native_str_pin_test>"));
+    ns_expect(!ns_return_is_error(parsed), "native str argument source parses.");
+    ns_str lib = ns_str_cstr("lib");
+    ns_return_ptr built = ns_ssa_build_with_runtime_paths_options(&ctx, lib, lib, ns_str_null, false);
+    ns_expect(!ns_return_is_error(built), "native str argument source lowers.");
+    if (ns_return_is_error(built)) return;
+    ns_ssa_module *m = built.r;
+    ns_bool measure_seen = false, measure_pins = false, keep_pins = false;
+    for (i32 i = 0; i < (i32)ns_array_length(m->fns); ++i) {
+        ns_ssa_fn *fn = &m->fns[i];
+        ns_bool pins_str = false;
+        for (i32 j = 0; j < (i32)ns_array_length(fn->insts); ++j) {
+            ns_ssa_inst *inst = &fn->insts[j];
+            if (inst->op == NS_SSA_OP_PIN && (inst->target0 == 1 || inst->target0 == 3)) pins_str = true;
+        }
+        if (ns_str_equals_STR(fn->name, "measure")) {
+            measure_seen = true;
+            measure_pins = pins_str;
+        }
+        if (ns_str_equals_STR(fn->name, "keep")) {
+            for (i32 j = 0; j < (i32)ns_array_length(fn->insts); ++j)
+                if (fn->insts[j].op == NS_SSA_OP_PIN) keep_pins = true;
+        }
+    }
+    ns_expect(measure_seen && !measure_pins, "a str handed to a native str parameter is not pinned.");
+    ns_expect(keep_pins, "a str stored into an array is still pinned.");
+    ns_ssa_module_free(m);
+}
+
 int main(void) {
     test_native_pins();
     test_allocation_free_scopes();
+    test_native_str_args_unpinned();
     const char *source =
         "use std\n"
         "lit folded = 6 * 7\n"

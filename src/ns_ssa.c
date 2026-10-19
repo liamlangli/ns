@@ -3887,6 +3887,31 @@ static ns_bool ns_ssa_scope_call_pins_itself(ns_ssa_module *m, ns_ssa_inst *inst
     return false;
 }
 
+/* Whether argument `index` of a native library call crosses the boundary as a
+ * copy. The native backends hand a `str` parameter over as a fresh C string
+ * (ns_rt_to_cstr), so the callee never sees the ns address and keeping the
+ * string - and with the floor, everything allocated before it - is pure waste:
+ * a frame that measures or draws a freshly built label would otherwise retain
+ * the whole frame's temporaries for good. The parameter type decides, as it
+ * does in the backends: an `any` parameter still receives the ns address. A
+ * Wasm import reads linear memory directly, so it keeps its pins. */
+static ns_bool ns_ssa_scope_arg_copied(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_inst *call,
+                                       i32 index, ns_type value_type) {
+    if (b->wasm_target || index < 0 || call->name.len == 0 || call->module.len == 0) return false;
+    if (ns_str_equals(call->module, ns_str_cstr("std")) || ns_str_equals(call->module, ns_str_cstr("task")) ||
+        ns_str_equals(call->module, ns_str_cstr("simd")) || ns_str_equals(call->module, ns_str_cstr("shader"))) {
+        return false;
+    }
+    ns_type param = value_type;
+    for (i32 i = 0, l = (i32)ns_array_length(m->imports); i < l; ++i) {
+        ns_ssa_import *im = &m->imports[i];
+        if (!ns_str_equals(im->module, call->module) || !ns_str_equals(im->name, call->name)) continue;
+        if (index < (i32)ns_array_length(im->params)) param = im->params[index];
+        break;
+    }
+    return ns_type_is(param, NS_TYPE_STRING) && !ns_type_is_array(param) && !ns_type_is_ref(param);
+}
+
 static ns_ssa_inst ns_ssa_scope_pin_inst(i32 value, i32 kind, i32 size, i32 ast) {
     ns_ssa_inst pin = NS_SSA_INST_INIT(NS_SSA_OP_PIN, ast);
     pin.a = value;
@@ -4025,9 +4050,13 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
                     fn->insts[old[call]].op == NS_SSA_OP_CALL &&
                     !ns_ssa_scope_call_pins_itself(m, &fn->insts[old[call]])) {
                     pinned_call = call;
+                    /* A copy: pushing pins below may move fn->insts. */
+                    ns_ssa_inst callee = fn->insts[old[call]];
+                    i32 nargs = callee.c > 0 ? callee.c : 0;
                     for (i32 a = i; a < call; ++a) {
                         i32 value = fn->insts[old[a]].a;
                         if (value < 0 || value >= nvalues) continue;
+                        if (ns_ssa_scope_arg_copied(b, m, &callee, nargs - (call - a), types[value])) continue;
                         i32 kind = 0, size = 0;
                         /* A value whose type the IR does not carry may still be
                          * an address the callee keeps, so it is pinned whole. */
