@@ -1,0 +1,43 @@
+use std
+use shader
+
+fn cs_float_buffer() void {
+    let index = shader_global_id_x()
+    let value = shader_buffer_f32(0, index)
+    shader_buffer_store_f32(1, index, value * -1.5 + shader_root_f32(0))
+}
+
+fn main() {
+    let source = [f32](4)
+    source[0] = -2.5
+    source[1] = 0.0
+    source[2] = 1.25
+    source[3] = 100.0
+    let result = [f32](4)
+    let root = [f32](1)
+    root[0] = 0.25
+    assert shader_host_buffer(0, source)
+    assert shader_host_buffer(1, result)
+    assert !shader_host_buffer(-1, source)
+    assert !shader_host_buffer(32, source)
+    assert shader_host_root(root)
+    for index in 0 to 4 {
+        shader_host_invocation(index, 0, 0)
+        cs_float_buffer()
+    }
+    print(`float buffer: {result[0]}, {result[1]}, {result[2]}, {result[3]}\n`)
+    assert result[0] == 4.0 && result[1] == 0.25
+    assert result[2] == -1.625 && result[3] == -149.75
+    assert shader_buffer_f32(0, -1) == 0.0
+    assert shader_buffer_f32(0, 4) == 0.0
+    shader_buffer_store_f32(1, 4, 100.0)
+    assert result[3] == -149.75
+    shader_host_release()
+    assert shader_buffer_f32(0, 0) == 0.0
+    let targets = ["msl", "glsl", "hlsl", "wgsl"]
+    for target in targets {
+        let text = shader_transpile_stage(cs_float_buffer, target, "compute")
+        assert text.len > 0
+    }
+    print("shader: float storage host execution and four targets passed\n")
+}

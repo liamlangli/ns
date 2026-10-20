@@ -136,6 +136,10 @@ ref fn shader_discard()
 // too: there is no image to bind and no invocation to set.
 ref fn shader_host_bind(read: [f32], write: [f32], width: i32, height: i32) bool
 ref fn shader_host_bind_secondary(write: [f32]) bool
+// Bind a caller-owned float storage array for CPU execution of compute fns.
+// Slots 0..31; bindings live until release. Out-of-range accesses read zero
+// or ignore the write. Keep arrays alive and do not resize while bound.
+ref fn shader_host_buffer(index: i32, values: [f32]) bool
 ref fn shader_host_root(words: [f32]) bool
 ref fn shader_host_invocation(x: i32, y: i32, z: i32)
 // Swap the bound read and write images, as a dispatch boundary does.
@@ -151,6 +155,9 @@ ref fn shader_global_id_x() i32
 ref fn shader_global_id_y() i32
 ref fn shader_global_id_z() i32
 ref fn shader_vertex_id() i32
+// Instance index of a vertex fn invocation, from gpu_draw_vertices /
+// gpu_draw_indexed instance_count (first instance 0).
+ref fn shader_instance_id() i32
 ref fn shader_root_f32(index: i32) f32
 // Random-access signed 32-bit storage buffers. `buffer_index` is a compile-time
 // index into the stage's storage-buffer parameters; indices address i32
@@ -160,6 +167,9 @@ ref fn shader_root_f32(index: i32) f32
 // vertex fn and WebGPU rejects a read_write storage buffer there outright.
 ref fn shader_buffer_i32(buffer_index: i32, index: i32) i32
 ref fn shader_buffer_store_i32(buffer_index: i32, index: i32, value: i32)
+// Float views of the same 32-bit storage slots, preserving IEEE-754 bits.
+ref fn shader_buffer_f32(buffer_index: i32, index: i32) f32
+ref fn shader_buffer_store_f32(buffer_index: i32, index: i32, value: f32)
 ref fn shader_read_texture(x: i32, y: i32) float4
 ref fn shader_write_texture(x: i32, y: i32, color: float4)
 // Write the secondary compute output texture. Its bindless texture ID is root

@@ -109,6 +109,9 @@ int64_t ns_rt_array_ptr(int64_t arr);
 int64_t ns_rt_callback(int64_t fnval);
 
 // Shader stage intrinsics for a shader fn a program calls on the CPU.
+int64_t ns_rt_shader_host_buffer(int64_t slot, int64_t array);
+int64_t ns_rt_shader_buffer_f32(int64_t slot, int64_t index);
+void ns_rt_shader_buffer_store_f32(int64_t slot, int64_t index, int64_t bits);
 int64_t ns_rt_shader_host_bind(int64_t read, int64_t write, int64_t width, int64_t height);
 int64_t ns_rt_shader_host_bind_secondary(int64_t write);
 int64_t ns_rt_shader_host_root(int64_t words);

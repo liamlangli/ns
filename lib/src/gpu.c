@@ -525,6 +525,7 @@ void gpu_write(gpu_addr dst, const void *src, u64 size) {
         ns_warn("gpu", "gpu_write: range exceeds allocation.\n");
         return;
     }
+    if (_v2.ops && _v2.ops->frame_begin) _v2.ops->frame_begin();
     // Temporary ring and GPU_MEM_FRAMES copies are private to this in-flight
     // frame: one CPU memcpy, no GPU blit.
     if (gpu_v2_framed(s) || gpu_v2_is_ring(slot) || !s->backend) {
@@ -586,6 +587,7 @@ static ns_bool gpu_v2_ring_create(u64 section_size) {
 
 gpu_addr gpu_frame_alloc(u64 size, u32 align) {
     if (size == 0) return 0;
+    if (_v2.ops && _v2.ops->frame_begin) _v2.ops->frame_begin();
     if (align == 0 || (align & (align - 1)) != 0) align = GPU_V2_ALLOC_ALIGN;
 
     if (!_v2.ring_base && !gpu_v2_ring_create(gpu_v2_ring_section_size())) return 0;

@@ -197,6 +197,9 @@ static inline ns_bool gpu_v2_stencil_enabled(const gpu_v2_state_desc *desc) {
 }
 
 typedef struct gpu_v2_ops {
+    // Acquire the current in-flight frame before the CPU writes ring/shared
+    // data. Optional for backends whose host begins the frame before callbacks.
+    void (*frame_begin)(void);
     // memory: create backing for slot; may return a real device base address
     // through base_va (0 keeps the slot on virtual addressing).
     ns_bool (*mem_create)(u32 slot, u64 size, u32 flags, const char *name, u64 *base_va);

@@ -1401,6 +1401,8 @@ static ns_bool ns_ssa_shader_stage_intrinsic(ns_str name) {
            ns_str_equals_STR(name, "ddy") ||
            ns_str_equals_STR(name, "shader_discard") ||
            ns_str_equals_STR(name, "shader_buffer_i32") ||
+           ns_str_equals_STR(name, "shader_buffer_f32") ||
+           ns_str_equals_STR(name, "shader_buffer_store_f32") ||
            ns_str_equals_STR(name, "shader_buffer_store_i32") ||
            ns_str_equals_STR(name, "shader_sample_mask") ||
            ns_str_equals_STR(name, "shader_sample_texture") ||
@@ -1410,6 +1412,7 @@ static ns_bool ns_ssa_shader_stage_intrinsic(ns_str name) {
            ns_str_equals_STR(name, "shader_global_id_y") ||
            ns_str_equals_STR(name, "shader_global_id_z") ||
            ns_str_equals_STR(name, "shader_vertex_id") ||
+           ns_str_equals_STR(name, "shader_instance_id") ||
            ns_str_equals_STR(name, "shader_root_f32") ||
            ns_str_equals_STR(name, "shader_read_texture") ||
            ns_str_equals_STR(name, "shader_write_texture") ||
@@ -1923,6 +1926,9 @@ static i32 ns_ssa_lower_shader_intrinsic(ns_ssa_builder *b, ns_str name, i32 *ar
                                          ns_type ret, i32 ast) {
     static const char *const host[][2] = {
         {"shader_host_bind", "ns_rt_shader_host_bind"},
+        {"shader_host_buffer", "ns_rt_shader_host_buffer"},
+        {"shader_buffer_f32", "ns_rt_shader_buffer_f32"},
+        {"shader_buffer_store_f32", "ns_rt_shader_buffer_store_f32"},
         {"shader_host_bind_secondary", "ns_rt_shader_host_bind_secondary"},
         {"shader_host_root", "ns_rt_shader_host_root"},
         {"shader_host_invocation", "ns_rt_shader_host_invocation"},

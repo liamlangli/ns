@@ -2169,6 +2169,7 @@ static void mtl_v2_fx_destroy_all(void) {}
 #endif
 
 static const gpu_v2_ops _mtl_v2_ops = {
+    .frame_begin = mtl_v2_ensure_frame,
     .fx_supported = mtl_v2_fx_supported,
     .fx_create = mtl_v2_fx_create,
     .fx_encode = mtl_v2_fx_encode,

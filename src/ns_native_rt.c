@@ -1465,6 +1465,8 @@ int64_t ns_rt_union_as(int64_t u, int64_t want_tag) {
 
 static struct {
     float *read, *write, *write_secondary;
+    float *buffers[32];
+    int64_t buffer_lengths[32];
     int32_t width, height;
     float root[NS_RT_SHADER_ROOT_WORDS];
     int32_t global_id[3];
@@ -1477,6 +1479,31 @@ static float *ns_rt_f32_array(int64_t arr, int64_t *length) {
     *length = ns_rt_load(arr, 4, 4);
     int64_t data = ns_rt_load(arr, 0, 4);
     return data > 0 ? (float *)(void *)ns_rt_ptr(data) : NULL;
+}
+
+int64_t ns_rt_shader_host_buffer(int64_t slot, int64_t array) {
+    int64_t length = 0;
+    float *values = ns_rt_f32_array(array, &length);
+    if (slot < 0 || slot >= 32 || !values) return 0;
+    ns_rt_shader.buffers[slot] = values;
+    ns_rt_shader.buffer_lengths[slot] = length;
+    return 1;
+}
+
+int64_t ns_rt_shader_buffer_f32(int64_t slot, int64_t index) {
+    float value = 0.0f;
+    if (slot >= 0 && slot < 32 && ns_rt_shader.buffers[slot] && index >= 0 && index < ns_rt_shader.buffer_lengths[slot])
+        value = ns_rt_shader.buffers[slot][index];
+    uint32_t bits;
+    memcpy(&bits, &value, 4);
+    return bits;
+}
+
+void ns_rt_shader_buffer_store_f32(int64_t slot, int64_t index, int64_t bits) {
+    if (slot >= 0 && slot < 32 && ns_rt_shader.buffers[slot] && index >= 0 && index < ns_rt_shader.buffer_lengths[slot]) {
+        uint32_t word = (uint32_t)bits;
+        memcpy(&ns_rt_shader.buffers[slot][index], &word, 4);
+    }
 }
 
 int64_t ns_rt_shader_host_bind(int64_t read, int64_t write, int64_t width, int64_t height) {

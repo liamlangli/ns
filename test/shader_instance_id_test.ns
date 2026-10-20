@@ -1,0 +1,52 @@
+use std
+use simd
+use shader
+
+struct instance_out { position: float4, shade: f32 }
+
+// A helper reaching the instance id receives it as a threaded parameter.
+fn instance_offset(scale: f32) f32 {
+    return shader_instance_id() as f32 * scale
+}
+
+fn vs_instance() instance_out {
+    let x = shader_vertex_id() as f32 + instance_offset(2.0)
+    return instance_out { float4 { x, 0.0, 0.5, 1.0 }, 1.0 }
+}
+
+fn vs_instance_only() instance_out {
+    return instance_out { float4 { instance_offset(1.0), 0.0, 0.5, 1.0 }, 1.0 }
+}
+
+fn contains(text: str, word: str) bool {
+    for start in 0 to text.len - word.len + 1 {
+        let found = true
+        for index in 0 to word.len {
+            if found && text[start + index] != word[index] { found = false }
+        }
+        if found { return true }
+    }
+    return false
+}
+
+fn main() {
+    let msl = shader_transpile_stage(vs_instance, "msl", "vertex")
+    assert contains(msl, "uint ns_vertex_id [[vertex_id]], uint ns_instance_id [[instance_id]]")
+    assert contains(msl, "instance_offset(2.0, ns_instance_id)")
+    let glsl = shader_transpile_stage(vs_instance, "glsl", "vertex")
+    assert contains(glsl, "uint ns_instance_id;")
+    assert contains(glsl, "ns_instance_id = uint(gl_InstanceIndex);")
+    let hlsl = shader_transpile_stage(vs_instance, "hlsl", "vertex")
+    assert contains(hlsl, "uint ns_vertex_id : SV_VertexID, uint ns_instance_id : SV_InstanceID")
+    let wgsl = shader_transpile_stage(vs_instance, "wgsl", "vertex")
+    assert contains(wgsl, "@builtin(vertex_index) ns_vertex_id: u32, @builtin(instance_index) ns_instance_id: u32")
+    assert contains(wgsl, "fn instance_offset(ns_arg_scale: f32, ns_instance_id: u32)")
+    // Without a vertex id the instance id is the first builtin: no stray comma.
+    let only_msl = shader_transpile_stage(vs_instance_only, "msl", "vertex")
+    assert contains(only_msl, "vs_instance_only(uint ns_instance_id [[instance_id]]")
+    let only_hlsl = shader_transpile_stage(vs_instance_only, "hlsl", "vertex")
+    assert contains(only_hlsl, "vs_instance_only(uint ns_instance_id : SV_InstanceID)")
+    let only_wgsl = shader_transpile_stage(vs_instance_only, "wgsl", "vertex")
+    assert contains(only_wgsl, "vs_instance_only(@builtin(instance_index) ns_instance_id: u32)")
+    print("shader: instance id builtin on four targets passed\n")
+}

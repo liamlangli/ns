@@ -410,8 +410,14 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ui_triangle_test
 	$(NS_BINDIR)/gpu_cooked_test
 	$(NS_BINDIR)/gpu_fx_test
+	$(NS_BINDIR)/gpu_frame_write_test
 	$(NS_METAL_PSO_TEST)
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) run test/gpu_fx_test.ns
+	$(CURDIR)/$(TARGET)$(NS_SUFFIX) run test/shader_float_buffer_test.ns
+	$(CURDIR)/$(TARGET)$(NS_SUFFIX) run test/shader_instance_id_test.ns
+	$(CURDIR)/$(TARGET)$(NS_SUFFIX) run --cpu test/shader_float_buffer_test.ns
+	$(CURDIR)/$(TARGET)$(NS_SUFFIX) build --exe test/shader_float_buffer_test.ns -o $(NS_BINDIR)/shader_float_buffer_test
+	$(NS_BINDIR)/shader_float_buffer_test
 	python3 test/ns_cook_test.py
 	sh nscode/ns_lens/test/batch_native_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_project_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -450,6 +456,10 @@ $(NS_BINDIR)/gpu_cooked_test: test/gpu_cooked_test.c lib/include/gpu.h lib/inclu
 
 test: $(NS_BINDIR)/gpu_fx_test
 $(NS_BINDIR)/gpu_fx_test: test/gpu_fx_test.c lib/include/gpu.h $(NS_HEADERS) $(NS_LIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) $(NS_LDFLAGS) $(NS_UI_TEST_LDFLAGS)
+
+test: $(NS_BINDIR)/gpu_frame_write_test
+$(NS_BINDIR)/gpu_frame_write_test: test/gpu_frame_write_test.c lib/include/gpu.h $(NS_HEADERS) $(NS_LIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB)
 	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) $(NS_LDFLAGS) $(NS_UI_TEST_LDFLAGS)
 
 # The Metal backend's per-shader pipeline cache, driven on the default device.
