@@ -204,7 +204,6 @@ fn col_blue() u32 { return ui_pack_color("#b0b0b0") }
 
 fn render_frame(r: ref ui_renderer, v: ref view) {
     status_sample(os_time())
-    workspace_poll_changes()
     ui_resize(r)
     g_mouse_x = ui_content_x(r, v.mouse_x)
     g_mouse_y = ui_content_y(r, v.mouse_y)

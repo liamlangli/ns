@@ -107,6 +107,7 @@ typedef struct view_linux_state {
     ns_bool running;
     ns_bool finished;
     ns_bool configured;
+    ns_bool active;
     ns_bool closed;
     int pending_width;
     int pending_height;
@@ -239,7 +240,11 @@ static void view_linux_toplevel_configure(void *data, struct xdg_toplevel *tople
                                           int32_t width, int32_t height, struct wl_array *states) {
     ns_unused(data);
     ns_unused(toplevel);
-    ns_unused(states);
+    _state.active = false;
+    uint32_t *state;
+    wl_array_for_each(state, states) {
+        if (*state == XDG_TOPLEVEL_STATE_ACTIVATED) _state.active = true;
+    }
     if (width > 0 && height > 0) {
         _state.pending_width = width;
         _state.pending_height = height;
@@ -1533,6 +1538,10 @@ void view_run(view *v) {
         view_linux_wait();
     }
     view_linux_finish(v);
+}
+
+ns_bool view_is_active(view *v) {
+    return v && _state.active && !_state.closed;
 }
 
 void view_platform_request_frame(view *v) {

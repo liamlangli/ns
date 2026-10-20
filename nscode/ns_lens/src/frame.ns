@@ -1,0 +1,69 @@
+// Polling and presentation have separate cadences. A timer wake does not
+// need to rebuild the UI or acquire a drawable: the window keeps its pixels.
+use os
+use view
+use ui
+
+lit LENS_IDLE_POLL_MS = 100
+lit LENS_BACKGROUND_POLL_MS = 1000
+lit LENS_IDLE_REFRESH = 1.0
+let g_lens_frame_delay: i32 = 1
+let g_lens_frame_time: f64 = -1.0
+let g_lens_poll_time: f64 = -1.0
+let g_lens_frame_active = false
+let g_lens_frame_w: i32 = 0
+let g_lens_frame_h: i32 = 0
+let g_lens_frame_ratio: f64 = 0.0
+
+fn lens_frame_due(now: f64, active: bool, input: bool, resized: bool) bool {
+    if active == false { return false }
+    if g_lens_frame_time < 0.0 || g_lens_frame_active == false || input || resized || g_lens_input_dirty || g_lens_generation != g_workspace_generation {
+        return true
+    }
+    // Periodic maintenance samples RAM/FPS, refreshes Git and recent projects,
+    // and settles deferred saves. It runs at 1 Hz instead of the poll rate.
+    let delay: f64 = LENS_IDLE_REFRESH
+    if g_lens_frame_delay < LENS_IDLE_POLL_MS {
+        delay = g_lens_frame_delay as f64 / 1000.0
+    }
+    return now < g_lens_frame_time || now - g_lens_frame_time >= delay
+}
+
+fn lens_frame(r: ref ui_renderer, v: ref view) {
+    let now = os_time()
+    let active = view_is_active(v)
+    // Dock actions (including opening a project) must work while inactive.
+    lens_dock_menu(v)
+    let poll_delay = LENS_IDLE_POLL_MS
+    if active == false { poll_delay = LENS_BACKGROUND_POLL_MS }
+    if g_lens_poll_time < 0.0 || now < g_lens_poll_time || now - g_lens_poll_time >= poll_delay as f64 / 1000.0 || active && g_lens_frame_active == false {
+        g_lens_poll_time = now
+        workspace_poll_changes()
+        terminal_poll()
+    }
+    window_size_tick(v.width, v.height, now)
+    let resized = v.framebuffer_width != g_lens_frame_w || v.framebuffer_height != g_lens_frame_h || v.display_ratio != g_lens_frame_ratio
+    if lens_frame_due(now, active, view_input_pending(v), resized) {
+        g_lens_frame_time = now
+        g_lens_frame_w = v.framebuffer_width
+        g_lens_frame_h = v.framebuffer_height
+        g_lens_frame_ratio = v.display_ratio
+        lens_window_title(v)
+        ui_begin_frame(r)
+        render_frame(r, v)
+        ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+        reset_view_input(v)
+    } else if active == false {
+        // Release stale input edges; returning to the foreground redraws even
+        // without input. Terminal output stays dirty until it is displayed.
+        reset_view_input(v)
+    }
+    g_lens_frame_active = active
+    if active == false {
+        view_request_frame_after(v, LENS_BACKGROUND_POLL_MS)
+    } else if g_lens_frame_delay == 0 {
+        view_request_frame(v, 1)
+    } else {
+        view_request_frame_after(v, g_lens_frame_delay)
+    }
+}

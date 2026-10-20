@@ -357,6 +357,16 @@ i32 view_osx_key_map(i32 k) {
     return YES;
 }
 
+- (void)windowDidBecomeKey:(NSNotification*)notification {
+    (void)notification;
+    view_request_frame(&_view, 1);
+}
+
+- (void)windowDidChangeOcclusionState:(NSNotification*)notification {
+    (void)notification;
+    view_request_frame(&_view, 1);
+}
+
 - (void)windowDidResize:(NSNotification*)notification {
     (void)notification;
     view_osx_note_window_size();
@@ -739,6 +749,19 @@ void view_run(view *v) {
     [NSApp run];
 }
 
+ns_bool view_is_active(view *v) {
+    if (!v) return false;
+    __block BOOL active = NO;
+    void (^read)(void) = ^{
+        active = [NSApp isActive] && [view_window isKeyWindow] &&
+                 [view_window isVisible] && ![view_window isMiniaturized] &&
+                 ([view_window occlusionState] & NSWindowOcclusionStateVisible) != 0;
+    };
+    if ([NSThread isMainThread]) read();
+    else dispatch_sync(dispatch_get_main_queue(), read);
+    return active;
+}
+
 void view_platform_request_frame(view *v) {
     (void)v;
     if (!view_mtk_view) return;
@@ -860,8 +883,24 @@ void view_platform_set_fullscreen(view *v, ns_bool fullscreen) {
 void view_platform_request_frame_after(view *v, i32 milliseconds) {
     (void)v;
     if (!view_mtk_view) return;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)milliseconds * NSEC_PER_MSEC),
-                   dispatch_get_main_queue(), ^{ view_request_frame(&_view, 1); });
+    // Input can render before an idle timer fires. Keep one earliest wake,
+    // otherwise every input frame seeds another perpetual polling chain.
+    void (^schedule)(void) = ^{
+        static NSTimeInterval deadline;
+        static uint64_t generation;
+        NSTimeInterval next = [NSProcessInfo processInfo].systemUptime + milliseconds / 1000.0;
+        if (deadline > 0 && deadline <= next) return;
+        deadline = next;
+        uint64_t token = ++generation;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)milliseconds * NSEC_PER_MSEC),
+                       dispatch_get_main_queue(), ^{
+            if (token != generation) return;
+            deadline = 0;
+            view_request_frame(&_view, 1);
+        });
+    };
+    if ([NSThread isMainThread]) schedule();
+    else dispatch_async(dispatch_get_main_queue(), schedule);
 }
 
 void view_platform_set_frame_per_second(view *v, i32 frames) {

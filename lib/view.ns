@@ -184,6 +184,11 @@ ref fn view_capture_require(v: ref view)
 ref fn view_set_dock_menu(v: ref view, items: str)
 ref fn view_take_dock_menu(v: ref view) i32
 
+// True when this window is in the foreground and can be seen.
+// Uses the platform's activation and available visibility state; macOS also
+// reports minimized and fully occluded windows as inactive.
+ref fn view_is_active(v: ref view) bool
+
 // Frames are drawn on demand. Queue `frames` more of them, or one after a
 // delay; an animation or a simulation asks for the next frame from inside the
 // current one to keep running.

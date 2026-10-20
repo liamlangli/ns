@@ -285,6 +285,7 @@ void view_capture_require(view *v);
 
 // Schedule a bounded burst of frames. Native backends keep the last presented
 // drawable on screen and sleep when no requests remain.
+ns_bool view_is_active(view *v);
 void view_request_frame(view *v, i32 frames);
 void view_request_frame_after(view *v, i32 milliseconds);
 // Cap presentation at this many frames per second. A positive value switches

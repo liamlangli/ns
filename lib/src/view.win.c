@@ -73,6 +73,11 @@ static void view_win_gamepad_poll(void) {
     }
 }
 
+ns_bool view_is_active(view *v) {
+    return v && _hwnd && GetForegroundWindow() == _hwnd &&
+           IsWindowVisible(_hwnd) && !IsIconic(_hwnd);
+}
+
 void view_platform_request_frame(view *v) {
     ns_unused(v);
     if (_hwnd) InvalidateRect(_hwnd, NULL, FALSE);
@@ -146,6 +151,9 @@ static LPCSTR view_win_cursor_id(i32 cursor) {
 
 static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
+        case WM_SETFOCUS:
+            view_request_frame(&_view, 1);
+            return 0;
         case WM_SETCURSOR:
             if (LOWORD(lparam) == HTCLIENT) {
                 SetCursor(LoadCursor(NULL, _cursor_id));

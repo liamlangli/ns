@@ -382,6 +382,10 @@ void view_platform_set_fullscreen(view *value, ns_bool fullscreen) {
     ns_unused(fullscreen);
 }
 
+ns_bool view_is_active(view *v) {
+    return v && !view_ios_inactive && view_ios_metal_view && !view_ios_metal_view.hidden;
+}
+
 void view_platform_request_frame(view *value) {
     ns_unused(value);
     if (!view_ios_metal_view) return;

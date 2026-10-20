@@ -1,0 +1,33 @@
+fn main() {
+    g_lens_frame_time = -1.0
+    assert lens_frame_due(10.0, true, false, false)
+    assert lens_frame_due(10.0, false, true, true) == false
+    g_lens_frame_time = 10.0
+    g_lens_frame_active = true
+    g_lens_frame_delay = LENS_IDLE_POLL_MS
+    g_lens_generation = g_workspace_generation
+    g_lens_input_dirty = false
+    assert lens_frame_due(10.1, true, false, false) == false
+    assert lens_frame_due(11.0, true, false, false)
+    assert lens_frame_due(10.1, true, true, false)
+    assert lens_frame_due(10.1, true, false, true)
+    g_lens_input_dirty = true
+    assert lens_frame_due(10.1, true, false, false)
+    assert lens_frame_due(11.0, false, false, false) == false
+    g_lens_input_dirty = false
+    g_lens_frame_active = false
+    assert lens_frame_due(10.1, true, false, false)
+    g_lens_frame_active = true
+    g_lens_frame_delay = 16
+    assert lens_frame_due(10.008, true, false, false) == false
+    assert lens_frame_due(10.020, true, false, false)
+    g_lens_frame_delay = 50
+    assert lens_frame_due(10.020, true, false, false) == false
+    assert lens_frame_due(10.060, true, false, false)
+    g_lens_frame_delay = 0
+    assert lens_frame_due(10.001, true, false, false)
+    assert lens_frame_due(9.0, true, false, false)
+    g_workspace_generation = g_workspace_generation + 1
+    g_lens_frame_delay = LENS_IDLE_POLL_MS
+    assert lens_frame_due(10.1, true, false, false)
+}

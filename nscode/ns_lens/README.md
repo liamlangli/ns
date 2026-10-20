@@ -344,3 +344,9 @@ Full rows use retained glyph batches, including the active editor. The immediate
 UI stream draws selection, Git backgrounds and the caret. Cached glyphs share
 a two-million-vertex budget; current-frame draws survive until submission.
 There is no 100-column truncation.
+
+Lens keeps the previous frame while idle. Foreground file/terminal polling runs
+at 100 ms, with a maintenance redraw at most once a second; input, resizing and
+ongoing work redraw sooner. A focused terminal animates its caret at 20 Hz. Inactive, minimized or occluded windows skip UI
+updates and rendering and poll file/terminal changes once a second. Returning
+to the foreground refreshes the view, including changes received in background.

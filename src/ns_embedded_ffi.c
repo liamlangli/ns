@@ -38,6 +38,7 @@ extern void view_set_safe_area(void *, f64, f64, f64, f64);
 extern void view_capture_require(void *);
 extern void view_set_dock_menu(void *, const char *);
 extern i32 view_take_dock_menu(void *);
+extern ns_bool view_is_active(void *);
 extern void view_request_frame(void *, i32);
 extern void view_request_frame_after(void *, i32);
 extern void view_set_frame_per_second(void *, i32);
@@ -3238,6 +3239,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "view_input_count", (void *)view_input_count, ns_embedded_sig114, ns_embedded_cpu114 },
     { "view_input_pending", (void *)view_input_pending, ns_embedded_sig39, ns_embedded_cpu39 },
     { "view_input_reset", (void *)view_input_reset, ns_embedded_sig64, ns_embedded_cpu64 },
+    { "view_is_active", (void *)view_is_active, ns_embedded_sig39, ns_embedded_cpu39 },
     { "view_is_key_pressed", (void *)view_is_key_pressed, ns_embedded_sig126, ns_embedded_cpu126 },
     { "view_on_gesture", (void *)view_on_gesture, ns_embedded_sig162, ns_embedded_cpu162 },
     { "view_on_key_action", (void *)view_on_key_action, ns_embedded_sig173, ns_embedded_cpu173 },

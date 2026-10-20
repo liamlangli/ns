@@ -27,13 +27,7 @@ fn main() {
         let r = ui_renderer_create(v)
         lens_dock_menu(v)
         v.on_frame({ frame in
-            lens_dock_menu(frame)
-            lens_window_title(frame)
-            window_size_tick(frame.width, frame.height, os_time())
-            ui_begin_frame(r)
-            render_frame(r, frame)
-            ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
-            reset_view_input(frame)
+            lens_frame(r, frame)
         })
         v.on_terminate({ dead in
             // Save before shutdown clears the terminal's open flag.
