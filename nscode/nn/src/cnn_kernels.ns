@@ -1,0 +1,292 @@
+use shader
+
+lit CNN_BATCH = 64
+lit CNN_EPOCHS = 10
+// Channel counts of the two 3x3 convolutions. Every offset below follows them.
+lit CNN_K1 = 16
+lit CNN_K2 = 32
+// Per-sample activation layout: conv1 26x26, pool1 13x13, conv2 11x11,
+// pool2 5x5, the ReLU hidden layer, then the ten logits.
+lit CNN_C1 = 0
+lit CNN_P1 = CNN_C1 + 676 * CNN_K1
+lit CNN_C2 = CNN_P1 + 169 * CNN_K1
+lit CNN_P2 = CNN_C2 + 121 * CNN_K2
+lit CNN_FEATURES = 25 * CNN_K2
+lit CNN_HIDDEN = 64
+lit CNN_H1 = CNN_P2 + CNN_FEATURES
+lit CNN_LOGITS = CNN_H1 + CNN_HIDDEN
+lit CNN_ACTS = CNN_LOGITS + 10
+lit CNN_W1 = 0
+lit CNN_B1 = CNN_W1 + 9 * CNN_K1
+lit CNN_W2 = CNN_B1 + CNN_K1
+lit CNN_B2 = CNN_W2 + 9 * CNN_K1 * CNN_K2
+lit CNN_W3 = CNN_B2 + CNN_K2
+lit CNN_B3 = CNN_W3 + CNN_HIDDEN * CNN_FEATURES
+lit CNN_W4 = CNN_B3 + CNN_HIDDEN
+lit CNN_B4 = CNN_W4 + 10 * CNN_HIDDEN
+lit CNN_PARAMS = CNN_B4 + 10
+lit CNN_IMAGE = 785
+
+// Seven portable storage slots: parameters, image batch, activations,
+// activation gradients, parameter gradients, probabilities, Adam moments.
+// Root words: batch, input/output side, input/output channels, input/output
+// activation offsets, weight/bias offsets; words 12..14 hold Adam controls.
+fn cnn_activation(sample: i32, index: i32) f32 {
+    let offset = shader_root_f32(5) as i32
+    if offset < 0 { return shader_buffer_f32(1, sample * CNN_IMAGE + index) }
+    return shader_buffer_f32(2, sample * CNN_ACTS + offset + index)
+}
+
+fn cnn_exp(value: f32) f32 {
+    if value < -80.0 { return 0.0 }
+    let reduced = value
+    let squares = 0
+    loop reduced < -0.5 {
+        reduced = reduced * 0.5
+        squares = squares + 1
+    }
+    let term: f32 = 1.0
+    let result: f32 = 1.0
+    for index in 1 to 12 {
+        term = term * reduced / index as f32
+        result = result + term
+    }
+    for index in 0 to squares { result = result * result }
+    return result
+}
+
+fn cs_cnn_conv() void {
+    let index = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let input_side = shader_root_f32(1) as i32
+    let side = shader_root_f32(2) as i32
+    let inputs = shader_root_f32(3) as i32
+    let outputs = shader_root_f32(4) as i32
+    if index >= side * side * outputs || sample >= shader_root_f32(0) as i32 { return }
+    let channel = index / (side * side)
+    let y = (index / side) % side
+    let x = index % side
+    let weights = shader_root_f32(7) as i32 + channel * inputs * 9
+    let sum = shader_buffer_f32(0, shader_root_f32(8) as i32 + channel)
+    for input in 0 to inputs {
+        for ky in 0 to 3 {
+            for kx in 0 to 3 {
+                let pixel = (input * input_side + y + ky) * input_side + x + kx
+                sum = sum + cnn_activation(sample, pixel) * shader_buffer_f32(0, weights + (input * 3 + ky) * 3 + kx)
+            }
+        }
+    }
+    if sum < 0.0 { sum = 0.0 }
+    shader_buffer_store_f32(2, sample * CNN_ACTS + shader_root_f32(6) as i32 + index, sum)
+}
+
+fn cs_cnn_pool() void {
+    let index = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let input_side = shader_root_f32(1) as i32
+    let side = shader_root_f32(2) as i32
+    let channels = shader_root_f32(3) as i32
+    if index >= side * side * channels || sample >= shader_root_f32(0) as i32 { return }
+    let channel = index / (side * side)
+    let y = (index / side) % side
+    let x = index % side
+    let maximum = cnn_activation(sample, (channel * input_side + y * 2) * input_side + x * 2)
+    for ky in 0 to 2 {
+        for kx in 0 to 2 {
+            let value = cnn_activation(sample, (channel * input_side + y * 2 + ky) * input_side + x * 2 + kx)
+            if value > maximum { maximum = value }
+        }
+    }
+    shader_buffer_store_f32(2, sample * CNN_ACTS + shader_root_f32(6) as i32 + index, maximum)
+}
+
+// Dense layers share the convolution root words: inputs (3), outputs (4),
+// source and destination offsets (5, 6), weights and bias (7, 8), and a
+// ReLU flag (9) that is 1 for the hidden layer and 0 for the logits.
+fn cs_cnn_dense() void {
+    let output = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let inputs = shader_root_f32(3) as i32
+    if output >= shader_root_f32(4) as i32 || sample >= shader_root_f32(0) as i32 { return }
+    let source = sample * CNN_ACTS + shader_root_f32(5) as i32
+    let weights = shader_root_f32(7) as i32 + output * inputs
+    let sum = shader_buffer_f32(0, shader_root_f32(8) as i32 + output)
+    for input in 0 to inputs {
+        sum = sum + shader_buffer_f32(2, source + input) * shader_buffer_f32(0, weights + input)
+    }
+    if shader_root_f32(9) > 0.5 && sum < 0.0 { sum = 0.0 }
+    shader_buffer_store_f32(2, sample * CNN_ACTS + shader_root_f32(6) as i32 + output, sum)
+}
+fn cs_cnn_softmax() void {
+    let sample = shader_global_id_x()
+    if sample >= shader_root_f32(0) as i32 { return }
+    let values = [f32](10)
+    let maximum = shader_buffer_f32(2, sample * CNN_ACTS + CNN_LOGITS)
+    let prediction = 0
+    for digit in 0 to 10 {
+        let value = shader_buffer_f32(2, sample * CNN_ACTS + CNN_LOGITS + digit)
+        values[digit] = value
+        if value > maximum {
+            maximum = value
+            prediction = digit
+        }
+    }
+    let total: f32 = 0.0
+    for digit in 0 to 10 {
+        values[digit] = cnn_exp(values[digit] - maximum)
+        total = total + values[digit]
+    }
+    let label = shader_buffer_f32(1, sample * CNN_IMAGE + 784) as i32
+    for digit in 0 to 10 {
+        let probability = values[digit] / total
+        shader_buffer_store_f32(5, sample * 12 + digit, probability)
+        let delta = probability
+        if digit == label { delta = delta - 1.0 }
+        shader_buffer_store_f32(3, sample * CNN_ACTS + CNN_LOGITS + digit, delta)
+    }
+    shader_buffer_store_f32(5, sample * 12 + 10, prediction as f32)
+    shader_buffer_store_f32(5, sample * 12 + 11, values[label] / total)
+}
+
+// Every dense input is a ReLU or max-pooled ReLU output, so a zero input
+// passes no gradient; a pooled zero gets none from pool backward either.
+fn cs_cnn_dense_backward() void {
+    let input = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let inputs = shader_root_f32(3) as i32
+    if input >= inputs || sample >= shader_root_f32(0) as i32 { return }
+    let source = sample * CNN_ACTS + shader_root_f32(5) as i32 + input
+    let sum: f32 = 0.0
+    if shader_buffer_f32(2, source) > 0.0 {
+        let delta = sample * CNN_ACTS + shader_root_f32(6) as i32
+        let weights = shader_root_f32(7) as i32 + input
+        for output in 0 to shader_root_f32(4) as i32 {
+            sum = sum + shader_buffer_f32(3, delta + output) * shader_buffer_f32(0, weights + output * inputs)
+        }
+    }
+    shader_buffer_store_f32(3, source, sum)
+}
+fn cs_cnn_dense_gradient() void {
+    let index = shader_global_id_x()
+    let inputs = shader_root_f32(3) as i32
+    let outputs = shader_root_f32(4) as i32
+    if index >= (inputs + 1) * outputs { return }
+    let output = index / inputs
+    let input = index % inputs
+    let bias = index >= inputs * outputs
+    if bias { output = index - inputs * outputs }
+    let total: f32 = 0.0
+    let count = shader_root_f32(0) as i32
+    for sample in 0 to count {
+        let value: f32 = 1.0
+        if !bias { value = shader_buffer_f32(2, sample * CNN_ACTS + shader_root_f32(5) as i32 + input) }
+        total = total + value * shader_buffer_f32(3, sample * CNN_ACTS + shader_root_f32(6) as i32 + output)
+    }
+    shader_buffer_store_f32(4, shader_root_f32(7) as i32 + index, total / count as f32)
+}
+fn cs_cnn_pool_backward() void {
+    let index = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let input_side = shader_root_f32(1) as i32
+    let side = shader_root_f32(2) as i32
+    let channels = shader_root_f32(3) as i32
+    if index >= input_side * input_side * channels || sample >= shader_root_f32(0) as i32 { return }
+    let channel = index / (input_side * input_side)
+    let y = (index / input_side) % input_side
+    let x = index % input_side
+    let destination = sample * CNN_ACTS + shader_root_f32(5) as i32 + index
+    let delta: f32 = 0.0
+    let value = shader_buffer_f32(2, destination)
+    if x / 2 < side && y / 2 < side && value > 0.0 {
+        // Only the first maximum of the 2x2 window received the forward value.
+        let window = sample * CNN_ACTS + shader_root_f32(5) as i32 + (channel * input_side + (y / 2) * 2) * input_side + (x / 2) * 2
+        let winner = -1
+        let maximum: f32 = -1.0
+        for ky in 0 to 2 {
+            for kx in 0 to 2 {
+                let candidate = shader_buffer_f32(2, window + ky * input_side + kx)
+                if candidate > maximum {
+                    maximum = candidate
+                    winner = ky * 2 + kx
+                }
+            }
+        }
+        if winner == (y % 2) * 2 + x % 2 {
+            let source = sample * CNN_ACTS + shader_root_f32(6) as i32 + (channel * side + y / 2) * side + x / 2
+            delta = shader_buffer_f32(3, source)
+        }
+    }
+    shader_buffer_store_f32(3, destination, delta)
+}
+
+fn cs_cnn_conv_backward() void {
+    let index = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let input_side = shader_root_f32(1) as i32
+    let side = shader_root_f32(2) as i32
+    let inputs = shader_root_f32(3) as i32
+    let outputs = shader_root_f32(4) as i32
+    if index >= input_side * input_side * inputs || sample >= shader_root_f32(0) as i32 { return }
+    let input = index / (input_side * input_side)
+    let y = (index / input_side) % input_side
+    let x = index % input_side
+    let total: f32 = 0.0
+    let weight_offset = shader_root_f32(7) as i32
+    let delta_offset = sample * CNN_ACTS + shader_root_f32(6) as i32
+    for output in 0 to outputs {
+        for ky in 0 to 3 {
+            for kx in 0 to 3 {
+                let oy = y - ky
+                let ox = x - kx
+                if oy >= 0 && ox >= 0 && oy < side && ox < side {
+                    let weight = shader_buffer_f32(0, weight_offset + ((output * inputs + input) * 3 + ky) * 3 + kx)
+                    total = total + weight * shader_buffer_f32(3, delta_offset + (output * side + oy) * side + ox)
+                }
+            }
+        }
+    }
+    shader_buffer_store_f32(3, sample * CNN_ACTS + shader_root_f32(5) as i32 + index, total)
+}
+
+fn cs_cnn_conv_gradient() void {
+    let index = shader_global_id_x()
+    let input_side = shader_root_f32(1) as i32
+    let side = shader_root_f32(2) as i32
+    let inputs = shader_root_f32(3) as i32
+    let outputs = shader_root_f32(4) as i32
+    let weight_count = inputs * outputs * 9
+    if index >= weight_count + outputs { return }
+    let bias = index >= weight_count
+    let output = index / (inputs * 9)
+    if bias { output = index - weight_count }
+    let input = (index / 9) % inputs
+    let ky = (index / 3) % 3
+    let kx = index % 3
+    let total: f32 = 0.0
+    let count = shader_root_f32(0) as i32
+    for sample in 0 to count {
+        let delta_offset = sample * CNN_ACTS + shader_root_f32(6) as i32
+        for y in 0 to side {
+            for x in 0 to side {
+                let value: f32 = 1.0
+                if !bias { value = cnn_activation(sample, (input * input_side + y + ky) * input_side + x + kx) }
+                total = total + value * shader_buffer_f32(3, delta_offset + (output * side + y) * side + x)
+            }
+        }
+    }
+    shader_buffer_store_f32(4, shader_root_f32(7) as i32 + index, total / count as f32)
+}
+
+fn cs_cnn_adam() void {
+    let index = shader_global_id_x()
+    if index >= CNN_PARAMS { return }
+    let gradient = shader_buffer_f32(4, index)
+    let first = shader_buffer_f32(6, index) * 0.9 + gradient * 0.1
+    let second = shader_buffer_f32(6, CNN_PARAMS + index) * 0.999 + gradient * gradient * 0.001
+    shader_buffer_store_f32(6, index, first)
+    shader_buffer_store_f32(6, CNN_PARAMS + index, second)
+    let corrected_first = first * shader_root_f32(13)
+    let corrected_second = second * shader_root_f32(14)
+    let update = shader_root_f32(12) * corrected_first / ((sqrt(corrected_second as f64) as f32) + 0.00000001)
+    shader_buffer_store_f32(0, index, shader_buffer_f32(0, index) - update)
+}

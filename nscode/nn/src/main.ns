@@ -1,0 +1,188 @@
+use view
+use gpu
+use ui
+
+// The window shows the trained network's structure; training and evaluation
+// stay on the command line (cnn_cli).
+lit APP_BAR_H: f64 = 36.0
+lit APP_STATUS_H: f64 = 28.0
+lit APP_PANEL_X: f64 = 12.0
+lit APP_PANEL_W: f64 = 300.0
+lit APP_ROW_H: f64 = 30.0
+lit APP_TEXT_PX: f64 = 12.0
+
+// Replaced by the GPU engine once main has a device; nothing runs before that.
+let app_engine = cnn_engine(true, [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](16), [u64](7), [u32](10), [i32](2))
+let app_view = cnn_view(0, 0, 0u, 0u, 0u, 0u, [f32](VIEW_ROOT_WORDS), [f32](16), [f64](6))
+let app_model = "untrained: initial weights"
+
+// ns_lens palette: near-black surfaces, gray text, white accents.
+fn col_background() u32 { return ui_pack_color("#121212") }
+fn col_panel() u32 { return ui_pack_color("#191919") }
+fn col_panel_hi() u32 { return ui_pack_color("#202020") }
+fn col_muted() u32 { return ui_pack_color("#909090") }
+fn col_text() u32 { return ui_pack_color("#dddddd") }
+fn col_accent() u32 { return ui_pack_color("#eeeeee") }
+// Bars and panels float over the view, which shows through them.
+fn col_bar() u32 { return (col_panel() & 0x00ffffffu) | 0xb8000000u }
+fn col_float() u32 { return (col_background() & 0x00ffffffu) | 0xd8000000u }
+
+fn nn_text(r: ref ui_renderer, x: f64, y: f64, text: str, color: u32) {
+    ui_draw_text(r, x, y, text, APP_TEXT_PX, color, UI_FONT_MONO)
+}
+
+fn nn_text_right(r: ref ui_renderer, right: f64, y: f64, text: str, color: u32) {
+    nn_text(r, right - ui_text_width(r, text, APP_TEXT_PX, UI_FONT_MONO), y, text, color)
+}
+
+fn nn_hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
+    return v.mouse_x >= x && v.mouse_x < x + w && v.mouse_y >= y && v.mouse_y < y + h
+}
+
+fn nn_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, label: str) bool {
+    let hovered = nn_hit(v, x, y, w, h)
+    let border = col_muted()
+    if hovered { border = col_accent() }
+    ui_fill_round_rect(r, x, y, w, h, 3.0, col_panel_hi(), 0.0)
+    ui_stroke_round_rect(r, x, y, w, h, 3.0, 1.0, border, 0.0)
+    let tx = x + (w - ui_text_width(r, label, APP_TEXT_PX, UI_FONT_MONO)) * 0.5
+    nn_text(r, tx, ui_text_v_center_y(r, y, h, APP_TEXT_PX, UI_FONT_MONO), label, col_text())
+    return hovered && v.mouse_pressed
+}
+
+fn nn_layer_name(layer: i32) str {
+    if layer == 1 { return "Conv 3x3" }
+    if layer == 2 { return "MaxPool 2x2" }
+    if layer == 3 { return "Conv 3x3" }
+    if layer == 4 { return "MaxPool 2x2" }
+    if layer == 5 { return "Dense ReLU" }
+    if layer == 6 { return "Dense softmax" }
+    return "Input"
+}
+
+fn nn_layer_shape(layer: i32) str {
+    if layer == 1 { return `26x26x{CNN_K1}` }
+    if layer == 2 { return `13x13x{CNN_K1}` }
+    if layer == 3 { return `11x11x{CNN_K2}` }
+    if layer == 4 { return `5x5x{CNN_K2}` }
+    if layer == 5 { return `{CNN_HIDDEN}` }
+    if layer == 6 { return "10" }
+    return "28x28x1"
+}
+
+fn nn_layer_params(layer: i32) i32 {
+    if layer == 1 { return CNN_W2 - CNN_W1 }
+    if layer == 3 { return CNN_W3 - CNN_W2 }
+    if layer == 5 { return CNN_W4 - CNN_W3 }
+    if layer == 6 { return CNN_PARAMS - CNN_W4 }
+    return 0
+}
+
+// The layer list floats at the left; hovering a row highlights that layer.
+// Returns the hovered layer or -1.
+fn nn_layer_panel(r: ref ui_renderer, v: ref view, top: f64) i32 {
+    let height = APP_ROW_H * (VIEW_LAYERS + 2) as f64 + 8.0
+    ui_fill_round_rect(r, APP_PANEL_X, top, APP_PANEL_W, height, 3.0, col_float(), 0.0)
+    ui_stroke_round_rect(r, APP_PANEL_X + 0.5, top + 0.5, APP_PANEL_W - 1.0, height - 1.0, 3.0, 1.0, col_panel_hi(), 0.0)
+    let left = APP_PANEL_X + 12.0
+    let right = APP_PANEL_X + APP_PANEL_W - 12.0
+    nn_text(r, left, ui_text_v_center_y(r, top + 4.0, APP_ROW_H, APP_TEXT_PX, UI_FONT_MONO), "LAYER", col_muted())
+    nn_text(r, left + 128.0, ui_text_v_center_y(r, top + 4.0, APP_ROW_H, APP_TEXT_PX, UI_FONT_MONO), "OUTPUT", col_muted())
+    nn_text_right(r, right, ui_text_v_center_y(r, top + 4.0, APP_ROW_H, APP_TEXT_PX, UI_FONT_MONO), "PARAMS", col_muted())
+    let hovered = -1
+    for layer in 0 to VIEW_LAYERS {
+        let y = top + 4.0 + APP_ROW_H * (layer + 1) as f64
+        let color = col_text()
+        if nn_hit(v, APP_PANEL_X + 4.0, y, APP_PANEL_W - 8.0, APP_ROW_H) {
+            hovered = layer
+            ui_fill_round_rect(r, APP_PANEL_X + 4.0, y, APP_PANEL_W - 8.0, APP_ROW_H, 3.0, col_panel_hi(), 0.0)
+            color = col_accent()
+        }
+        let ty = ui_text_v_center_y(r, y, APP_ROW_H, APP_TEXT_PX, UI_FONT_MONO)
+        nn_text(r, left, ty, nn_layer_name(layer), color)
+        nn_text(r, left + 128.0, ty, nn_layer_shape(layer), color)
+        let params = nn_layer_params(layer)
+        let count = "-"
+        if params > 0 { count = `{params}` }
+        nn_text_right(r, right, ty, count, col_muted())
+    }
+    let y = top + 4.0 + APP_ROW_H * (VIEW_LAYERS + 1) as f64
+    ui_fill_rect(r, left, y, right - left, 1.0, col_panel_hi(), 0.0)
+    let ty = ui_text_v_center_y(r, y, APP_ROW_H, APP_TEXT_PX, UI_FONT_MONO)
+    nn_text(r, left, ty, "Total", col_text())
+    nn_text_right(r, right, ty, `{CNN_PARAMS}`, col_text())
+    return hovered
+}
+
+fn nn_frame(r: ref ui_renderer, v: ref view) {
+    ui_resize(r)
+    let width = v.width as f64
+    let height = v.height as f64
+    ui_begin_frame(r)
+    let panel_top = APP_BAR_H + 12.0
+    let panel_h = APP_ROW_H * (VIEW_LAYERS + 2) as f64 + 8.0
+    let over_ui = v.mouse_y < APP_BAR_H || v.mouse_y >= height - APP_STATUS_H || nn_hit(v, APP_PANEL_X, panel_top, APP_PANEL_W, panel_h)
+    let moving = cnn_view_input(app_view, v, 0.0, 0.0, width, height, over_ui)
+    let hovered = nn_layer_panel(r, v, panel_top)
+    cnn_view_draw(app_view, app_engine, v, hovered, 0.0, 0.0, width, height)
+    // Layer names follow the camera, alternating above and below the walls.
+    for layer in 0 to VIEW_LAYERS {
+        let offset = cnn_view_height(layer) as f64 * 0.5 + 4.0
+        if layer % 2 == 1 { offset = 0.0 - offset - 4.0 }
+        let anchor = cnn_view_project(app_view, cnn_view_x(layer) as f64, offset, 0.0, 0.0, 0.0, width, height)
+        let label = nn_layer_shape(layer)
+        let x = anchor.x as f64 - ui_text_width(r, label, APP_TEXT_PX, UI_FONT_MONO) * 0.5
+        let y = anchor.y as f64 - 16.0
+        if layer % 2 == 1 { y = anchor.y as f64 + 4.0 }
+        let color = col_muted()
+        if layer == hovered { color = col_accent() }
+        if anchor.z > 0.0 && y > APP_BAR_H && y < height - APP_STATUS_H - 16.0 { nn_text(r, x, y, label, color) }
+    }
+    ui_fill_rect(r, 0.0, 0.0, width, APP_BAR_H, col_bar(), 0.0)
+    let bar_y = ui_text_v_center_y(r, 0.0, APP_BAR_H, APP_TEXT_PX, UI_FONT_MONO)
+    nn_text(r, 14.0, bar_y, "nn", col_accent())
+    nn_text(r, 44.0, bar_y, `convolutional network / {VIEW_INSTANCES} neurons / {CNN_PARAMS} parameters`, col_muted())
+    if nn_button(r, v, width - 108.0, 6.0, 96.0, APP_BAR_H - 12.0, "Reset view") { cnn_view_reset_camera(app_view) }
+    ui_fill_rect(r, 0.0, height - APP_STATUS_H, width, APP_STATUS_H, col_bar(), 0.0)
+    let status_y = ui_text_v_center_y(r, height - APP_STATUS_H, APP_STATUS_H, APP_TEXT_PX, UI_FONT_MONO)
+    nn_text(r, 14.0, status_y, app_model, col_muted())
+    nn_text_right(r, width - 14.0, status_y, "gray = sum |weights| per neuron  /  drag rotate  /  right-drag pan  /  scroll zoom", col_muted())
+    ui_flush(r, ui_color_rgba(0.071, 0.071, 0.071, 1.0))
+    view_input_reset(v)
+    if moving || app_view.control[0] > 0.5 || app_view.control[1] > 0.5 { ui_request_render(r, 2) }
+}
+
+fn main() {
+    let directory = mnist_dir()
+    let argument = os_env("NS_ARG0")
+    if argument == "--train" || argument == "--evaluate" || argument == "--gpu-check" || argument == "--benchmark" || argument == "--emit-shaders" {
+        cnn_cli(directory, argument)
+        return
+    }
+    if argument.len > 0 {
+        print(`nn: unknown option {argument}. Use --train [1..{CNN_EPOCHS}], --evaluate, --gpu-check, --benchmark or --emit-shaders; no option opens the window.\n`)
+        return
+    }
+    let v = view_create("nn", 1280, 800)
+    if !gpu_request_device(v) {
+        print("nn: a GPU is required.\n")
+        view_close(v)
+        return
+    }
+    app_engine = cnn_create(true)
+    app_view = cnn_view_create()
+    let checkpoint = `{mnist_find("model-cnn.nn")}/model-cnn.nn`
+    if cnn_load(app_engine, checkpoint) {
+        app_model = `{checkpoint} / {app_engine.progress[0] / 60000} epochs`
+    }
+    let r = ui_renderer_create(v)
+    v.on_frame({ fv in
+        nn_frame(r, fv)
+    })
+    v.on_terminate({ cv in
+        cnn_view_release(app_view)
+        cnn_release(app_engine)
+        ui_renderer_destroy(r)
+    })
+    view_run(v)
+}

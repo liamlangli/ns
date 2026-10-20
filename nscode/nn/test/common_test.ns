@@ -1,0 +1,20 @@
+fn main() {
+    // Adam bias correction, the learning-rate decay and the window's loss
+    // all go through these, so check them against known values.
+    assert nn_abs(nn_exp(1.0) - 2.718281828459045) < 0.000000001
+    assert nn_abs(nn_exp(-3.5) - 0.0301973834223185) < 0.000000001
+    assert nn_exp(-100.0) == 0.0
+    assert nn_abs(nn_log(10.0) - 2.302585092994046) < 0.000000001
+    assert nn_abs(nn_log(0.001) + 6.907755278982137) < 0.000000001
+    assert nn_abs(nn_exp(nn_log(0.999) * 1000.0) - 0.3676954247709635) < 0.0000001
+    let state = [i64](1)
+    state[0] = 17
+    let total: f64 = 0.0
+    for index in 0 to 1000 {
+        let value = nn_random(state)
+        assert value > 0.0 && value < 1.0
+        total = total + value
+    }
+    assert nn_abs(total / 1000.0 - 0.5) < 0.05
+    print("nn: exp, log and random passed\n")
+}

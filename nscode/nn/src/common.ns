@@ -1,0 +1,52 @@
+use std
+
+fn nn_abs(value: f64) f64 {
+    if value < 0.0 { return -value }
+    return value
+}
+
+// Range reduction, Taylor series, then squaring. Softmax needs x <= 0.
+fn nn_exp(value: f64) f64 {
+    if value < -80.0 { return 0.0 }
+    let reduced = value
+    let squares = 0
+    loop nn_abs(reduced) > 0.5 {
+        reduced = reduced * 0.5
+        squares = squares + 1
+    }
+    let term: f64 = 1.0
+    let result: f64 = 1.0
+    for index in 1 to 12 {
+        term = term * reduced / index as f64
+        result = result + term
+    }
+    for index in 0 to squares { result = result * result }
+    return result
+}
+
+fn nn_log(value: f64) f64 {
+    let scaled = value
+    if scaled < 0.000000000001 { scaled = 0.000000000001 }
+    let powers = 0
+    loop scaled < 1.0 {
+        scaled = scaled * 2.0
+        powers = powers - 1
+    }
+    loop scaled > 2.0 {
+        scaled = scaled * 0.5
+        powers = powers + 1
+    }
+    let ratio = (scaled - 1.0) / (scaled + 1.0)
+    let term = ratio
+    let total: f64 = 0.0
+    for index in 0 to 14 {
+        total = total + term / (index * 2 + 1) as f64
+        term = term * ratio * ratio
+    }
+    return 2.0 * total + powers as f64 * 0.6931471805599453
+}
+
+fn nn_random(state: [i64]) f64 {
+    state[0] = (state[0] * 48271) % 2147483647
+    return state[0] as f64 / 2147483647.0
+}

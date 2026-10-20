@@ -1,0 +1,52 @@
+fn main() {
+    let engine = cnn_create(false)
+    for pixel in 0 to 784 { engine.images[pixel] = 0.1 + (pixel % 11) as f32 * 0.03 }
+    engine.images[784] = 3.0
+    cnn_forward(engine, 1)
+    let total: f64 = 0.0
+    for digit in 0 to 10 { total = total + engine.results[digit] as f64 }
+    assert nn_abs(total - 1.0) < 0.00001
+    cnn_backward(engine, 1)
+    let checks = [0, 8, CNN_B1 + 1, CNN_W2 + 13, CNN_W2 + 97, CNN_B2 + 2, CNN_W3 + 34, CNN_W3 + 8440, CNN_B3 + 3, CNN_W4 + 70, CNN_W4 + 5, CNN_B4 + 9]
+    let nonzero = 0
+    let maximum: f64 = 0.0
+    for index in checks {
+        let original = engine.weights[index]
+        let actual = engine.gradients[index] as f64
+        if nn_abs(actual) > 0.0001 { nonzero = nonzero + 1 }
+        lit epsilon: f32 = 0.003
+        engine.weights[index] = original + epsilon
+        cnn_forward(engine, 1)
+        let plus = -nn_log(engine.results[3] as f64)
+        engine.weights[index] = original - epsilon
+        cnn_forward(engine, 1)
+        let minus = -nn_log(engine.results[3] as f64)
+        engine.weights[index] = original
+        let numerical = (plus - minus) / (2.0 * epsilon as f64)
+        let error = nn_abs(numerical - actual)
+        if error > maximum { maximum = error }
+        assert error < 0.003 + nn_abs(actual) * 0.03
+    }
+    assert nonzero >= 4
+    print(`CNN finite differences: {checks.len} weights/biases across both convolutions and dense; max error x1e6 {maximum * 1000000.0}\n`)
+    // Signed, tiny Adam second moments must survive checkpoint encoding.
+    let bytes = [u8](16)
+    cnn_put_number(bytes, 0, -0.123456789)
+    cnn_put_number(bytes, 8, 0.000000001234)
+    assert nn_abs(cnn_get_number(bytes, 0) + 0.123456789) < 0.000000000002
+    assert nn_abs(cnn_get_number(bytes, 8) - 0.000000001234) < 0.000000000002
+    cnn_release(engine)
+    assert shader_transpile_stage(cs_cnn_conv, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_adam, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_adam, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_adam, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_adam, "wgsl", "compute").len > 0
+    print("CNN: derivatives, checkpoint numbers and shader targets passed\n")
+}

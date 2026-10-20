@@ -1,0 +1,83 @@
+fn main() {
+    // Beveled cube: 44 triangles inside the unit cube, unit normals, every
+    // triangle wound counterclockwise around its outward normal.
+    let mesh = cnn_view_cube()
+    assert mesh.len == VIEW_CUBE_VERTICES * 6
+    for triangle in 0 to VIEW_CUBE_VERTICES / 3 {
+        let base = triangle * 18
+        let a = float3 { mesh[base], mesh[base + 1], mesh[base + 2] }
+        let b = float3 { mesh[base + 6], mesh[base + 7], mesh[base + 8] }
+        let c = float3 { mesh[base + 12], mesh[base + 13], mesh[base + 14] }
+        let normal = float3 { mesh[base + 3], mesh[base + 4], mesh[base + 5] }
+        assert nn_abs(dot(normal, normal) as f64 - 1.0) < 0.0001
+        assert dot(cross(b - a, c - a), normal) > 0.0
+        // The face points outward: its centre lies along the normal.
+        let centre = float3 { (a.x + b.x + c.x) / 3.0, (a.y + b.y + c.y) / 3.0, (a.z + b.z + c.z) / 3.0 }
+        assert dot(centre, normal) > 0.3
+        for corner in 0 to 3 {
+            for axis in 0 to 3 { assert nn_abs(mesh[base + corner * 6 + axis] as f64) <= 0.5 }
+        }
+    }
+
+    // One instance per neuron, laid out layer by layer.
+    assert VIEW_INSTANCES == 784 + 676 * CNN_K1 + 169 * CNN_K1 + 121 * CNN_K2 + CNN_FEATURES + CNN_HIDDEN + 10
+    assert cnn_view_layer(0) == 0 && cnn_view_layer(VIEW_I1) == 1 && cnn_view_layer(VIEW_INSTANCES - 1) == 6
+    let first = cnn_view_cell(0)
+    let last = cnn_view_cell(VIEW_INSTANCES - 1)
+    assert first.x == 0.0 && last.x == cnn_view_x(6)
+    // Image rows run downward and columns across: pixel (1, 0) sits one cube
+    // further along z than (0, 0), and (0, 1) one cube lower.
+    assert cnn_view_cell(1).z - first.z == 1.0
+    assert first.y - cnn_view_cell(28).y == 1.0
+
+    // Weight mode on the CPU: the top-left input pixel only feeds tap (0, 0)
+    // of each first-layer kernel; a first-layer neuron reads its 9 taps and bias.
+    let engine = cnn_create(false)
+    let values = [f32](VIEW_INSTANCES + VIEW_LAYERS)
+    let root = [f32](16)
+    assert shader_host_buffer(0, engine.weights)
+    assert shader_host_buffer(7, values)
+    assert shader_host_root(root)
+    for instance in 0 to VIEW_INSTANCES {
+        shader_host_invocation(instance, 0, 0)
+        cs_cnn_view()
+    }
+    for layer in 0 to VIEW_LAYERS {
+        shader_host_invocation(layer, 0, 0)
+        cs_cnn_view_scale()
+    }
+    let corner: f64 = 0.0
+    for channel in 0 to CNN_K1 { corner = corner + nn_abs(engine.weights[CNN_W1 + channel * 9] as f64) }
+    assert nn_abs(values[0] as f64 - corner) < 0.0001
+    let incoming: f64 = nn_abs(engine.weights[CNN_B1 + 2] as f64)
+    for tap in 0 to 9 { incoming = incoming + nn_abs(engine.weights[CNN_W1 + 18 + tap] as f64) }
+    assert nn_abs(values[VIEW_I1 + 2 * 676 + 100] as f64 - incoming) < 0.0001
+    // Each layer's brightest neuron maps to exactly 1.
+    for layer in 0 to VIEW_LAYERS {
+        let start = cnn_view_start(layer)
+        let end = VIEW_INSTANCES
+        if layer < 6 { end = cnn_view_start(layer + 1) }
+        let maximum: f64 = 0.0
+        for instance in start to end {
+            let gray = values[instance] as f64 * values[VIEW_INSTANCES + layer] as f64
+            assert gray >= 0.0 && gray <= 1.00001
+            if gray > maximum { maximum = gray }
+        }
+        assert nn_abs(maximum - 1.0) < 0.00001
+    }
+
+    cnn_release(engine)
+
+    assert shader_transpile_stage(vs_cnn_view, "msl", "vertex").len > 0
+    assert shader_transpile_stage(vs_cnn_view, "glsl", "vertex").len > 0
+    assert shader_transpile_stage(vs_cnn_view, "hlsl", "vertex").len > 0
+    assert shader_transpile_stage(vs_cnn_view, "wgsl", "vertex").len > 0
+    assert shader_transpile_stage(fs_cnn_view, "msl", "fragment").len > 0
+    assert shader_transpile_stage(fs_cnn_view, "wgsl", "fragment").len > 0
+    assert shader_transpile_stage(cs_cnn_view, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_view, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_view, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_view, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_view_scale, "wgsl", "compute").len > 0
+    print(`CNN view: {VIEW_INSTANCES} neuron cubes, beveled mesh, weight grays, shader targets passed\n`)
+}

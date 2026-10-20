@@ -1,0 +1,234 @@
+use gpu
+
+struct cnn_engine {
+    device: bool,
+    weights: [f32],
+    images: [f32],
+    activations: [f32],
+    deltas: [f32],
+    gradients: [f32],
+    results: [f32],
+    moments: [f32],
+    root: [f32],
+    memory: [u64],
+    programs: [u32],
+    progress: [i32]
+}
+
+fn cnn_stage(engine: cnn_engine, side: i32, output_side: i32, inputs: i32, outputs: i32, source: i32, destination: i32, weights: i32, bias: i32) {
+    engine.root[1] = side as f32
+    engine.root[2] = output_side as f32
+    engine.root[3] = inputs as f32
+    engine.root[4] = outputs as f32
+    engine.root[5] = source as f32
+    engine.root[6] = destination as f32
+    engine.root[7] = weights as f32
+    engine.root[8] = bias as f32
+    engine.root[9] = 0.0
+}
+
+fn cnn_dense_stage(engine: cnn_engine, inputs: i32, outputs: i32, source: i32, destination: i32, weights: i32, relu: bool) {
+    cnn_stage(engine, 0, 0, inputs, outputs, source, destination, weights, weights + inputs * outputs)
+    if relu { engine.root[9] = 1.0 }
+}
+
+fn cnn_bind_host(engine: cnn_engine) {
+    assert shader_host_buffer(0, engine.weights)
+    assert shader_host_buffer(1, engine.images)
+    assert shader_host_buffer(2, engine.activations)
+    assert shader_host_buffer(3, engine.deltas)
+    assert shader_host_buffer(4, engine.gradients)
+    assert shader_host_buffer(5, engine.results)
+    assert shader_host_buffer(6, engine.moments)
+    assert shader_host_root(engine.root)
+}
+
+fn cnn_launch(engine: cnn_engine, program: i32, width: i32, height: i32, label: str) {
+    if engine.device {
+        gpu_set_shader(engine.programs[program])
+        gpu_set_root_data(engine.root, 64)
+        for slot in 0 to 7 { gpu_set_storage_at(slot, engine.memory[slot]) }
+        gpu_dispatch(label, width, height, 1)
+    } else {
+        cnn_bind_host(engine)
+        for y in 0 to height {
+            for x in 0 to width {
+                shader_host_invocation(x, y, 0)
+                if program == 0 { cs_cnn_conv() }
+                if program == 1 { cs_cnn_pool() }
+                if program == 2 { cs_cnn_dense() }
+                if program == 3 { cs_cnn_softmax() }
+                if program == 4 { cs_cnn_dense_backward() }
+                if program == 5 { cs_cnn_dense_gradient() }
+                if program == 6 { cs_cnn_pool_backward() }
+                if program == 7 { cs_cnn_conv_backward() }
+                if program == 8 { cs_cnn_conv_gradient() }
+                if program == 9 { cs_cnn_adam() }
+            }
+        }
+    }
+}
+
+fn cnn_create(device: bool) cnn_engine {
+    let engine = cnn_engine(device, [f32](CNN_PARAMS), [f32](CNN_BATCH * CNN_IMAGE), [f32](CNN_BATCH * CNN_ACTS), [f32](CNN_BATCH * CNN_ACTS), [f32](CNN_PARAMS), [f32](CNN_BATCH * 12), [f32](CNN_PARAMS * 2), [f32](16), [u64](7), [u32](10), [i32](2))
+    let random = [i64](1)
+    random[0] = 17
+    for index in 0 to CNN_PARAMS {
+        let scale: f64 = 0.0
+        if index < CNN_B1 { scale = sqrt(6.0 / 9.0) }
+        if index >= CNN_W2 && index < CNN_B2 { scale = sqrt(6.0 / (9 * CNN_K1) as f64) }
+        if index >= CNN_W3 && index < CNN_B3 { scale = sqrt(6.0 / CNN_FEATURES as f64) }
+        if index >= CNN_W4 && index < CNN_B4 { scale = sqrt(6.0 / CNN_HIDDEN as f64) }
+        engine.weights[index] = ((nn_random(random) * 2.0 - 1.0) * scale) as f32
+    }
+    if device {
+        if gpu_storage_slot_count() < 7 { mnist_fail("CNN needs seven GPU storage slots") }
+        let sizes = [CNN_PARAMS, CNN_BATCH * CNN_IMAGE, CNN_BATCH * CNN_ACTS, CNN_BATCH * CNN_ACTS, CNN_PARAMS, CNN_BATCH * 12, CNN_PARAMS * 2]
+        let names = ["CNN parameters", "MNIST minibatch pixels and labels", "CNN forward activations", "CNN activation gradients", "CNN parameter gradients", "CNN probabilities and predictions", "CNN Adam first and second moments"]
+        for slot in 0 to 7 {
+            engine.memory[slot] = gpu_malloc((sizes[slot] * 4) as u64, GPU_MEM_DEVICE, names[slot])
+            if engine.memory[slot] == 0 { mnist_fail(`GPU allocation failed: {names[slot]}`) }
+        }
+        let program = gpu_shader_compute(cs_cnn_conv)
+        engine.programs[0] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_pool)
+        engine.programs[1] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_dense)
+        engine.programs[2] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_softmax)
+        engine.programs[3] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_dense_backward)
+        engine.programs[4] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_dense_gradient)
+        engine.programs[5] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_pool_backward)
+        engine.programs[6] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_conv_backward)
+        engine.programs[7] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_conv_gradient)
+        engine.programs[8] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_adam)
+        engine.programs[9] = program.resource_id
+        for index in 0 to 10 {
+            if engine.programs[index] == 0u { mnist_fail(`CNN shader compilation failed: kernel {index}`) }
+        }
+        gpu_write(engine.memory[0], engine.weights, (CNN_PARAMS * 4) as u64)
+        gpu_write(engine.memory[6], engine.moments, (CNN_PARAMS * 8) as u64)
+    }
+    return engine
+}
+
+// Commit and advance the documented three-frame ring. Reusing the first
+// frame's allocation waits for its completion on the backend. No polling or
+// assumption that gpu_commit/gpu_read themselves wait for device completion.
+fn cnn_sync(engine: cnn_engine) {
+    if !engine.device { return }
+    gpu_commit()
+    let fence = [f32](16)
+    for frame in 0 to 3 {
+        gpu_set_shader(engine.programs[3])
+        gpu_set_root_data(fence, 64)
+        for slot in 0 to 7 { gpu_set_storage_at(slot, engine.memory[slot]) }
+        gpu_dispatch("CNN completed readback fence", 1, 1, 1)
+        gpu_commit()
+    }
+}
+
+fn cnn_results(engine: cnn_engine) {
+    cnn_sync(engine)
+    if engine.device { assert gpu_read(engine.memory[5], engine.results, (CNN_BATCH * 12 * 4) as u64) }
+}
+
+fn cnn_download(engine: cnn_engine) {
+    cnn_results(engine)
+    if !engine.device { return }
+    assert gpu_read(engine.memory[0], engine.weights, (CNN_PARAMS * 4) as u64)
+    assert gpu_read(engine.memory[2], engine.activations, (CNN_BATCH * CNN_ACTS * 4) as u64)
+    assert gpu_read(engine.memory[3], engine.deltas, (CNN_BATCH * CNN_ACTS * 4) as u64)
+    assert gpu_read(engine.memory[4], engine.gradients, (CNN_PARAMS * 4) as u64)
+    assert gpu_read(engine.memory[6], engine.moments, (CNN_PARAMS * 8) as u64)
+}
+
+fn cnn_forward(engine: cnn_engine, count: i32) {
+    assert count > 0 && count <= CNN_BATCH
+    engine.root[0] = count as f32
+    if engine.device { gpu_write(engine.memory[1], engine.images, (count * CNN_IMAGE * 4) as u64) }
+    cnn_stage(engine, 28, 26, 1, CNN_K1, -1, CNN_C1, CNN_W1, CNN_B1)
+    cnn_launch(engine, 0, 676 * CNN_K1, count, "CNN first convolution and ReLU")
+    cnn_stage(engine, 26, 13, CNN_K1, CNN_K1, CNN_C1, CNN_P1, 0, 0)
+    cnn_launch(engine, 1, 169 * CNN_K1, count, "CNN first max pooling")
+    cnn_stage(engine, 13, 11, CNN_K1, CNN_K2, CNN_P1, CNN_C2, CNN_W2, CNN_B2)
+    cnn_launch(engine, 0, 121 * CNN_K2, count, "CNN second convolution and ReLU")
+    cnn_stage(engine, 11, 5, CNN_K2, CNN_K2, CNN_C2, CNN_P2, 0, 0)
+    cnn_launch(engine, 1, CNN_FEATURES, count, "CNN second max pooling")
+    cnn_dense_stage(engine, CNN_FEATURES, CNN_HIDDEN, CNN_P2, CNN_H1, CNN_W3, true)
+    cnn_launch(engine, 2, CNN_HIDDEN, count, "CNN hidden dense layer and ReLU")
+    cnn_dense_stage(engine, CNN_HIDDEN, 10, CNN_H1, CNN_LOGITS, CNN_W4, false)
+    cnn_launch(engine, 2, 10, count, "CNN ten-class dense projection")
+    cnn_launch(engine, 3, count, 1, "CNN softmax and cross-entropy derivative")
+}
+
+fn cnn_backward(engine: cnn_engine, count: i32) {
+    cnn_dense_stage(engine, CNN_HIDDEN, 10, CNN_H1, CNN_LOGITS, CNN_W4, false)
+    cnn_launch(engine, 4, CNN_HIDDEN, count, "CNN output layer input gradients")
+    cnn_launch(engine, 5, CNN_PARAMS - CNN_W4, 1, "CNN output layer parameter gradient reduction")
+    cnn_dense_stage(engine, CNN_FEATURES, CNN_HIDDEN, CNN_P2, CNN_H1, CNN_W3, true)
+    cnn_launch(engine, 4, CNN_FEATURES, count, "CNN hidden layer input gradients")
+    cnn_launch(engine, 5, CNN_W4 - CNN_W3, 1, "CNN hidden layer parameter gradient reduction")
+    cnn_stage(engine, 11, 5, CNN_K2, CNN_K2, CNN_C2, CNN_P2, 0, 0)
+    cnn_launch(engine, 6, 121 * CNN_K2, count, "CNN second pooling and ReLU backward")
+    cnn_stage(engine, 13, 11, CNN_K1, CNN_K2, CNN_P1, CNN_C2, CNN_W2, CNN_B2)
+    cnn_launch(engine, 8, CNN_W3 - CNN_W2, 1, "CNN second convolution parameter gradient reduction")
+    cnn_launch(engine, 7, 169 * CNN_K1, count, "CNN second convolution input gradients")
+    cnn_stage(engine, 26, 13, CNN_K1, CNN_K1, CNN_C1, CNN_P1, 0, 0)
+    cnn_launch(engine, 6, 676 * CNN_K1, count, "CNN first pooling and ReLU backward")
+    cnn_stage(engine, 28, 26, 1, CNN_K1, -1, CNN_C1, CNN_W1, CNN_B1)
+    cnn_launch(engine, 8, CNN_W2, 1, "CNN first convolution parameter gradient reduction")
+}
+
+fn cnn_update(engine: cnn_engine, count: i32) {
+    engine.progress[1] = engine.progress[1] + 1
+    let step = engine.progress[1] as f64
+    let epoch = engine.progress[0] / 60000
+    // Exponential decay from 0.0015, ending near 0.00006 in the last epoch.
+    let rate = 0.0015 * nn_exp(nn_log(0.7) * epoch as f64)
+    engine.root[12] = rate as f32
+    engine.root[13] = (1.0 / (1.0 - nn_exp(nn_log(0.9) * step))) as f32
+    engine.root[14] = (1.0 / (1.0 - nn_exp(nn_log(0.999) * step))) as f32
+    cnn_launch(engine, 9, CNN_PARAMS, 1, "CNN Adam parameter update")
+    engine.progress[0] = engine.progress[0] + count
+}
+
+fn cnn_fill(engine: cnn_engine, data: mnist_dataset, order: [i32], start: i32, count: i32, shuffled: bool) {
+    let random = [i64](1)
+    for item in 0 to count {
+        let sample = start + item
+        let shift_x = 0
+        let shift_y = 0
+        if shuffled {
+            sample = order[start + item]
+            // Training batches shift each image by up to two pixels; MNIST
+            // digits sit in a 20x20 box with a four-pixel margin.
+            random[0] = (engine.progress[0] + item) as i64 * 7919 % 2147483646 + 1
+            shift_x = (nn_random(random) * 5.0) as i32 - 2
+            shift_y = (nn_random(random) * 5.0) as i32 - 2
+        }
+        for pixel in 0 to 784 {
+            let x = pixel % 28 - shift_x
+            let y = pixel / 28 - shift_y
+            let value: f32 = 0.0
+            if x >= 0 && x < 28 && y >= 0 && y < 28 { value = data.images[16 + sample * 784 + y * 28 + x] as f32 / 255.0 }
+            engine.images[item * CNN_IMAGE + pixel] = value
+        }
+        engine.images[item * CNN_IMAGE + 784] = data.labels[8 + sample] as f32
+    }
+}
+
+fn cnn_release(engine: cnn_engine) {
+    if engine.device {
+        cnn_sync(engine)
+        for program in 0 to 10 { gpu_shader_destroy(engine.programs[program]) }
+        for slot in 0 to 7 { gpu_free(engine.memory[slot]) }
+    }
+    shader_host_release()
+}

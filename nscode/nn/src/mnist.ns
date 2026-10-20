@@ -1,0 +1,93 @@
+use os
+
+lit MNIST_PIXELS = 784
+
+struct mnist_dataset {
+    images: [u8],
+    labels: [u8],
+    count: i32
+}
+
+fn mnist_u32(bytes: [u8], offset: i32) i64 {
+    return (bytes[offset] as i64 << 24) + (bytes[offset + 1] as i64 << 16) + (bytes[offset + 2] as i64 << 8) + bytes[offset + 3] as i64
+}
+
+fn mnist_put_u32(bytes: [u8], offset: i32, value: i64) {
+    bytes[offset] = ((value >> 24) & 255) as u8
+    bytes[offset + 1] = ((value >> 16) & 255) as u8
+    bytes[offset + 2] = ((value >> 8) & 255) as u8
+    bytes[offset + 3] = (value & 255) as u8
+}
+
+fn mnist_fail(message: str) {
+    print(`nn: {message}\n`)
+    assert false
+}
+
+// The directory holding `file`: NS_MNIST_DIR, then the project's bin/mnist
+// below where `ns run` started (PWD survives the bundle's change of directory,
+// and the build replaces the bundle's files), then the bundle's own copy.
+fn mnist_find(file: str) str {
+    let custom = os_env("NS_MNIST_DIR")
+    if custom.len > 0 { return custom }
+    let launch = os_env("PWD")
+    if launch.len > 0 {
+        if os_file_size(`{launch}/bin/mnist/{file}`) > 0 { return `{launch}/bin/mnist` }
+        if os_file_size(`{launch}/nscode/nn/bin/mnist/{file}`) > 0 { return `{launch}/nscode/nn/bin/mnist` }
+    }
+    if os_file_size(`bin/mnist/{file}`) > 0 { return "bin/mnist" }
+    return "nscode/nn/bin/mnist"
+}
+
+fn mnist_dir() str {
+    return mnist_find("t10k-labels-idx1-ubyte")
+}
+
+fn mnist_read(path: str, expected_size: i32) [u8] {
+    if os_file_size(path) != expected_size as i64 {
+        mnist_fail(`Missing or invalid {path}. Run: python3 nscode/nn/scripts/download_mnist.py`)
+    }
+    let bytes = [u8](expected_size)
+    if os_read_file_bytes(path, bytes, expected_size) != expected_size as i64 {
+        mnist_fail(`Could not read {path}`)
+    }
+    return bytes
+}
+
+fn mnist_valid(images: [u8], labels: [u8], count: i32) bool {
+    if images.len != 16 + count * MNIST_PIXELS || labels.len != 8 + count { return false }
+    if mnist_u32(images, 0) != 2051 || mnist_u32(labels, 0) != 2049 { return false }
+    if mnist_u32(images, 4) != count as i64 || mnist_u32(labels, 4) != count as i64 { return false }
+    if mnist_u32(images, 8) != 28 || mnist_u32(images, 12) != 28 { return false }
+    for index in 0 to count {
+        if labels[8 + index] >= 10 { return false }
+    }
+    return true
+}
+
+fn mnist_load(directory: str, training: bool) mnist_dataset {
+    let prefix = "t10k"
+    let count = 10000
+    if training {
+        prefix = "train"
+        count = 60000
+    }
+    let images = mnist_read(`{directory}/{prefix}-images-idx3-ubyte`, 16 + count * MNIST_PIXELS)
+    let labels = mnist_read(`{directory}/{prefix}-labels-idx1-ubyte`, 8 + count)
+    if !mnist_valid(images, labels, count) { mnist_fail(`Invalid {prefix} IDX headers or labels`) }
+    return mnist_dataset(images, labels, count)
+}
+
+fn mnist_shuffle(order: [i32], count: i32, epoch: i32) {
+    for index in 0 to count { order[index] = index }
+    let state = [i64](1)
+    state[0] = 1234 + epoch as i64
+    let remaining = count
+    loop remaining > 1 {
+        let other = (nn_random(state) * remaining as f64) as i32
+        remaining = remaining - 1
+        let saved = order[remaining]
+        order[remaining] = order[other]
+        order[other] = saved
+    }
+}

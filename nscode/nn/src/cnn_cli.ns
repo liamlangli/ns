@@ -1,0 +1,218 @@
+fn cnn_difference(left: [f32], right: [f32], count: i32) f64 {
+    let maximum: f64 = 0.0
+    for index in 0 to count {
+        let error = nn_abs(left[index] as f64 - right[index] as f64)
+        if error > maximum { maximum = error }
+    }
+    return maximum
+}
+
+fn cnn_verify(data: mnist_dataset) {
+    let cpu = cnn_create(false)
+    let device = cnn_create(true)
+    // Read back the first upload after wrapping the three-frame ring. This
+    // catches staging data overwritten before its GPU copy has completed.
+    cnn_results(device)
+    let uploaded = [f32](CNN_PARAMS)
+    assert gpu_read(device.memory[0], uploaded, (CNN_PARAMS * 4) as u64)
+    assert cnn_difference(cpu.weights, uploaded, CNN_PARAMS) == 0.0
+    let order = [i32](1)
+    cnn_fill(cpu, data, order, 0, 2, false)
+    cnn_fill(device, data, order, 0, 2, false)
+    cnn_forward(cpu, 2)
+    cnn_forward(device, 2)
+    cnn_backward(cpu, 2)
+    cnn_backward(device, 2)
+    cnn_download(device)
+    let activations = cnn_difference(cpu.activations, device.activations, 2 * CNN_ACTS)
+    let probabilities = cnn_difference(cpu.results, device.results, 24)
+    let gradients = cnn_difference(cpu.gradients, device.gradients, CNN_PARAMS)
+    let deltas = cnn_difference(cpu.deltas, device.deltas, 2 * CNN_ACTS)
+    print(`CPU/GPU max absolute error x1e6: activations {activations * 1000000.0}, probabilities {probabilities * 1000000.0}, gradients {gradients * 1000000.0}, deltas {deltas * 1000000.0}\n`)
+    assert activations < 0.0001 && probabilities < 0.0001
+    assert gradients < 0.0002 && deltas < 0.0002
+    cnn_update(cpu, 2)
+    cnn_update(device, 2)
+    cnn_download(device)
+    let weights = cnn_difference(cpu.weights, device.weights, CNN_PARAMS)
+    let moments = cnn_difference(cpu.moments, device.moments, CNN_PARAMS * 2)
+    print(`CPU/GPU Adam error x1e6: weights {weights * 1000000.0}, moments {moments * 1000000.0}\n`)
+    assert weights < 0.0002 && moments < 0.0001
+    cnn_release(cpu)
+    cnn_release(device)
+    print("CNN: real GPU forward, backward and Adam match CPU execution of the same ns kernels\n")
+}
+
+lit CNN_CHECKPOINT_BYTES = 32 + CNN_PARAMS * 3 * 8
+
+fn cnn_put_number(bytes: [u8], offset: i32, value: f64) {
+    assert value == value && nn_abs(value) < 1000.0
+    let number = (value * 1000000000000.0) as i64
+    mnist_put_u32(bytes, offset, number >> 32)
+    mnist_put_u32(bytes, offset + 4, number)
+}
+
+fn cnn_get_number(bytes: [u8], offset: i32) f64 {
+    let high = mnist_u32(bytes, offset)
+    if high >= 2147483648 { high = high - 4294967296 }
+    let low = mnist_u32(bytes, offset + 4)
+    return ((high << 32) + low) as f64 / 1000000000000.0
+}
+
+fn cnn_save(engine: cnn_engine, path: str) bool {
+    cnn_download(engine)
+    let bytes = [u8](CNN_CHECKPOINT_BYTES)
+    mnist_put_u32(bytes, 0, 1129205297)
+    mnist_put_u32(bytes, 4, 2)
+    mnist_put_u32(bytes, 8, CNN_PARAMS)
+    mnist_put_u32(bytes, 12, CNN_BATCH)
+    mnist_put_u32(bytes, 16, engine.progress[0])
+    mnist_put_u32(bytes, 20, engine.progress[1])
+    mnist_put_u32(bytes, 24, CNN_ACTS)
+    mnist_put_u32(bytes, 28, 0)
+    for index in 0 to CNN_PARAMS { cnn_put_number(bytes, 32 + index * 8, engine.weights[index] as f64) }
+    for index in 0 to CNN_PARAMS * 2 { cnn_put_number(bytes, 32 + (CNN_PARAMS + index) * 8, engine.moments[index] as f64) }
+    return os_write_file_bytes_atomic(path, bytes, bytes.len) == 1
+}
+
+fn cnn_load(engine: cnn_engine, path: str) bool {
+    if os_file_size(path) != CNN_CHECKPOINT_BYTES as i64 { return false }
+    let bytes = [u8](CNN_CHECKPOINT_BYTES)
+    if os_read_file_bytes(path, bytes, bytes.len) != bytes.len as i64 { return false }
+    if mnist_u32(bytes, 0) != 1129205297 || mnist_u32(bytes, 4) != 2 { return false }
+    if mnist_u32(bytes, 8) != CNN_PARAMS || mnist_u32(bytes, 12) != CNN_BATCH || mnist_u32(bytes, 24) != CNN_ACTS { return false }
+    let seen = mnist_u32(bytes, 16)
+    let steps = mnist_u32(bytes, 20)
+    if seen > CNN_EPOCHS * 60000 || steps > CNN_EPOCHS * 938 { return false }
+    for index in 0 to CNN_PARAMS * 3 {
+        let value = cnn_get_number(bytes, 32 + index * 8)
+        if nn_abs(value) >= 1000.0 { return false }
+        if index >= CNN_PARAMS * 2 && value < 0.0 { return false }
+    }
+    for index in 0 to CNN_PARAMS { engine.weights[index] = cnn_get_number(bytes, 32 + index * 8) as f32 }
+    for index in 0 to CNN_PARAMS * 2 { engine.moments[index] = cnn_get_number(bytes, 32 + (CNN_PARAMS + index) * 8) as f32 }
+    engine.progress[0] = seen as i32
+    engine.progress[1] = steps as i32
+    if engine.device {
+        gpu_write(engine.memory[0], engine.weights, (CNN_PARAMS * 4) as u64)
+        gpu_write(engine.memory[6], engine.moments, (CNN_PARAMS * 8) as u64)
+    }
+    return true
+}
+
+fn cnn_evaluate(engine: cnn_engine, testing: mnist_dataset) f64 {
+    let order = [i32](1)
+    let correct = 0
+    let start = 0
+    loop start < testing.count {
+        let count = CNN_BATCH
+        if start + count > testing.count { count = testing.count - start }
+        cnn_fill(engine, testing, order, start, count, false)
+        cnn_forward(engine, count)
+        cnn_results(engine)
+        for item in 0 to count {
+            if engine.results[item * 12 + 10] as i32 == testing.labels[8 + start + item] as i32 { correct = correct + 1 }
+        }
+        start = start + count
+    }
+    return correct as f64 * 100.0 / testing.count as f64
+}
+
+fn cnn_benchmark(data: mnist_dataset) {
+    let cpu = cnn_create(false)
+    let device = cnn_create(true)
+    let order = [i32](1)
+    cnn_fill(cpu, data, order, 0, CNN_BATCH, false)
+    cnn_fill(device, data, order, 0, CNN_BATCH, false)
+    cnn_forward(device, CNN_BATCH)
+    cnn_backward(device, CNN_BATCH)
+    cnn_results(device)
+    lit repetitions = 10
+    let start = os_time()
+    for iteration in 0 to repetitions {
+        cnn_forward(cpu, CNN_BATCH)
+        cnn_backward(cpu, CNN_BATCH)
+        cnn_update(cpu, CNN_BATCH)
+    }
+    let cpu_time = os_time() - start
+    start = os_time()
+    for iteration in 0 to repetitions {
+        cnn_forward(device, CNN_BATCH)
+        cnn_backward(device, CNN_BATCH)
+        cnn_update(device, CNN_BATCH)
+        gpu_commit()
+    }
+    cnn_results(device)
+    let gpu_time = os_time() - start
+    print(`CNN training benchmark: {repetitions} batches x {CNN_BATCH}; CPU {cpu_time * 1000.0}ms, GPU {gpu_time * 1000.0}ms, speedup {cpu_time / gpu_time}x\n`)
+    print("Times include host dispatch, batch uploads and final GPU synchronization; exclude shader compilation and IDX decoding.\n")
+    cnn_release(cpu)
+    cnn_release(device)
+}
+
+fn cnn_cli(directory: str, mode: str) {
+    if mode == "--emit-shaders" {
+        cnn_export_shaders(`{directory}/../shaders`)
+        return
+    }
+    // nn runs on the GPU only; there is no CPU training or inference mode.
+    let headless = view {}
+    if !gpu_request_device(ref headless) { mnist_fail("nn needs a GPU device") }
+    let testing = mnist_load(directory, false)
+    if mode == "--gpu-check" {
+        cnn_verify(testing)
+        gpu_destroy_device()
+        return
+    }
+    if mode == "--benchmark" {
+        cnn_benchmark(testing)
+        gpu_destroy_device()
+        return
+    }
+    let engine = cnn_create(true)
+    let checkpoint = `{directory}/model-cnn.nn`
+    if mode == "--evaluate" {
+        if !cnn_load(engine, checkpoint) { mnist_fail(`Missing or invalid CNN checkpoint: {checkpoint}`) }
+        let accuracy = cnn_evaluate(engine, testing)
+        print(`CNN GPU test accuracy: {accuracy}% / {testing.count} held-out images\n`)
+        assert accuracy >= 99.0
+    } else {
+        let epochs = CNN_EPOCHS
+        let argument = os_env("NS_ARG1")
+        if argument.len > 0 { epochs = stof(argument) as i32 }
+        if epochs < 1 || epochs > CNN_EPOCHS { mnist_fail(`CNN epochs must be 1..{CNN_EPOCHS}`) }
+        let training = mnist_load(directory, true)
+        let order = [i32](training.count)
+        print(`CNN: conv3x3/{CNN_K1} -> maxpool2 -> conv3x3/{CNN_K2} -> maxpool2 -> dense{CNN_HIDDEN} ReLU -> dense10, {CNN_PARAMS} parameters, batch {CNN_BATCH}\n`)
+        print("GPU: ns kernels perform forward, backward, reductions and Adam.\n")
+        let start = os_time()
+        for epoch in 0 to epochs {
+            mnist_shuffle(order, training.count, epoch)
+            let position = 0
+            let batch = 0
+            loop position < training.count {
+                let count = CNN_BATCH
+                if position + count > training.count { count = training.count - position }
+                cnn_fill(engine, training, order, position, count, true)
+                cnn_forward(engine, count)
+                cnn_backward(engine, count)
+                cnn_update(engine, count)
+                position = position + count
+                batch = batch + 1
+                if batch % 4 == 0 { gpu_commit() }
+                if position % 10240 == 0 {
+                    let elapsed = os_time() - start
+                    print(`CNN epoch {epoch + 1}: {position}/{training.count} queued, elapsed {elapsed}s\n`)
+                }
+            }
+            cnn_results(engine)
+            let accuracy = cnn_evaluate(engine, testing)
+            let elapsed = os_time() - start
+            print(`CNN epoch {epoch + 1}: test accuracy {accuracy}%, elapsed {elapsed}s\n`)
+            if !cnn_save(engine, checkpoint) { mnist_fail(`Cannot save {checkpoint}`) }
+        }
+        print(`CNN checkpoint: {checkpoint}\n`)
+    }
+    cnn_release(engine)
+    gpu_destroy_device()
+}

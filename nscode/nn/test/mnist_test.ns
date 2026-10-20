@@ -1,0 +1,46 @@
+fn main() {
+    let images = [u8](16 + MNIST_PIXELS * 2)
+    let labels = [u8](10)
+    mnist_put_u32(images, 0, 2051)
+    mnist_put_u32(images, 4, 2)
+    mnist_put_u32(images, 8, 28)
+    mnist_put_u32(images, 12, 28)
+    mnist_put_u32(labels, 0, 2049)
+    mnist_put_u32(labels, 4, 2)
+    labels[8] = 7
+    labels[9] = 2
+    images[16] = 255
+    images[16 + MNIST_PIXELS - 1] = 128
+    images[16 + MNIST_PIXELS + 50] = 64
+    assert mnist_valid(images, labels, 2)
+    labels[9] = 10
+    assert !mnist_valid(images, labels, 2)
+    labels[9] = 2
+    images[15] = 27
+    assert !mnist_valid(images, labels, 2)
+    images[15] = 28
+    mnist_put_u32(labels, 4, 1)
+    assert !mnist_valid(images, labels, 2)
+    assert !mnist_valid([u8](8), labels, 2)
+    let order = [i32](100)
+    let repeat = [i32](100)
+    let found = [bool](100)
+    mnist_shuffle(order, 100, 0)
+    mnist_shuffle(repeat, 100, 0)
+    let moved = 0
+    for index in 0 to 100 {
+        let value = order[index]
+        assert value >= 0 && value < 100 && !found[value]
+        found[value] = true
+        assert value == repeat[index]
+        if value != index { moved = moved + 1 }
+    }
+    assert moved > 80
+    mnist_shuffle(repeat, 100, 1)
+    let changed = false
+    for index in 0 to 100 {
+        if repeat[index] != order[index] { changed = true }
+    }
+    assert changed
+    print("MNIST: IDX validation, and shuffle passed\n")
+}

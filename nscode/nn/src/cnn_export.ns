@@ -1,0 +1,45 @@
+// Export the actual compiler output, keeping generated files below bin/.
+fn cnn_export_shaders(directory: str) {
+    os_make_dirs(directory)
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv.metal`, shader_transpile_stage(cs_cnn_conv, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv.comp`, shader_transpile_stage(cs_cnn_conv, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv.hlsl`, shader_transpile_stage(cs_cnn_conv, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv.wgsl`, shader_transpile_stage(cs_cnn_conv, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_pool.metal`, shader_transpile_stage(cs_cnn_pool, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_pool.comp`, shader_transpile_stage(cs_cnn_pool, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_pool.hlsl`, shader_transpile_stage(cs_cnn_pool, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_pool.wgsl`, shader_transpile_stage(cs_cnn_pool, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense.metal`, shader_transpile_stage(cs_cnn_dense, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense.comp`, shader_transpile_stage(cs_cnn_dense, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense.hlsl`, shader_transpile_stage(cs_cnn_dense, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense.wgsl`, shader_transpile_stage(cs_cnn_dense, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_softmax.metal`, shader_transpile_stage(cs_cnn_softmax, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_softmax.comp`, shader_transpile_stage(cs_cnn_softmax, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_softmax.hlsl`, shader_transpile_stage(cs_cnn_softmax, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_softmax.wgsl`, shader_transpile_stage(cs_cnn_softmax, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_backward.metal`, shader_transpile_stage(cs_cnn_dense_backward, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_backward.comp`, shader_transpile_stage(cs_cnn_dense_backward, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_backward.hlsl`, shader_transpile_stage(cs_cnn_dense_backward, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_backward.wgsl`, shader_transpile_stage(cs_cnn_dense_backward, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_gradient.metal`, shader_transpile_stage(cs_cnn_dense_gradient, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_gradient.comp`, shader_transpile_stage(cs_cnn_dense_gradient, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_gradient.hlsl`, shader_transpile_stage(cs_cnn_dense_gradient, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_gradient.wgsl`, shader_transpile_stage(cs_cnn_dense_gradient, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_pool_backward.metal`, shader_transpile_stage(cs_cnn_pool_backward, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_pool_backward.comp`, shader_transpile_stage(cs_cnn_pool_backward, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_pool_backward.hlsl`, shader_transpile_stage(cs_cnn_pool_backward, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_pool_backward.wgsl`, shader_transpile_stage(cs_cnn_pool_backward, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_backward.metal`, shader_transpile_stage(cs_cnn_conv_backward, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_backward.comp`, shader_transpile_stage(cs_cnn_conv_backward, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_backward.hlsl`, shader_transpile_stage(cs_cnn_conv_backward, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_backward.wgsl`, shader_transpile_stage(cs_cnn_conv_backward, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient.metal`, shader_transpile_stage(cs_cnn_conv_gradient, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient.comp`, shader_transpile_stage(cs_cnn_conv_gradient, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient.hlsl`, shader_transpile_stage(cs_cnn_conv_gradient, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient.wgsl`, shader_transpile_stage(cs_cnn_conv_gradient, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_adam.metal`, shader_transpile_stage(cs_cnn_adam, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_adam.comp`, shader_transpile_stage(cs_cnn_adam, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_adam.hlsl`, shader_transpile_stage(cs_cnn_adam, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_adam.wgsl`, shader_transpile_stage(cs_cnn_adam, "wgsl", "compute")) == 1
+    print(`CNN: exported 10 kernels for MSL, GLSL, HLSL and WGSL to {directory}\n`)
+}

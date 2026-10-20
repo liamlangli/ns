@@ -1,0 +1,9 @@
+schema = "ns.mod/v2"
+name = "nn"
+version = "0.1.0"
+type = "app"
+target = "exec"
+source = "src"
+entry = "main.ns"
+description = "Handwritten digit recognition trained on MNIST in pure Nano Script."
+assets = ["bin/mnist/model-cnn.nn"]
