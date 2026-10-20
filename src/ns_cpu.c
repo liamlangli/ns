@@ -333,8 +333,8 @@ NS_CPU_NORETURN static void ns_cpu_fault(ns_cpu_fn *fn, const char *fmt, ...) {
         longjmp(*t->jmp, 1);
     }
     // Entered from native code (a thunk) with no API call to unwind to.
-    fprintf(stderr, "ns_cpu: %s\n", msg);
     fflush(stdout);
+    fprintf(stderr, "ns_cpu: %s\n", msg);
     abort();
 }
 

@@ -1107,7 +1107,9 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
         if (inst->a < 0) break;
         ns_amd64_load_value(c, NS_AMD64_RAX, inst->a);
         ns_amd64_emit_test_rr(c, NS_AMD64_RAX);
-        u32 jnz = ns_amd64_emit_jcc(c, 0x85); /* JNZ over the trap when true */
+        u32 jnz = ns_amd64_emit_jcc(c, 0x85); /* JNZ over the report when true */
+        ns_amd64_emit_const_u64(c, c->int_regs[0], (u64)(i64)inst->c);
+        ns_amd64_emit_rt_call(c, "ns_rt_assert_fail");
         ns_amd64_emit_int3(c);
         ns_amd64_patch_u32(c->text, jnz, (u32)((i32)ns_array_length(c->text) - ((i32)jnz + 4)));
     } break;
@@ -1382,6 +1384,26 @@ static ns_amd64_fn_bin ns_amd64_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn,
     };
 }
 
+/* Index of `value` in the module string table, appending a copy when new. */
+static i32 ns_amd64_intern(ns_amd64_module_bin *m, ns_str value) {
+    for (i32 s = 0; s < m->nstr; ++s) {
+        if (m->strlens[s] == value.len &&
+            memcmp(m->strtab[s], value.data, (szt)value.len) == 0) {
+            return s;
+        }
+    }
+    i32 id = m->nstr;
+    m->strtab = realloc(m->strtab, sizeof(char *) * (szt)(id + 1));
+    m->strlens = realloc(m->strlens, sizeof(i32) * (szt)(id + 1));
+    char *copy = ns_malloc((szt)value.len + 1);
+    if (value.len > 0) memcpy(copy, value.data, (szt)value.len);
+    copy[value.len] = 0;
+    m->strtab[id] = copy;
+    m->strlens[id] = value.len;
+    m->nstr = id + 1;
+    return id;
+}
+
 /* ── public API ───────────────────────────────────────────────────────────── */
 ns_return_ptr ns_amd64_from_ssa(ns_ssa_module *ssa) {
     if (!ssa) {
@@ -1398,9 +1420,10 @@ ns_return_ptr ns_amd64_from_ssa(ns_ssa_module *ssa) {
             ns_arch_str(target.arch).len, ns_arch_str(target.arch).data);
     }
 
-    /* Intern every string constant once: the compiled program asks the runtime
-     * for the table entry by index, and the linked string table carries the
-     * bytes. The order here is the order ns_build_write_strtab_c records. */
+    /* Intern every string constant and assert location once: the compiled
+     * program asks the runtime for the table entry by index, and the linked
+     * string table carries the bytes. The order here is the order
+     * ns_build_write_strtab_c records. */
     ns_bool has_init = false;
     ns_bool has_main = false;
     for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
@@ -1408,28 +1431,16 @@ ns_return_ptr ns_amd64_from_ssa(ns_ssa_module *ssa) {
         if (ns_str_equals_STR(ssa->fns[i].name, "main")) has_main = true;
         for (i32 ii = 0, il = (i32)ns_array_length(ssa->fns[i].insts); ii < il; ++ii) {
             ns_ssa_inst *inst = &ssa->fns[i].insts[ii];
+            if (inst->op == NS_SSA_OP_ASSERT) {
+                /* A failing assert reports its file:line from the string table. */
+                ns_str loc = ns_ssa_assert_loc(ssa, inst);
+                inst->c = loc.len > 0 ? ns_amd64_intern(m, loc) : -1;
+                ns_str_free(loc);
+                continue;
+            }
             if (inst->op != NS_SSA_OP_CONST || !ns_type_is(inst->type, NS_TYPE_STRING)) continue;
             ns_str value = ns_str_unescape(inst->name);
-            i32 id = -1;
-            for (i32 s = 0; s < m->nstr; ++s) {
-                if (m->strlens[s] == value.len &&
-                    memcmp(m->strtab[s], value.data, (szt)value.len) == 0) {
-                    id = s;
-                    break;
-                }
-            }
-            if (id < 0) {
-                id = m->nstr;
-                m->strtab = realloc(m->strtab, sizeof(char *) * (szt)(id + 1));
-                m->strlens = realloc(m->strlens, sizeof(i32) * (szt)(id + 1));
-                char *copy = ns_malloc((szt)value.len + 1);
-                if (value.len > 0) memcpy(copy, value.data, (szt)value.len);
-                copy[value.len] = 0;
-                m->strtab[id] = copy;
-                m->strlens[id] = value.len;
-                m->nstr = id + 1;
-            }
-            inst->c = id;
+            inst->c = ns_amd64_intern(m, value);
             ns_str_free(value);
         }
     }

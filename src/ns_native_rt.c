@@ -965,6 +965,17 @@ int64_t ns_rt_print(int64_t str) {
     return 0;
 }
 
+void ns_rt_assert_fail(int64_t loc) {
+    fflush(stdout);
+    if (loc >= 0 && loc < ns_rt_nstr && ns_rt_strtab && ns_rt_strtab[loc]) {
+        fprintf(stderr, "assertion failed at %s\n", ns_rt_strtab[loc]);
+    } else {
+        fprintf(stderr, "assertion failed\n");
+    }
+    fflush(stderr);
+    abort();
+}
+
 int64_t ns_rt_strcat(int64_t a, int64_t b) {
     int32_t ab = 0, al = 0, bb = 0, bl = 0;
     ns_rt_str_parts(a, &ab, &al);

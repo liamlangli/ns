@@ -63,6 +63,9 @@ void ns_rt_gset(int64_t idx, int64_t val);
 int64_t ns_rt_intern(int64_t id);
 int64_t ns_rt_from_bytes(const char *s, int32_t len);
 int64_t ns_rt_print(int64_t str);
+// A failed `assert`: flush what the program printed, report the string-table
+// entry `loc` ("file:line", or -1 when unknown) on stderr, then abort.
+void ns_rt_assert_fail(int64_t loc);
 
 int64_t ns_rt_strcat(int64_t a, int64_t b);
 int64_t ns_rt_strcmp(int64_t a, int64_t b);

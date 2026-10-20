@@ -149,5 +149,13 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
 ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str ref_path,
                                                       ns_str lib_path, ns_str lib_fallback_path,
                                                       ns_bool wasm_target);
+// Source location of an instruction: its AST node when it has one, otherwise
+// the token line it was lowered from. `.f` is empty and `.l` 0 when neither is
+// known. Backends use it to name the file:line a failing assert or trap hit.
+ns_code_loc ns_ssa_inst_loc(ns_ssa_module *m, ns_ssa_inst *inst);
+// "file:line" of an assert instruction, the string-table entry a native build
+// reports when it fails; ns_str_null when the location is unknown. The caller
+// frees the result with ns_str_free.
+ns_str ns_ssa_assert_loc(ns_ssa_module *m, ns_ssa_inst *inst);
 void ns_ssa_print(ns_ssa_module *m);
 void ns_ssa_module_free(ns_ssa_module *m);

@@ -428,6 +428,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/ns_build_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_parity_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_scope_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	sh test/ns_assert_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_lens
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_tex

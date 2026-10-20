@@ -3247,8 +3247,16 @@ static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
         ns_ssa_fn *fn = &ssa->fns[fi];
         for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
             ns_ssa_inst *inst = &fn->insts[ii];
-            if (inst->op != NS_SSA_OP_CONST || !ns_type_is(inst->type, NS_TYPE_STRING)) continue;
-            ns_str value = ns_str_unescape(inst->name);
+            ns_str value;
+            if (inst->op == NS_SSA_OP_ASSERT) {
+                // The backends intern assert locations in this same scan order.
+                value = ns_ssa_assert_loc(ssa, inst);
+                if (value.len == 0) continue;
+            } else if (inst->op == NS_SSA_OP_CONST && ns_type_is(inst->type, NS_TYPE_STRING)) {
+                value = ns_str_unescape(inst->name);
+            } else {
+                continue;
+            }
             ns_bool seen = false;
             for (i32 s = 0, sl = (i32)ns_array_length(tab); s < sl; ++s) {
                 if (ns_str_equals(tab[s], value)) { seen = true; break; }

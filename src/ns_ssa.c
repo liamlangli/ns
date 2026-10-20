@@ -4382,6 +4382,24 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
     return ns_ssa_build_with_runtime_paths_options(ctx, ref_path, lib_path, lib_fallback_path, true);
 }
 
+ns_code_loc ns_ssa_inst_loc(ns_ssa_module *m, ns_ssa_inst *inst) {
+    ns_ast_ctx *ctx = m ? m->ctx : ns_null;
+    if (ctx && inst->ast >= 0 && inst->ast < (i32)ns_array_length(ctx->nodes)) {
+        return ns_ast_state_loc(ctx, ctx->nodes[inst->ast].state);
+    }
+    if (ctx && inst->token.line > 0) return ns_ctx_loc(ctx, inst->token.line, 0);
+    return (ns_code_loc){0};
+}
+
+ns_str ns_ssa_assert_loc(ns_ssa_module *m, ns_ssa_inst *inst) {
+    ns_code_loc loc = ns_ssa_inst_loc(m, inst);
+    if (loc.f.len <= 0 || loc.l <= 0) return ns_str_null;
+    i32 cap = loc.f.len + 16;
+    i8 *data = ns_malloc((szt)cap);
+    i32 n = snprintf((char *)data, (szt)cap, "%.*s:%d", loc.f.len, loc.f.data, loc.l);
+    return ns_str_range(data, n);
+}
+
 ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
     return ns_ssa_build_with_runtime_paths(ctx, ns_str_null, ns_str_null, ns_str_null);
 }

@@ -564,13 +564,7 @@ static void ns_cpu_gen_call(ns_cpu_gen *g, i32 inst_pos, ns_ssa_inst *inst) {
 // The source location of an instruction, as an index into the image's
 // location table: the file and line a fault reports.
 static u32 ns_cpu_gen_loc(ns_cpu_gen *g, ns_ssa_inst *inst) {
-    ns_ast_ctx *ctx = g->ssa->ctx;
-    ns_code_loc loc = {0};
-    if (ctx && inst->ast >= 0 && inst->ast < (i32)ns_array_length(ctx->nodes)) {
-        loc = ns_ast_state_loc(ctx, ctx->nodes[inst->ast].state);
-    } else if (ctx && inst->token.line > 0) {
-        loc = ns_ctx_loc(ctx, inst->token.line, 0);
-    }
+    ns_code_loc loc = ns_ssa_inst_loc(g->ssa, inst);
     u32 file = ns_cpu_gen_string(g, loc.f.data ? loc.f : ns_str_cstr(""));
     u32 line = loc.l > 0 ? (u32)loc.l : 0;
     for (i32 i = 0, l = (i32)ns_array_length(g->locs); i + 1 < l; i += 2) {
