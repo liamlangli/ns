@@ -25,7 +25,7 @@ fn main() {
     let v = view_create(lens_window_title_text(), g_window_size_w, g_window_size_h)
     if gpu_request_device(v) {
         let r = ui_renderer_create(v)
-        view_set_dock_menu(v, lens_dock_menu_items())
+        lens_dock_menu(v)
         v.on_frame({ frame in
             lens_dock_menu(frame)
             lens_window_title(frame)

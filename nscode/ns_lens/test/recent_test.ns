@@ -127,6 +127,16 @@ fn main() {
     // File > New Window leads the menu and takes Cmd+Shift+N.
     check("new window leads the file menu", LENS_FILE_NEW_WINDOW == 0 && lens_file_item_label(LENS_FILE_NEW_WINDOW) == "New Window" && lens_file_item_keys(LENS_FILE_NEW_WINDOW) == "cmd+shift+N")
     check("dock menu offers new window", lens_dock_menu_items() == "New Window" && LENS_DOCK_NEW_WINDOW == 0)
+    check("empty dock menu has no project rows", lens_dock_recent_path(LENS_DOCK_RECENT) == "")
+    recent_add(first)
+    recent_add(second)
+    check("dock recent projects follow a separator newest first", lens_dock_menu_items() == "New Window\n-\n" + recent_tilde(second) + "\n" + recent_tilde(first))
+    check("dock indices include the separator", lens_dock_recent_path(0) == "" && lens_dock_recent_path(1) == "" && lens_dock_recent_path(2) == second && lens_dock_recent_path(3) == first && lens_dock_recent_path(4) == "" && lens_dock_recent_path(-1) == "")
+    recent_add(first)
+    check("dock selection keeps its published project after recent reorder", lens_dock_recent_path(2) == second && lens_dock_recent_path(3) == first)
+    check("dock menu refresh reads the shared recent file", lens_dock_menu_items() == "New Window\n-\n" + recent_tilde(first) + "\n" + recent_tilde(second) && lens_dock_recent_path(2) == first)
+    recent_clear()
+    check("clearing recent removes dock project rows and separator", lens_dock_menu_items() == "New Window" && lens_dock_recent_path(2) == "")
 
     // The window title is the open project's path, home shortened to ~.
     check("window title is the project path", lens_window_title_text() == recent_tilde(second))

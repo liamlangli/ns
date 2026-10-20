@@ -302,6 +302,7 @@ ns_bool view_continuous_render(void);
 void view_complete_frame(view *v);
 // Dock menu: the program publishes newline-separated item titles and polls
 // for the picked item's index (-1 when none was picked since the last call).
+// A line containing "-" is a separator. Indices include all lines.
 // A backend reads the titles and reports a pick with view_on_dock_menu.
 // Replace the window title after creation (the browser's document title).
 void view_set_title(view *v, const char *title);

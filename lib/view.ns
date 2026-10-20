@@ -175,7 +175,9 @@ ref fn view_set_safe_area(v: ref view, top: f64, right: f64, bottom: f64, left: 
 ref fn view_capture_require(v: ref view)
 
 // Items for the application's dock menu (right-click on the macOS Dock icon),
-// one title per line; "" removes them. view_take_dock_menu returns the index
+// one title per line; a line containing "-" is a separator, and "" removes
+// them. Indices count every line, including separators and empty lines.
+// view_take_dock_menu returns the index
 // of the item picked since the last call, or -1, and a pick requests a frame
 // so an on-demand program sees it. Other backends keep the titles and never
 // report a pick.

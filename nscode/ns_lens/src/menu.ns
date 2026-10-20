@@ -1,6 +1,6 @@
 // The File menu and its shortcuts (Cmd+Shift+N new window, Cmd+O open, Cmd+P
 // search, Cmd+Enter commit; Open Recent and Push have none), Open Recent's
-// submenu, the Dock icon's New Window, the commit
+// submenu, the Dock icon's New Window and recent projects, the commit
 // message dialog with its Commit, Commit Append and Commit & Push modes, the
 // search box, and the bottom-left hints and activity row
 // above the status bar. Input and drawing for the status bar's branch menu
@@ -22,8 +22,15 @@ lit LENS_FILE_COMMIT = 4
 lit LENS_FILE_PUSH = 5
 lit LENS_FILE_IGNORE = 6
 // Every Lens window is its own process, so the Dock icon's menu offers the
-// same New Window as the File menu. Its rows, one title per line.
+// same New Window as the File menu, then a separator and recent projects.
 lit LENS_DOCK_NEW_WINDOW = 0
+lit LENS_DOCK_RECENT = 2
+// Keep the published paths separate from File > Open Recent: its list may
+// change before a Dock selection is delivered.
+let g_lens_dock_recent = [str](RECENT_KEEP)
+let g_lens_dock_recent_count: i32 = 0
+let g_lens_dock_items = ""
+let g_lens_dock_next: f64 = 0.0
 // Open Recent's submenu opens to the right of the File popup, level with its
 // row. Its project rows end in a separator, then Clear Recent.
 lit LENS_RECENT_W = 420.0
@@ -372,12 +379,50 @@ fn lens_new_window() {
     }
 }
 
-fn lens_dock_menu_items() str { return "New Window" }
+fn lens_dock_menu_items() str {
+    recent_load()
+    g_lens_dock_recent_count = g_recent_count
+    let items = "New Window"
+    if g_recent_count > 0 {
+        items = items + "\n-"
+        for i in 0 to g_recent_count {
+            g_lens_dock_recent[i] = g_recent[i]
+            items = items + "\n" + recent_tilde(g_recent[i])
+        }
+    }
+    return items
+}
+
+fn lens_dock_recent_path(item: i32) str {
+    let row = item - LENS_DOCK_RECENT
+    if row < 0 || row >= g_lens_dock_recent_count {
+        return ""
+    }
+    return g_lens_dock_recent[row]
+}
 
 // A pick from the Dock icon's menu, polled once per frame.
 fn lens_dock_menu(v: ref view) {
-    if view_take_dock_menu(v) == LENS_DOCK_NEW_WINDOW {
+    let item = view_take_dock_menu(v)
+    if item == LENS_DOCK_NEW_WINDOW {
         lens_new_window()
+    } else {
+        let root = lens_dock_recent_path(item)
+        if root != "" && os_launch_self(root) == 0 {
+            g_lens_message = "Could not open project in a new window: " + root
+        }
+    }
+    // Other Lens processes share the recent file. Refresh at most once a
+    // second, after consuming a pick against the menu that was published.
+    // Leave File > Open Recent's rows stable while its menu is open.
+    let now = os_time()
+    if now >= g_lens_dock_next && g_lens_file_open == false {
+        g_lens_dock_next = now + 1.0
+        let items = lens_dock_menu_items()
+        if items != g_lens_dock_items {
+            g_lens_dock_items = items
+            view_set_dock_menu(v, items)
+        }
     }
 }
 

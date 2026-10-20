@@ -316,7 +316,9 @@ i32 view_osx_key_map(i32 k) {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
     NSInteger index = 0;
     for (NSString *title in [items componentsSeparatedByString:@"\n"]) {
-        if ([title length] > 0) {
+        if ([title isEqualToString:@"-"]) {
+            [menu addItem:[NSMenuItem separatorItem]];
+        } else if ([title length] > 0) {
             NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
                                                           action:@selector(dockMenuPicked:)
                                                    keyEquivalent:@""];
