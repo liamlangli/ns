@@ -8,7 +8,7 @@
   loopback TCP while the program runs (`ns profiler --live [path | target]`).
 
 The recorder is `src/ns_profile.c`; the live transport is
-`src/ns_profile_live.c`; the viewer is the ns application in `nscode/profile`
+`src/ns_profile_live.c`; the viewer is the ns application in `nscode/ns_profiler`
 (`live.ns` owns the session and the ring, `main.ns` draws it).
 
 ## Whole-run reports

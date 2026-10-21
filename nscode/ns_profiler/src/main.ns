@@ -1,5 +1,7 @@
-// nscode/profile/main.ns
-// Native timeline viewer for ns.profile files.
+// nscode/ns_profiler/src/main.ns
+// Native timeline viewer for ns.profile files, drawn in the ns_lens style: a
+// top bar of outlined gray controls over the timeline, and a status bar with
+// the profile's metrics and the viewer's own FPS and RAM meters.
 
 use std
 use view
@@ -10,8 +12,8 @@ use live
 use compress
 
 fn FONT() i32 { return 1 }
-fn TITLE_PX() f64 { return 11.0 }
-fn PX() f64 { return 10.0 }
+fn TITLE_PX() f64 { return 13.0 }
+fn PX() f64 { return 12.0 }
 fn MAX_TEXT_PROFILE_BYTES() i64 { return 67108864 }
 fn LOAD_EVENTS_PER_FRAME() i32 { return 262144 }
 fn LOAD_STAGE_READ() i32 { return 1 }
@@ -273,19 +275,21 @@ fn timeline_try_draw_event(r: ref ui_renderer, v: ref view, ev: i32, x: f64, w: 
     let draw_w = max_f(1.0, draw_r - draw_x)
     let color = g_ev_color[ev]
     let selected = ev == g_selected_ev
+    // As on an ns_lens leaf: the selected span turns light, and the one under
+    // the pointer keeps its color inside a light outline.
+    if selected {
+        color = col_accent()
+    }
+    ui_fill_rect(r, draw_x, by, draw_w, bh, color, 0.0)
     if hit(v, draw_x, by, draw_w, bh) {
         g_tl_hovered = ev
-        ui_fill_rect(r, draw_x, by, draw_w, bh, col_warn(), 0.0)
+        if draw_w >= 3.0 {
+            ui_stroke_rect(r, draw_x + 0.5, by + 0.5, draw_w - 1.0, bh - 1.0, 1.0, col_accent(), 0.0)
+        }
         if v.mouse_released {
             if g_drag_moved == false {
                 g_selected_ev = ev
             }
-        }
-    } else {
-        if selected {
-            ui_fill_rect(r, draw_x, by, draw_w, bh, col_accent(), 0.0)
-        } else {
-            ui_fill_rect(r, draw_x, by, draw_w, bh, color, 0.0)
         }
     }
     // Skip label formatting for skinny bars - backtick strings allocate and the
@@ -472,7 +476,7 @@ fn lane_find_or_add(name: str) i32 {
     return lane
 }
 
-fn lane_label_h() f64 { return 14.0 }
+fn lane_label_h() f64 { return 18.0 }
 
 fn rebuild_lane_layout(row_h: f64) {
     let label_h = lane_label_h()
@@ -496,17 +500,29 @@ fn rebuild_lane_layout(row_h: f64) {
     }
 }
 
-fn col_bg() u32 { return ui_pack_color("#101418") }
-fn col_panel() u32 { return ui_pack_color("#182026") }
-fn col_panel_hi() u32 { return ui_pack_color("#22303a") }
-fn col_line() u32 { return ui_pack_color("#34424d") }
-fn col_text() u32 { return ui_pack_color("#d8e0e7") }
-fn col_muted() u32 { return ui_pack_color("#8b98a5") }
-fn col_accent() u32 { return ui_pack_color("#66d39a") }
+// The ns_lens palette: a near-black canvas, gray panels and controls, and
+// color kept for the spans themselves and for an over-budget frame.
+fn col_bg() u32 { return ui_pack_color("#121212") }
+fn col_panel() u32 { return ui_pack_color("#191919") }
+fn col_panel_hi() u32 { return ui_pack_color("#202020") }
+fn col_line() u32 { return ui_pack_color("#2c2c2c") }
+fn col_text() u32 { return ui_pack_color("#dddddd") }
+fn col_muted() u32 { return ui_pack_color("#909090") }
+fn col_accent() u32 { return ui_pack_color("#eeeeee") }
 fn col_warn() u32 { return ui_pack_color("#f0bd5f") }
+fn col_popup_bg() u32 { return (col_bg() & 0x00ffffffu) | 0xcc000000u }
 fn clear_color() ui_color_rgba {
-    return ui_color_rgba { r: 0.063, g: 0.078, b: 0.094, a: 1.0 }
+    return ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 }
 }
+
+lit CORNER_RADIUS = 3.0
+// The top bar is a little taller than the status bar; the controls in both
+// are 20 points tall, as in ns_lens.
+lit TOP_BAR_H = 32.0
+lit STATUS_BAR_H = 28.0
+lit CONTROL_H = 20.0
+lit STATUS_METER_H = 10.0
+lit STATUS_METER_INSET = 2.0
 
 fn min_f(a: f64, b: f64) f64 {
     if a < b {
@@ -1987,19 +2003,24 @@ fn open_profile() {
     }
 }
 
-fn draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, label: str, accent: bool) bool {
-    let bg = col_panel_hi()
+// An outlined control as ns_lens draws its mode button: a rounded panel with
+// a muted one-point border that brightens under the pointer. `active` marks a
+// toggle that is on.
+fn draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, label: str, active: bool) bool {
+    let bg = col_panel()
+    let border = col_muted()
     let fg = col_text()
-    if accent {
-        bg = col_accent()
-        fg = col_bg()
+    if active {
+        bg = col_panel_hi()
+        border = col_accent()
+        fg = col_accent()
     }
     if hit(v, x, y, w, h) {
-        if accent == false {
-            bg = ui_pack_color("#2b3c48")
-        }
+        bg = col_panel_hi()
+        border = col_accent()
     }
-    ui_fill_rect(r, x, y, w, h, bg, 0.0)
+    ui_fill_round_rect(r, x, y, w, h, CORNER_RADIUS, bg, 0.0)
+    ui_stroke_round_rect(r, x + 0.5, y + 0.5, w - 1.0, h - 1.0, CORNER_RADIUS, 1.0, border, 0.0)
     let tw = ui_text_width(r, label, PX(), FONT())
     let tx = x + (w - tw) * 0.5
     let ty = ui_text_v_center_y(r, y, h, PX(), FONT())
@@ -2014,19 +2035,66 @@ fn draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, 
     return false
 }
 
-fn draw_metric_line(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
-    let elapsed_text = g_elapsed
-    if elapsed_text == "" {
-        elapsed_text = "-"
-    } else {
-        elapsed_text = elapsed_text + " ms"
+// A button just wide enough for its label.
+fn button_w(r: ref ui_renderer, label: str) f64 {
+    return ui_text_width(r, label, PX(), FONT()) + 20.0
+}
+
+fn draw_text_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, color: u32) {
+    if w > 0.0 {
+        if h > 0.0 {
+            ui_push_clip(r, x, y, w, h)
+            ui_draw_text(r, x, ui_text_v_center_y(r, y, h, PX(), FONT()), text, PX(), color, FONT())
+            ui_pop_clip(r)
+        }
     }
-    let line = `{elapsed_text}   scopes {fmt_or_dash(g_scope_calls)}   ffi {fmt_or_dash(g_ffi_calls)}   events {fmt_or_dash(g_timeline_events)}`
-    let ty = ui_text_v_center_y(r, y, h, PX(), FONT())
-    ui_push_clip(r, x + 8.0, y, w - 16.0, h)
-    ui_draw_text(r, x + 8.0, ty, line, PX(), col_text(), FONT())
-    ui_pop_clip(r)
+}
+
+fn draw_centered_text(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, px: f64, color: u32) {
+    if w > 0.0 {
+        if h > 0.0 {
+            let tx = x + max_f(0.0, (w - ui_text_width(r, text, px, FONT())) * 0.5)
+            ui_push_clip(r, x, y, w, h)
+            ui_draw_text(r, tx, ui_text_v_center_y(r, y, h, px, FONT()), text, px, color, FONT())
+            ui_pop_clip(r)
+        }
+    }
+}
+
+// The profile's totals, recomposed only when a load changes them.
+let g_metric_text = ""
+let g_metric_ready = false
+let g_metric_elapsed = ""
+let g_metric_scopes = ""
+let g_metric_ffi = ""
+let g_metric_events = ""
+
+fn metric_text() str {
+    if g_metric_ready && g_metric_elapsed == g_elapsed && g_metric_scopes == g_scope_calls && g_metric_ffi == g_ffi_calls && g_metric_events == g_timeline_events {
+        return g_metric_text
+    }
+    g_metric_ready = true
+    g_metric_elapsed = g_elapsed
+    g_metric_scopes = g_scope_calls
+    g_metric_ffi = g_ffi_calls
+    g_metric_events = g_timeline_events
+    let elapsed_text = "-"
+    if g_elapsed != "" {
+        elapsed_text = g_elapsed + " ms"
+    }
+    g_metric_text = `{elapsed_text}   scopes {fmt_or_dash(g_scope_calls)}   ffi {fmt_or_dash(g_ffi_calls)}   events {fmt_or_dash(g_timeline_events)}`
+    return g_metric_text
+}
+
+// A status bar meter: a dark rounded track with a one-point outline, and the
+// filled share inset inside it with the corners rounded to match.
+fn draw_status_meter(r: ref ui_renderer, x: f64, y: f64, w: f64, fraction: f64) {
+    ui_fill_round_rect(r, x, y, w, STATUS_METER_H, CORNER_RADIUS, col_bg(), 0.0)
+    let fill = (w - STATUS_METER_INSET * 2.0) * status_clamp(fraction)
+    if fill > 0.0 {
+        ui_fill_round_rect(r, x + STATUS_METER_INSET, y + STATUS_METER_INSET, fill, STATUS_METER_H - STATUS_METER_INSET * 2.0, CORNER_RADIUS - 1.0, col_muted(), 0.0)
+    }
+    ui_stroke_round_rect(r, x + 0.5, y + 0.5, w - 1.0, STATUS_METER_H - 1.0, CORNER_RADIUS, 1.0, col_muted(), 0.0)
 }
 
 fn fmt_or_dash(s: str) str {
@@ -2171,7 +2239,7 @@ fn draw_time_rulers(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, t0: f64,
         guard = guard + 1
         if t + minor * 0.001 >= t0 {
             let px = x + (t - t0) * scale
-            ui_fill_rect(r, px, y + h * 0.45, 1.0, h * 0.55, ui_pack_color("#2a3640"), 0.0)
+            ui_fill_rect(r, px, y + h * 0.45, 1.0, h * 0.55, ui_pack_color("#242424"), 0.0)
         }
         t = t + minor
     }
@@ -2288,7 +2356,7 @@ fn rebuild_overview_batch(r: ref ui_renderer, w: f64, h: f64) bool {
 }
 
 fn draw_overview(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_panel_hi(), 0.0)
+    ui_fill_round_rect(r, x, y, w, h, CORNER_RADIUS, col_panel_hi(), 0.0)
     let total = g_time_end - g_time_origin
     if total <= 0.0 {
         return
@@ -2308,8 +2376,8 @@ fn draw_overview(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     let vx0 = x + (g_t0 - g_time_origin) * scale
     let vx1 = x + (g_t1 - g_time_origin) * scale
     let vw = max_f(3.0, vx1 - vx0)
-    ui_fill_rect(r, vx0, y, vw, h, ui_pack_rgba_floats(0.4, 0.83, 0.6, 0.22), 0.0)
-    ui_stroke_rect(r, vx0, y + 1.0, vw, h - 2.0, 1.0, col_accent(), 0.0)
+    ui_fill_round_rect(r, vx0, y, vw, h, CORNER_RADIUS, ui_pack_rgba_floats(1.0, 1.0, 1.0, 0.12), 0.0)
+    ui_stroke_round_rect(r, vx0 + 0.5, y + 0.5, vw - 1.0, h - 1.0, CORNER_RADIUS, 1.0, col_accent(), 0.0)
 
 }
 
@@ -2407,14 +2475,11 @@ fn draw_toast(r: ref ui_renderer, canvas_w: f64, canvas_h: f64) {
     let tw = ui_text_width(r, g_toast, PX(), FONT())
     let pad_x = 10.0
     let box_w = tw + pad_x * 2.0
-    let box_h = 22.0
+    let box_h = 26.0
     let bx = (canvas_w - box_w) * 0.5
-    let by = canvas_h - box_h - 12.0
-    ui_fill_rect(r, bx, by, box_w, box_h, col_panel_hi(), 0.0)
-    ui_fill_rect(r, bx, by, box_w, 1.0, col_line(), 0.0)
-    ui_fill_rect(r, bx, by + box_h - 1.0, box_w, 1.0, col_line(), 0.0)
-    ui_fill_rect(r, bx, by, 1.0, box_h, col_line(), 0.0)
-    ui_fill_rect(r, bx + box_w - 1.0, by, 1.0, box_h, col_line(), 0.0)
+    let by = canvas_h - STATUS_BAR_H - box_h - 12.0
+    ui_fill_round_rect(r, bx, by, box_w, box_h, CORNER_RADIUS, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, bx + 0.5, by + 0.5, box_w - 1.0, box_h - 1.0, CORNER_RADIUS, 1.0, col_muted(), 0.0)
     let ty = ui_text_v_center_y(r, by, box_h, PX(), FONT())
     ui_draw_text(r, bx + pad_x, ty, g_toast, PX(), col_text(), FONT())
     ui_request_render(r, 2)
@@ -2428,24 +2493,22 @@ fn copy_detail(v: ref view, text: str) {
     show_toast("Copied", 1400)
 }
 
+lit DETAIL_ROW_H = 18.0
+lit DETAIL_LABEL_W = 60.0
+
 fn draw_detail_row(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: str) {
-    ui_draw_text(r, x, y, label, PX(), col_muted(), FONT())
-    ui_push_clip(r, x + 52.0, y, w - 52.0, 14.0)
-    ui_draw_text(r, x + 52.0, y, value, PX(), col_text(), FONT())
-    ui_pop_clip(r)
+    draw_text_clipped(r, x, y, DETAIL_LABEL_W, DETAIL_ROW_H, label, col_muted())
+    draw_text_clipped(r, x + DETAIL_LABEL_W, y, w - DETAIL_LABEL_W, DETAIL_ROW_H, value, col_text())
 }
 
 fn draw_selected_header(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, title: str, name: str) {
-    ui_draw_text(r, x + 6.0, y + 4.0, title, PX(), col_muted(), FONT())
-    let copy_w = 40.0
-    let copy_h = 16.0
-    let copy_x = x + w - copy_w - 6.0
-    if draw_button(r, v, copy_x, y + 3.0, copy_w, copy_h, "Copy", false) {
+    draw_text_clipped(r, x + 10.0, y + 6.0, w - 20.0, CONTROL_H, title, col_muted())
+    let copy_w = button_w(r, "Copy")
+    let copy_x = x + w - copy_w - 8.0
+    if draw_button(r, v, copy_x, y + 6.0, copy_w, CONTROL_H, "Copy", false) {
         copy_detail(v, name)
     }
-    ui_push_clip(r, x + 6.0, y + 18.0, w - 16.0, 14.0)
-    ui_draw_text(r, x + 6.0, y + 18.0, name, PX(), col_accent(), FONT())
-    ui_pop_clip(r)
+    draw_text_clipped(r, x + 10.0, y + 30.0, w - 20.0, DETAIL_ROW_H, name, col_accent())
 }
 
 fn select_default_event() {
@@ -2470,7 +2533,7 @@ fn select_default_event() {
 }
 
 fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
+    draw_panel(r, x, y, w, h)
     let name = "-"
     let dur_s = "-"
     let self_s = "-"
@@ -2502,40 +2565,48 @@ fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
         }
     }
     draw_selected_header(r, v, x, y, w, "span", name)
-    draw_detail_row(r, x + 6.0, y + 36.0, w - 12.0, "dur", dur_s)
-    draw_detail_row(r, x + 6.0, y + 50.0, w - 12.0, "self", self_s)
-    draw_detail_row(r, x + 6.0, y + 64.0, w - 12.0, "start", start_s)
-    draw_detail_row(r, x + 6.0, y + 78.0, w - 12.0, "calls", calls_s)
-    draw_detail_row(r, x + 6.0, y + 92.0, w - 12.0, "depth", depth_s)
-    draw_detail_row(r, x + 6.0, y + 106.0, w - 12.0, "thread", thread)
-    ui_fill_rect(r, x + 6.0, y + 122.0, w - 12.0, 1.0, col_line(), 0.0)
-    let list_y = y + 126.0
+    let dx = x + 10.0
+    let dw = w - 20.0
+    let row_y = y + 50.0
+    draw_detail_row(r, dx, row_y, dw, "dur", dur_s)
+    draw_detail_row(r, dx, row_y + DETAIL_ROW_H, dw, "self", self_s)
+    draw_detail_row(r, dx, row_y + DETAIL_ROW_H * 2.0, dw, "start", start_s)
+    draw_detail_row(r, dx, row_y + DETAIL_ROW_H * 3.0, dw, "calls", calls_s)
+    draw_detail_row(r, dx, row_y + DETAIL_ROW_H * 4.0, dw, "depth", depth_s)
+    draw_detail_row(r, dx, row_y + DETAIL_ROW_H * 5.0, dw, "thread", thread)
+    let rule_y = row_y + DETAIL_ROW_H * 6.0 + 6.0
+    ui_fill_rect(r, dx, rule_y, dw, 1.0, col_line(), 0.0)
+    let list_y = rule_y + 6.0
 
-    ui_draw_text(r, x + 6.0, list_y + 4.0, "hot self", PX(), col_muted(), FONT())
+    draw_text_clipped(r, dx, list_y, dw, DETAIL_ROW_H, "hot self", col_muted())
     if g_hot_count == 0 {
-        ui_draw_text(r, x + 6.0, list_y + 18.0, "No fn table.", PX(), col_muted(), FONT())
+        draw_text_clipped(r, dx, list_y + DETAIL_ROW_H, dw, DETAIL_ROW_H, "No fn table.", col_muted())
     } else {
         let elapsed = parse_f64(g_elapsed)
         if elapsed <= 0.0 {
             elapsed = 1.0
         }
-        let row_h = 20.0
+        lit row_h = 24.0
         let i = 0
         loop i < g_hot_count {
-            let ry = list_y + 18.0 + i as f64 * row_h
+            let ry = list_y + DETAIL_ROW_H + 2.0 + i as f64 * row_h
             if ry + row_h > y + h {
                 break
             }
             let pct = g_hot_self[i] / elapsed * 100.0
-            let bar_w = max_f(2.0, (w - 12.0) * (g_hot_self[i] / elapsed))
-            ui_fill_rect(r, x + 6.0, ry + 13.0, bar_w, 3.0, name_color(g_hot_name[i]), 0.0)
+            let bar_w = max_f(2.0, dw * (g_hot_self[i] / elapsed))
+            ui_fill_round_rect(r, dx, ry + 17.0, bar_w, 3.0, 1.0, name_color(g_hot_name[i]), 0.0)
             let line = `{g_hot_name[i]}  {fmt_time_ms(g_hot_self[i])}  {fmt_1dec(pct)}%`
-            ui_push_clip(r, x + 6.0, ry, w - 12.0, 12.0)
-            ui_draw_text(r, x + 6.0, ry, line, PX(), col_text(), FONT())
-            ui_pop_clip(r)
+            draw_text_clipped(r, dx, ry, dw, 16.0, line, col_text())
             i = i + 1
         }
     }
+}
+
+// A floating panel in the ns_lens manner: a rounded fill with a quiet border.
+fn draw_panel(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_round_rect(r, x, y, w, h, CORNER_RADIUS, col_panel(), 0.0)
+    ui_stroke_round_rect(r, x + 0.5, y + 0.5, w - 1.0, h - 1.0, CORNER_RADIUS, 1.0, col_line(), 0.0)
 }
 
 fn draw_lane_headers(r: ref ui_renderer, x: f64, w: f64, plot_y: f64, plot_h: f64) {
@@ -2551,8 +2622,7 @@ fn draw_lane_headers(r: ref ui_renderer, x: f64, w: f64, plot_y: f64, plot_h: f6
                     title = "main"
                 }
                 ui_fill_rect(r, x, ly, w, label_h, col_panel_hi(), 0.0)
-                let ty = ui_text_v_center_y(r, ly, label_h, PX(), FONT())
-                ui_draw_text(r, x + 8.0, ty, title, PX(), col_text(), FONT())
+                draw_text_clipped(r, x + 10.0, ly, w - 20.0, label_h, title, col_muted())
                 ui_fill_rect(r, x, ly + label_h - 1.0, w, 1.0, col_line(), 0.0)
                 ui_fill_rect(r, x, ly + lh, w, 1.0, col_line(), 0.0)
             }
@@ -2561,16 +2631,18 @@ fn draw_lane_headers(r: ref ui_renderer, x: f64, w: f64, plot_y: f64, plot_h: f6
     }
 }
 
+lit TIMELINE_ROW_H = 18.0
+
 fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
+    draw_panel(r, x, y, w, h)
     if g_lane_count == 0 {
         lane_find_or_add("main")
-        rebuild_lane_layout(18.0)
+        rebuild_lane_layout(TIMELINE_ROW_H)
     }
     if g_ev_count == 0 {
-        ui_draw_text(r, x + 8.0, y + 12.0, "No timeline events in this profile.", PX(), col_muted(), FONT())
+        draw_text_clipped(r, x + 10.0, y + 8.0, w - 20.0, CONTROL_H, "No timeline events in this profile.", col_muted())
         let plot_y = y + 40.0
-        let plot_h = h - 62.0
+        let plot_h = h - 48.0
         if plot_h > 8.0 {
             ui_push_clip(r, x, plot_y, w, plot_h)
             draw_lane_headers(r, x, w, plot_y, plot_h)
@@ -2589,15 +2661,16 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
         reset_time_view()
     }
 
-    let footer_h: f64 = 16.0
-    let overview_h: f64 = 18.0
-    let ruler_h: f64 = 14.0
-    let gap: f64 = 2.0
+    // The hovered span's name and the navigation hint live in the status bar.
+    let footer_h: f64 = 4.0
+    let overview_h: f64 = 20.0
+    let ruler_h: f64 = 18.0
+    let gap: f64 = 4.0
     if h < overview_h + ruler_h + footer_h + gap * 2.0 + 40.0 {
         overview_h = 14.0
-        ruler_h = 12.0
+        ruler_h = 16.0
     }
-    let overview_y: f64 = y + 2.0
+    let overview_y: f64 = y + 4.0
     let ruler_y: f64 = overview_y + overview_h + gap
     let plot_y: f64 = ruler_y + ruler_h + gap
     let plot_h: f64 = h - (plot_y - y) - footer_h
@@ -2608,7 +2681,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
 
     let ov_x = x + 4.0
     let ov_w = w - 8.0
-    let row_h: f64 = 16.0
+    let row_h: f64 = TIMELINE_ROW_H
     if g_lane_count == 0 {
         lane_find_or_add("main")
     }
@@ -2737,8 +2810,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     let min_ms = lod_min_ms(span, w)
 
     draw_overview(r, v, ov_x, overview_y, ov_w, overview_h)
-    ui_fill_rect(r, x, ruler_y, w, ruler_h, col_panel(), 0.0)
-    draw_time_rulers(r, x, ruler_y + 2.0, w, ruler_h - 2.0, g_t0, g_t1, ruler_y)
+    draw_time_rulers(r, x, ruler_y + 2.0, w, ruler_h - 2.0, g_t0, g_t1, ruler_y + 1.0)
     ui_fill_rect(r, x, plot_y - 1.0, w, 1.0, col_line(), 0.0)
 
     g_tl_hovered = -1
@@ -2797,18 +2869,6 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     }
     ui_pop_clip(r)
 
-    let footer_y = y + h - footer_h
-    ui_fill_rect(r, x, footer_y, w, 1.0, col_line(), 0.0)
-    let footer_ty = ui_text_v_center_y(r, footer_y, footer_h, PX(), FONT())
-    if g_tl_hovered >= 0 {
-        // Draw name only - avoid backtick format (native heap never frees).
-        ui_push_clip(r, x + 8.0, footer_y, w - 16.0, footer_h)
-        ui_draw_text(r, x + 8.0, footer_ty, ev_name(g_tl_hovered), PX(), col_text(), FONT())
-        ui_pop_clip(r)
-    } else {
-        ui_draw_text(r, x + 6.0, footer_ty, "wheel zoom  drag pan  click select", PX(), col_muted(), FONT())
-    }
-
     if v.mouse_released {
         end_drag()
         g_drag_moved = false
@@ -2816,12 +2876,9 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
 }
 
 fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let metric_h = 20.0
-    draw_metric_line(r, x, y, w, metric_h)
-
-    let body_y = y + metric_h + 4.0
-    let body_h = h - metric_h - 4.0
-    let split = 4.0
+    let body_y = y
+    let body_h = h
+    let split = 6.0
     let min_side = 100.0
     let max_side = w - split
     if max_side > w * 0.55 {
@@ -2926,15 +2983,9 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
         // Details first: a busy timeline can fill the UI command buffer
         // and would otherwise drop the split and the side panel.
         draw_hot_list(r, v, side_x, body_y, side_w, body_h)
-        let split_color = col_line()
-        if on_split {
-            split_color = col_accent()
-        } else {
-            if g_side_resizing {
-                split_color = col_accent()
-            }
+        if on_split || g_side_resizing {
+            ui_fill_round_rect(r, split_x + 2.0, body_y + 6.0, 2.0, body_h - 12.0, 1.0, col_muted(), 0.0)
         }
-        ui_fill_rect(r, split_x + 1.0, body_y + 6.0, 2.0, body_h - 12.0, split_color, 0.0)
         if chart_w > 0.0 {
             draw_timeline(r, v, x, body_y, chart_w, body_h)
         }
@@ -2955,7 +3006,7 @@ let g_live_lanes_published = 0
 // Next wall-clock millisecond at which Window mode may redecode the window.
 let g_live_window_next: u64 = 0
 // Cached header and status lines, rebuilt on a timer instead of every frame.
-let g_live_header = "NS Profile - live"
+let g_live_header = "ns profiler - live"
 let g_live_header_src = ""
 let g_live_status = "Live capture idle."
 let g_live_status_next: u64 = 0
@@ -3260,9 +3311,9 @@ fn live_header_text() str {
     if g_live_title != g_live_header_src {
         g_live_header_src = g_live_title
         if g_live_title.len > 0 {
-            g_live_header = `NS Profile - live: {g_live_title}`
+            g_live_header = `ns profiler - live: {g_live_title}`
         } else {
-            g_live_header = "NS Profile - live"
+            g_live_header = "ns profiler - live"
         }
     }
     return g_live_header
@@ -3297,10 +3348,10 @@ fn live_status_text() str {
 }
 
 fn draw_frame_strip(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
+    draw_panel(r, x, y, w, h)
     let count = live_frames_retained()
     if count <= 0 {
-        ui_draw_text(r, x + 8.0, y + h * 0.5 - 6.0, "No frames captured yet.", PX(), col_muted(), FONT())
+        draw_text_clipped(r, x + 10.0, y, w - 20.0, h, "No frames captured yet.", col_muted())
         return
     }
     let slots = LIVE_FRAMES() as f64
@@ -3335,12 +3386,12 @@ fn draw_frame_strip(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
         if bh > inner_h {
             bh = inner_h
         }
-        let color = col_accent()
+        let color = col_muted()
         if span >= LIVE_BUDGET_MS() {
             color = col_warn()
         }
         if slot == selected {
-            color = col_text()
+            color = col_accent()
         }
         ui_fill_rect(r, bx, y + 2.0 + inner_h - bh, bw - 1.0, bh, color, 0.0)
         if hit(v, bx, y, bw, h) {
@@ -3354,7 +3405,9 @@ fn draw_frame_strip(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
         let slot = live_slot_at(hovered)
         let span = g_lf_end[slot] - g_lf_start[slot]
         let label = `#{g_lf_index[slot]}  {fmt_time_ms(span)}  {g_lf_events[slot]} ev`
-        ui_draw_text(r, x + 6.0, y + 1.0, label, PX(), col_text(), FONT())
+        let label_w = ui_text_width(r, label, PX(), FONT()) + 16.0
+        ui_fill_round_rect(r, x + 4.0, y + 4.0, label_w, CONTROL_H, CORNER_RADIUS, col_popup_bg(), 0.0)
+        draw_text_clipped(r, x + 12.0, y + 4.0, label_w - 8.0, CONTROL_H, label, col_text())
         if v.mouse_pressed {
             // Pinning a frame stops the view from following the newest one.
             g_live_sel_index = g_lf_index[slot]
@@ -3365,26 +3418,30 @@ fn draw_frame_strip(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     }
 }
 
-fn draw_live_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64) {
-    let bh = 18.0
+// The live controls, a row of outlined buttons in the top bar starting at
+// `x`. Returns where the row ends.
+fn draw_live_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64) f64 {
     let bx = x
     let run_label = "Run"
     if live_target_running() {
         run_label = "Restart"
     }
-    if draw_button(r, v, bx, y, 56.0, bh, run_label, false) {
+    let bw = button_w(r, run_label)
+    if draw_button(r, v, bx, y, bw, CONTROL_H, run_label, false) {
         live_run_target()
     }
-    bx = bx + 60.0
-    if draw_button(r, v, bx, y, 44.0, bh, "Stop", false) {
+    bx = bx + bw + 6.0
+    bw = button_w(r, "Stop")
+    if draw_button(r, v, bx, y, bw, CONTROL_H, "Stop", false) {
         live_stop_target()
     }
-    bx = bx + 48.0
+    bx = bx + bw + 6.0
     let pause_label = "Pause"
     if g_live_paused {
         pause_label = "Resume"
     }
-    if draw_button(r, v, bx, y, 56.0, bh, pause_label, g_live_paused) {
+    bw = button_w(r, pause_label)
+    if draw_button(r, v, bx, y, bw, CONTROL_H, pause_label, g_live_paused) {
         if g_live_paused {
             live_send_command(LIVE_CMD_RESUME())
             g_live_paused = false
@@ -3393,8 +3450,9 @@ fn draw_live_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64) {
             g_live_paused = true
         }
     }
-    bx = bx + 60.0
-    if draw_button(r, v, bx, y, 44.0, bh, "Live", g_live_follow) {
+    bx = bx + bw + 6.0
+    bw = button_w(r, "Live")
+    if draw_button(r, v, bx, y, bw, CONTROL_H, "Live", g_live_follow) {
         if g_live_follow {
             g_live_follow = false
         } else {
@@ -3405,12 +3463,13 @@ fn draw_live_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64) {
             live_show_selection()
         }
     }
-    bx = bx + 48.0
+    bx = bx + bw + 6.0
     let window_label = "Frame"
     if g_live_window {
         window_label = "Window"
     }
-    if draw_button(r, v, bx, y, 56.0, bh, window_label, g_live_window) {
+    bw = button_w(r, window_label)
+    if draw_button(r, v, bx, y, bw, CONTROL_H, window_label, g_live_window) {
         // Frame: just the selected frame. Window: every retained frame at once.
         if g_live_window {
             g_live_window = false
@@ -3419,22 +3478,157 @@ fn draw_live_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64) {
         }
         live_show_selection()
     }
-    bx = bx + 60.0
-    if draw_button(r, v, bx, y, 52.0, bh, "Replay", false) {
+    bx = bx + bw + 6.0
+    bw = button_w(r, "Replay")
+    if draw_button(r, v, bx, y, bw, CONTROL_H, "Replay", false) {
         // Refill the window from the target's own ring.
         live_clear_frames()
         live_send_command(LIVE_CMD_REPLAY())
     }
-    bx = bx + 56.0
-    let text_x = bx + 6.0
-    if text_x < x + w - 40.0 {
-        ui_push_clip(r, text_x, y + 2.0, x + w - text_x, 14.0)
-        ui_draw_text(r, text_x, y + 2.0, live_status_text(), PX(), col_muted(), FONT())
+    return bx + bw
+}
+
+// Six buttons at the top bar's font; reserved before the row is drawn so a
+// narrow window can drop the title instead of overlapping the controls.
+fn live_bar_w(r: ref ui_renderer) f64 {
+    let run_label = "Run"
+    if live_target_running() {
+        run_label = "Restart"
+    }
+    let pause_label = "Pause"
+    if g_live_paused {
+        pause_label = "Resume"
+    }
+    let window_label = "Frame"
+    if g_live_window {
+        window_label = "Window"
+    }
+    return button_w(r, run_label) + button_w(r, "Stop") + button_w(r, pause_label) + button_w(r, "Live") + button_w(r, window_label) + button_w(r, "Replay") + 30.0
+}
+
+// The bar along the top: the title, the live controls in a live session, the
+// load status, and Reload / Open at the right edge.
+fn draw_top_bar(r: ref ui_renderer, v: ref view, w: f64) {
+    ui_fill_rect(r, 0.0, 0.0, w, TOP_BAR_H, col_panel(), 0.0)
+    ui_fill_rect(r, 0.0, TOP_BAR_H - 1.0, w, 1.0, col_line(), 0.0)
+    let by = (TOP_BAR_H - CONTROL_H) * 0.5
+    let open_w = button_w(r, "Open")
+    let load_w = button_w(r, "Reload")
+    let open_x = w - 12.0 - open_w
+    let load_x = open_x - 6.0 - load_w
+    if draw_button(r, v, load_x, by, load_w, CONTROL_H, "Reload", false) {
+        g_load_profile_pending = true
+    }
+    if draw_button(r, v, open_x, by, open_w, CONTROL_H, "Open", false) {
+        g_open_profile_pending = true
+    }
+    let right = load_x - 12.0
+    let title = "ns profiler"
+    if g_live_enabled {
+        title = live_header_text()
+    }
+    let left: f64 = 12.0
+    let title_w = ui_text_width(r, title, TITLE_PX(), FONT())
+    let show_title = true
+    if g_live_enabled {
+        if left + title_w + 16.0 + live_bar_w(r) > right {
+            show_title = false
+        }
+    }
+    if show_title {
+        ui_push_clip(r, left, 0.0, max_f(0.0, right - left), TOP_BAR_H)
+        ui_draw_text(r, left, ui_text_v_center_y(r, 0.0, TOP_BAR_H, TITLE_PX(), FONT()), title, TITLE_PX(), col_text(), FONT())
         ui_pop_clip(r)
+        left = left + title_w + 16.0
+    }
+    if g_live_enabled {
+        left = draw_live_bar(r, v, left, by) + 16.0
+    }
+    if g_live_enabled == false {
+        draw_text_clipped(r, left, by, right - left, CONTROL_H, g_status, col_muted())
     }
 }
 
+// The bar along the bottom, laid out as ns_lens lays out its own: the
+// profile's totals and what the pointer is over on the left, and from the
+// right edge inward the RAM and FPS meters, then the load or ring meter. A
+// narrow window drops meters from the left of that group first.
+fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
+    ui_fill_rect(r, x, y, w, STATUS_BAR_H, col_panel(), 0.0)
+    ui_fill_rect(r, x, y, w, 1.0, col_line(), 0.0)
+    ui_push_clip(r, x, y, w, STATUS_BAR_H)
+    let right = x + w - 12.0
+    let text_y = y + (STATUS_BAR_H - CONTROL_H) * 0.5
+    let bar_y = y + STATUS_BAR_H * 0.5 - STATUS_METER_H * 0.5
+    if w >= 320.0 {
+        lit memory_bar_w = 64.0
+        let bar_x = right - memory_bar_w
+        draw_status_meter(r, bar_x, bar_y, memory_bar_w, status_memory_fraction(g_status_memory, g_status_memory_total))
+        let label_w = ui_text_width(r, g_status_memory_text, PX(), FONT())
+        right = bar_x - 8.0 - label_w
+        draw_text_clipped(r, right, text_y, label_w, CONTROL_H, g_status_memory_text, col_muted())
+        right = right - 16.0
+    }
+    if w >= 220.0 {
+        if w >= 440.0 {
+            lit fps_bar_w = 48.0
+            right = right - fps_bar_w
+            draw_status_meter(r, right, bar_y, fps_bar_w, status_fps_fraction(g_status_fps))
+            right = right - 8.0
+        }
+        let fps_w = ui_text_width(r, g_status_fps_text, PX(), FONT())
+        right = right - fps_w
+        draw_text_clipped(r, right, text_y, fps_w, CONTROL_H, g_status_fps_text, col_muted())
+        right = right - 16.0
+    }
+    if w >= 720.0 {
+        let label = ""
+        let fraction: f64 = 0.0
+        if g_loading {
+            label = "loading"
+            fraction = g_load_frac
+        } else {
+            if g_live_enabled {
+                label = "frame ring"
+                fraction = live_frames_retained() as f64 / LIVE_FRAMES() as f64
+            }
+        }
+        if label != "" {
+            lit bar_w = 128.0
+            let label_w = ui_text_width(r, label, PX(), FONT())
+            let bar_x = right - bar_w
+            right = bar_x - 8.0 - label_w
+            draw_text_clipped(r, right, text_y, label_w, CONTROL_H, label, col_muted())
+            draw_status_meter(r, bar_x, bar_y, bar_w, fraction)
+            right = right - 16.0
+        }
+    }
+    let left = x + 12.0
+    if g_profile_loaded {
+        let metrics = metric_text()
+        let metrics_w = min_f(ui_text_width(r, metrics, PX(), FONT()), max_f(0.0, right - left))
+        draw_text_clipped(r, left, text_y, metrics_w, CONTROL_H, metrics, col_text())
+        left = left + metrics_w + 16.0
+    }
+    // The span under the pointer, else the live session's state or the hint.
+    if g_tl_hovered >= 0 && g_tl_hovered < g_ev_count {
+        draw_text_clipped(r, left, text_y, right - left, CONTROL_H, ev_name(g_tl_hovered), col_accent())
+    } else {
+        if g_live_enabled {
+            draw_text_clipped(r, left, text_y, right - left, CONTROL_H, live_status_text(), col_muted())
+        } else {
+            if g_profile_loaded {
+                draw_text_clipped(r, left, text_y, right - left, CONTROL_H, "wheel zoom   drag pan   click select", col_muted())
+            } else {
+                draw_text_clipped(r, left, text_y, right - left, CONTROL_H, g_path, col_muted())
+            }
+        }
+    }
+    ui_pop_clip(r)
+}
+
 fn render_frame(r: ref ui_renderer, v: ref view) {
+    status_sample(os_time())
     ui_resize(r)
     g_mouse_x = ui_content_x(r, v.mouse_x)
     g_mouse_y = ui_content_y(r, v.mouse_y)
@@ -3456,63 +3650,40 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
 
-    let pad = 6.0
-    let header_h = 26.0
-    ui_fill_rect(r, 0.0, 0.0, w, header_h, col_panel(), 0.0)
-    let title = "NS Profile"
-    if g_live_enabled {
-        title = live_header_text()
-    }
-    let title_ty = ui_text_v_center_y(r, 0.0, header_h, TITLE_PX(), FONT())
-    ui_draw_text(r, pad, title_ty, title, TITLE_PX(), col_text(), FONT())
-    let title_w = ui_text_width(r, title, TITLE_PX(), FONT())
-    ui_push_clip(r, pad + title_w + 10.0, 0.0, 280.0, header_h)
-    ui_draw_text(r, pad + title_w + 10.0, title_ty, g_status, PX(), col_muted(), FONT())
-    ui_pop_clip(r)
+    // Both bars before the body: a busy timeline can fill the UI command
+    // buffer, and the status bar reads the hover the last frame found.
+    draw_top_bar(r, v, w)
+    draw_status_bar(r, 0.0, h - STATUS_BAR_H, w)
 
-    let open_w = 52.0
-    let load_w = 56.0
-    let by = 4.0
-    let bh = 18.0
-    let open_x = w - pad - open_w
-    let load_x = open_x - load_w - 6.0
-    if draw_button(r, v, load_x, by, load_w, bh, "Reload", false) {
-        g_load_profile_pending = true
-    }
-    if draw_button(r, v, open_x, by, open_w, bh, "Open", true) {
-        g_open_profile_pending = true
-    }
-
-    ui_fill_rect(r, 0.0, header_h, w, 1.0, col_line(), 0.0)
-
+    let pad = 8.0
     let body_x = pad
-    let body_y = header_h + 6.0
+    let body_y = TOP_BAR_H + pad
     let body_w = w - pad * 2.0
-    let body_h = h - body_y - pad
+    let body_h = h - body_y - STATUS_BAR_H - pad
 
     if g_live_enabled {
-        // The live toolbar and the 128-frame strip sit above the profile body.
+        // The 128-frame strip sits above the profile body.
+        lit strip_h = 32.0
         if body_w > 100.0 {
-            draw_live_bar(r, v, body_x, body_y, body_w)
-            draw_frame_strip(r, v, body_x, body_y + 22.0, body_w, 28.0)
+            draw_frame_strip(r, v, body_x, body_y, body_w, strip_h)
         }
-        body_y = body_y + 54.0
-        body_h = h - body_y - pad
+        body_y = body_y + strip_h + pad
+        body_h = h - body_y - STATUS_BAR_H - pad
     }
 
     if body_w > 100.0 {
         if body_h > 80.0 {
             if g_profile_loaded == false {
-                let cy = body_y + min_f(48.0, body_h * 0.25)
+                let cy = body_y + body_h * 0.5 - 30.0
                 if g_live_enabled {
-                    ui_draw_text(r, body_x, cy, "Waiting for live frames", TITLE_PX(), col_text(), FONT())
-                    ui_draw_text(r, body_x, cy + 16.0, "Run starts the project and streams frames over loopback.", PX(), col_muted(), FONT())
-                    ui_draw_text(r, body_x, cy + 30.0, live_status_text(), PX(), col_muted(), FONT())
+                    draw_centered_text(r, body_x, cy, body_w, 20.0, "Waiting for live frames", TITLE_PX(), col_text())
+                    draw_centered_text(r, body_x, cy + 20.0, body_w, 20.0, "Run starts the project and streams frames over loopback.", PX(), col_muted())
+                    draw_centered_text(r, body_x, cy + 40.0, body_w, 20.0, live_status_text(), PX(), col_muted())
                 } else {
-                    ui_draw_text(r, body_x, cy, "No profile loaded", TITLE_PX(), col_text(), FONT())
-                    ui_draw_text(r, body_x, cy + 16.0, "Run `ns profile` to write and open bin/ns.profile.", PX(), col_muted(), FONT())
+                    draw_centered_text(r, body_x, cy, body_w, 20.0, "No profile loaded", TITLE_PX(), col_text())
+                    draw_centered_text(r, body_x, cy + 20.0, body_w, 20.0, "Run `ns profile` to write and open bin/ns.profile, or Open one", PX(), col_muted())
                     if g_status == "Loaded file is not an ns-profile." {
-                        ui_draw_text(r, body_x, cy + 30.0, g_status, PX(), col_warn(), FONT())
+                        draw_centered_text(r, body_x, cy + 40.0, body_w, 20.0, g_status, PX(), col_warn())
                     }
                 }
             } else {
@@ -3523,7 +3694,7 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     if g_ov_rebuild_pending {
         if g_loading == false {
             if g_events_loaded {
-                rebuild_overview_batch(r, max_f(200.0, w - 40.0), 18.0)
+                rebuild_overview_batch(r, max_f(200.0, w - 40.0), 20.0)
                 g_ov_rebuild_pending = false
             }
         }
@@ -3533,13 +3704,10 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
         let bh = 40.0
         let bx = (w - bw) * 0.5
         let by = (h - bh) * 0.5
-        ui_fill_rect(r, bx - 6.0, by - 6.0, bw + 12.0, bh + 12.0, col_panel(), 0.0)
-        ui_stroke_rect(r, bx - 6.0, by - 6.0, bw + 12.0, bh + 12.0, 1.0, col_line(), 0.0)
-        ui_draw_text(r, bx, by, g_load_msg, PX(), col_text(), FONT())
-        let track_y = by + 20.0
-        ui_fill_rect(r, bx, track_y, bw, 8.0, col_panel_hi(), 0.0)
-        let fill = max_f(2.0, bw * g_load_frac)
-        ui_fill_rect(r, bx, track_y, fill, 8.0, col_accent(), 0.0)
+        ui_fill_round_rect(r, bx - 12.0, by - 10.0, bw + 24.0, bh + 20.0, CORNER_RADIUS, col_popup_bg(), 0.0)
+        ui_stroke_round_rect(r, bx - 11.5, by - 9.5, bw + 23.0, bh + 19.0, CORNER_RADIUS, 1.0, col_muted(), 0.0)
+        draw_text_clipped(r, bx, by, bw, CONTROL_H, g_load_msg, col_text())
+        draw_status_meter(r, bx, by + 26.0, bw, g_load_frac)
         ui_request_render(r, 2)
     }
     if g_live_enabled {
@@ -3551,7 +3719,7 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
 }
 
 fn main() {
-    let v = view_create("NS Profile", 960, 640)
+    let v = view_create("ns profiler", 960, 640)
     reset_view_input(v)
     let startup = os_env("NS_PROFILE_FILE")
     let ok = gpu_request_device(v)

@@ -5971,8 +5971,8 @@ void ns_exec_update(ns_str path) {
     ns_str_free(root);
 }
 
-// A bundled nscode tool: its app name (`nscode-profile`), its source project
-// below the repository or install root (`nscode/profile`), and the entry its
+// A bundled nscode tool: its app name (`ns_profiler`), its source project
+// below the repository or install root (`nscode/ns_profiler`), and the entry its
 // ns.mod names there. The compiled app is preferred over the source.
 typedef struct ns_tool_app {
     const char *name;
@@ -5980,7 +5980,7 @@ typedef struct ns_tool_app {
     const char *entry;
 } ns_tool_app;
 
-static const ns_tool_app ns_tool_profiler = {"nscode-profile", "nscode/profile", "main.ns"};
+static const ns_tool_app ns_tool_profiler = {"ns_profiler", "nscode/ns_profiler", "src/main.ns"};
 
 // The executable inside a built app: the Darwin bundle's binary, or the
 // artifact itself (a Linux AppImage).
@@ -6133,7 +6133,7 @@ static ns_bool ns_tool_launch_compiled(const ns_tool_app *tool, ns_str bundle) {
 }
 
 // Start the GUI viewer, preferring the compiled bundle over interpreting
-// nscode/profile. Environment set by the caller (NS_PROFILE_FILE for a report,
+// nscode/ns_profiler. Environment set by the caller (NS_PROFILE_FILE for a report,
 // NS_PROFILE_LIVE* for a live session) is what the viewer reads on startup.
 static ns_bool ns_profile_launch_viewer(const char *what) {
     ns_str compiled = ns_profile_find_compiled();
@@ -6146,7 +6146,7 @@ static ns_bool ns_profile_launch_viewer(const char *what) {
     }
     ns_str app = ns_profile_find_viewer();
     if (app.data == ns_null) {
-        ns_warn("profile", "native viewer not found; build it with `ns build nscode/profile`\n");
+        ns_warn("profile", "native viewer not found; build it with `ns build nscode/ns_profiler`\n");
         return false;
     }
     ns_info("profile", "opening interpreted viewer for %s\n", what);

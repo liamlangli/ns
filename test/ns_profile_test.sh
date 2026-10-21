@@ -14,28 +14,28 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 # Keep `ns profile` headless in CI; the auto-open path is covered manually.
 export NS_PROFILE_NO_VIEW=1
 
-if [ ! -f "$root/nscode/profile/ns.mod" ] || [ ! -f "$root/nscode/profile/main.ns" ]; then
-    printf '%s\n' 'FAIL: nscode/profile viewer sources are missing.' >&2
+if [ ! -f "$root/nscode/ns_profiler/ns.mod" ] || [ ! -f "$root/nscode/ns_profiler/src/main.ns" ]; then
+    printf '%s\n' 'FAIL: nscode/ns_profiler viewer sources are missing.' >&2
     exit 1
 fi
-# nscode/profile is one of the nscode apps `make` builds and `make install`
+# nscode/ns_profiler is one of the nscode apps `make` builds and `make install`
 # installs, with its whole source, through scripts/nscode_apps.sh.
 if ! grep -q 'nscode_apps.sh build' "$root/Makefile" || ! grep -q 'nscode_apps.sh install' "$root/Makefile"; then
     printf '%s\n' 'FAIL: Makefile does not build and install the nscode apps.' >&2
     exit 1
 fi
 if ! grep -q 'nscode/\*/ns.mod' "$root/scripts/nscode_apps.sh" || ! grep -q 'share/nscode/' "$root/scripts/nscode_apps.sh"; then
-    printf '%s\n' 'FAIL: make install does not install nscode/profile.' >&2
+    printf '%s\n' 'FAIL: make install does not install nscode/ns_profiler.' >&2
     exit 1
 fi
 if [ "$(uname -s)" = Darwin ]; then
-    viewer="$root/nscode/profile/bin/nscode-profile.app/Contents/MacOS/nscode-profile"
+    viewer="$root/nscode/ns_profiler/bin/ns_profiler.app/Contents/MacOS/ns_profiler"
     if [ ! -x "$viewer" ]; then
-        printf '%s\n' 'FAIL: compiled nscode-profile.app is missing; make should ns build nscode/profile.' >&2
+        printf '%s\n' 'FAIL: compiled ns_profiler.app is missing; make should ns build nscode/ns_profiler.' >&2
         exit 1
     fi
     if ! file "$viewer" | grep -q 'Mach-O'; then
-        printf '%s\n' 'FAIL: nscode-profile is not a Mach-O executable.' >&2
+        printf '%s\n' 'FAIL: ns_profiler is not a Mach-O executable.' >&2
         exit 1
     fi
 fi
@@ -53,8 +53,8 @@ if ! "$ns" --help | grep -q '\-\-live-port'; then
     printf '%s\n' 'FAIL: ns help does not mention live profiling.' >&2
     exit 1
 fi
-if [ ! -f "$root/nscode/profile/live.ns" ]; then
-    printf '%s\n' 'FAIL: nscode/profile/live.ns is missing.' >&2
+if [ ! -f "$root/nscode/ns_profiler/src/live.ns" ]; then
+    printf '%s\n' 'FAIL: nscode/ns_profiler/src/live.ns is missing.' >&2
     exit 1
 fi
 if "$ns" --help | grep -q 'profile view'; then

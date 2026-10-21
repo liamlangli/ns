@@ -67,7 +67,7 @@ Common commands:
 - `make test` — build and run tests (currently `bin/ns_json_test`)
 - `make run` — run `ns`
 - `make clean`
-- `make install` — install binaries/libs into `~/.ns/...`, install the compiled `nscode-profile.app` viewer to `~/.ns/share/nscode/profile` and `~/.ns/bin`, and ask the user to add `~/.ns/bin` to `PATH`
+- `make install` — install binaries/libs into `~/.ns/...`, install the compiled `ns_profiler.app` viewer to `~/.ns/share/nscode/ns_profiler` and `~/.ns/bin`, and ask the user to add `~/.ns/bin` to `PATH`
 
 ---
 
@@ -162,7 +162,7 @@ With filename and no analysis/emit flag, it evaluates and prints result.
     aggregates, the flame tree, the retained timeline, and the 128-frame live
     ring
   - `ns_profile_live.c` — the loopback TCP transport that publishes one message
-    per frame to the `ns profiler --live` viewer (`nscode/profile`).
+    per frame to the `ns profiler --live` viewer (`nscode/ns_profiler`).
     See `doc/profile.md`.
 
 ---
@@ -173,9 +173,9 @@ With filename and no analysis/emit flag, it evaluates and prints result.
 - A standalone perspective treemap with distance LOD and bounded code streaming.
 - `src/main.ns` is the desktop entry.
 
-### Profile viewer (`nscode/profile/`)
+### Profile viewer (`nscode/ns_profiler/`)
 - The GUI timeline viewer, written in ns and compiled by
-  `make` (`ns build nscode/profile`, like every nscode app).
+  `make` (`ns build nscode/ns_profiler`, like every nscode app).
 - `live.ns` owns a live session: the loopback listener, the profiled child
   process, the wire protocol, and the 128-frame ring. It is
   rendering-agnostic.

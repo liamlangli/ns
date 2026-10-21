@@ -1,4 +1,4 @@
-// nscode/profile/live.ns
+// nscode/ns_profiler/src/live.ns
 // ---------------------------------------------------------------------------
 // Live capture session: the loopback listener, the profiled child process, the
 // wire protocol, and the 128-frame ring. Everything here is rendering-agnostic

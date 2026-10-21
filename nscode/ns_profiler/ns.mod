@@ -1,9 +1,8 @@
 schema = "ns.mod/v2"
-name = "nscode-profile"
+name = "ns_profiler"
 version = "0.1.0"
 author = "liamlangli <lilang8936@gmail.com>"
 type = "app"
 description = "Native ns.profile timeline viewer."
-source = "."
+source = "src"
 entry = "main.ns"
-exclude = ["README.md"]

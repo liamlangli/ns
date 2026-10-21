@@ -28,7 +28,7 @@ that contain NUL bytes. The model is blocking and single-threaded: a server
 calls `net_tcp_listen()` once and then loops over `net_tcp_accept()`. A program
 with its own frame loop instead sets `net_set_nonblocking()` and polls with
 `net_recv_try()`, which separates "nothing ready" from a closed peer; the live
-profiler viewer (`nscode/profile/live.ns`) is built that way.
+profiler viewer (`nscode/ns_profiler/src/live.ns`) is built that way.
 
 ## Static file server
 

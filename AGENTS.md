@@ -66,7 +66,7 @@ The common commands are:
 - `ns profiler [file]`: open the compiled native GUI viewer for
   `bin/ns.profile`, falling back to `ns.profile`, or open an explicit file.
   `make` / `make install` build that viewer
-  with `ns build nscode/profile`.
+  with `ns build nscode/ns_profiler`.
 - `ns profiler --live [path | target]`: open the same viewer in live mode and
   run the project under it. The viewer owns a loopback TCP listener, starts
   `ns profile --live-port <n>` itself, and receives one message per frame, so
