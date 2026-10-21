@@ -148,6 +148,25 @@ fn expect_token(name: str, i: i32, start: i32, len: i32, kind: i32) {
     }
 }
 
+fn test_c_tokenizer() {
+    check_i("c source picks c", syntax_language_for_path("src/ns.c"), 3)
+    check_i("c header picks c", syntax_language_for_path("lib/ns.h"), 3)
+    check_i("ns source stays ns", syntax_language_for_path("src/main.ns"), 0)
+    set_syntax_language(3)
+    load_str("#include <stdio.h>")
+    tokenize_line(0)
+    expect_token("c directive", 0, 0, 8, TK_KEYWORD())
+    load_str("static int f(void) { /* x */ return 0; }")
+    tokenize_line(0)
+    expect_token("c static", 0, 0, 6, TK_KEYWORD())
+    expect_token("c int", 1, 7, 3, TK_TYPE())
+    expect_token("c call", 2, 11, 1, TK_CALL())
+    expect_token("c void", 4, 13, 4, TK_TYPE())
+    expect_token("c block comment", 7, 21, 7, TK_COMMENT())
+    expect_token("c return", 8, 29, 6, TK_KEYWORD())
+    set_syntax_language(0)
+}
+
 fn test_tokenizer() {
     load_str("")
     check_i("document byte before start is sentinel", dc(-1), 0)
@@ -250,6 +269,7 @@ fn main() i32 {
     test_editing_around_selection()
     test_undo_redo()
     test_tokenizer()
+    test_c_tokenizer()
     test_key_char()
     test_default_language()
     if g_fail == 0 {

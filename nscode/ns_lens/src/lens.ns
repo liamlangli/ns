@@ -2091,6 +2091,20 @@ fn lens_token_scan(text: str, s: i32, m: i32, p: i32, language: i32) i64 {
         kind = TK_COMMENT()
         return lens_token_pack(m, kind)
     }
+    if b == 47 && language == 3 && (p + 1) < m && lens_byte(text, s + p + 1) == 42 {
+        let q = p + 2
+        loop q < m && !(lens_byte(text, s + q) == 42 && (q + 1) < m && lens_byte(text, s + q + 1) == 47) {
+            q = q + 1
+        }
+        return lens_token_pack(clamp_i(q + 2, p + 2, m), TK_COMMENT())
+    }
+    if b == 35 && language == 3 {
+        let q = p + 1
+        loop q < m && is_word_byte(lens_byte(text, s + q)) {
+            q = q + 1
+        }
+        return lens_token_pack(q, TK_KEYWORD())
+    }
     if b == 34 || b == 39 || b == 96 {
         kind = TK_STRING()
         let q = p + 1
@@ -2175,7 +2189,8 @@ fn lens_build_code_batch(r: ref ui_renderer, slot: i32, rows: i32) i32 {
         diff = lens_leaf_diff(g_lens_slot_index[slot])
         total = first_row + lens_text_rows(text, wrap) + lens_file_diff_rows(diff, wrap)
     }
-    let input = lens_batch_prepare(r, text, diff, document, first_row, first_col, total, rows, wrap, char_w, false)
+    let language = syntax_language_for_path(os_entry_path(g_lens_slot_index[slot]))
+    let input = lens_batch_prepare(r, text, diff, document, first_row, first_col, total, rows, wrap, char_w, false, language)
     lens_batch_build(r, batch, ref input)
     ui_rect_batch_end(r, batch)
     let marks = g_lens_mark_batch[slot]

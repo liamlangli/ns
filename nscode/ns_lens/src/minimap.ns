@@ -219,7 +219,7 @@ fn lens_mini_build_content(r: ref ui_renderer, index: i32, text: str, document: 
         ui_rect_batch_begin(r, batch)
     }
     let start_vertex = ui_rect_batch_vertex_count(r, batch)
-    let input = lens_batch_prepare(r, text, diff, document, first_row, first_col, lines, rows, wrap, char_w, true)
+    let input = lens_batch_prepare(r, text, diff, document, first_row, first_col, lines, rows, wrap, char_w, true, syntax_language_for_path(os_entry_path(index)))
     lens_batch_build(r, batch, ref input)
     ui_rect_batch_end(r, batch)
     if g_lens_mini_build_block != 0 {

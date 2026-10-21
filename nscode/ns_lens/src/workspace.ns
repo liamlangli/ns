@@ -412,6 +412,7 @@ fn workspace_open(index: i32) bool {
     }
 
     g_workspace_active = index
+    set_syntax_language(syntax_language_for_path(os_entry_path(index)))
     load_str(g_workspace_buffers[index])
     g_cur = g_workspace_cursors[index]
     g_anchor = g_workspace_anchors[index]

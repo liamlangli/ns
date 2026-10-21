@@ -158,10 +158,12 @@ fn lens_bar_run_of(source: str, offset: i32, m: i32, start: i32, color: u32, col
 // rows. A chunk's `first_row` is the display row of its first byte, which
 // sits `first_col` bytes into its line. Document rows come from the wrap
 // table; other text takes its ghost rows and added lines from `diff`.
-fn lens_batch_prepare(r: ref ui_renderer, text: str, diff: lens_file_diff, document: bool, first_row: i32, first_col: i32, total: i32, rows: i32, wrap: i32, char_w: f64, mini: bool) lens_batch_input {
-    // Initialize the selected language's literal cache before native workers.
-    let keyword_ready = is_keyword_part("", 0, 0)
-    let type_ready = is_type_word_part("", 0, 0)
+fn lens_batch_prepare(r: ref ui_renderer, text: str, diff: lens_file_diff, document: bool, first_row: i32, first_col: i32, total: i32, rows: i32, wrap: i32, char_w: f64, mini: bool, language: i32) lens_batch_input {
+    // Initialize every language's literal cache before native workers.
+    for l in 0 to 4 {
+        let keyword_ready = is_keyword_language("", 0, 0, l)
+        let type_ready = is_type_word_language("", 0, 0, l)
+    }
     let wrap_n = clamp_i(wrap, 1, 100000000)
     if document {
         lens_wrap_sync(wrap_n)
@@ -188,7 +190,7 @@ fn lens_batch_prepare(r: ref ui_renderer, text: str, diff: lens_file_diff, docum
         rows, wrap_n, g_lens_flow_column_pitch,
         g_lens_flow_line_pitch, char_w,
         text_center_y(r, 0.0, g_lens_flow_line_pitch, code_base_font_px()),
-        text_center_y(r, 0.0, g_lens_flow_line_pitch, small_px()), mini, g_syntax_language
+        text_center_y(r, 0.0, g_lens_flow_line_pitch, small_px()), mini, language
     }
     for kind in 0 to 9 {
         input.colors[kind] = token_color(kind)

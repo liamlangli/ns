@@ -925,15 +925,31 @@ let g_tok_cache_count = [i32](128)
 let g_tok_cache_start = [i32](24576)
 let g_tok_cache_len = [i32](24576)
 let g_tok_cache_kind = [i32](24576)
+// 0 ns, 1 TypeScript, 2 Python, 3 C.
 let g_syntax_language: i32 = 0
 
 fn set_syntax_language(language: i32) {
-    let next = clamp_i(language, 0, 2)
+    let next = clamp_i(language, 0, 3)
     if next != g_syntax_language {
         g_syntax_language = next
         // Cached token rows are keyed by document version.
         g_doc_version = g_doc_version + 1
     }
+}
+
+fn path_has_suffix(path: str, suffix: str) bool {
+    return path.len >= suffix.len && substr(path, path.len - suffix.len, suffix.len) == suffix
+}
+
+// Pick the highlighter from a file name; anything unrecognized reads as ns.
+fn syntax_language_for_path(path: str) i32 {
+    if path_has_suffix(path, ".c") || path_has_suffix(path, ".h") || path_has_suffix(path, ".m") {
+        return 3
+    }
+    if path_has_suffix(path, ".cc") || path_has_suffix(path, ".cpp") || path_has_suffix(path, ".hpp") || path_has_suffix(path, ".mm") {
+        return 3
+    }
+    return 0
 }
 
 fn token_count() i32 {
@@ -998,6 +1014,38 @@ fn is_keyword_part(w: str, start: i32, length: i32) bool {
 }
 
 fn is_keyword_language(w: str, start: i32, length: i32, language: i32) bool {
+    if language == 3 {
+        if word_part_equal(w, start, length, "auto") { return true }
+        if word_part_equal(w, start, length, "break") { return true }
+        if word_part_equal(w, start, length, "case") { return true }
+        if word_part_equal(w, start, length, "const") { return true }
+        if word_part_equal(w, start, length, "continue") { return true }
+        if word_part_equal(w, start, length, "default") { return true }
+        if word_part_equal(w, start, length, "do") { return true }
+        if word_part_equal(w, start, length, "else") { return true }
+        if word_part_equal(w, start, length, "enum") { return true }
+        if word_part_equal(w, start, length, "extern") { return true }
+        if word_part_equal(w, start, length, "for") { return true }
+        if word_part_equal(w, start, length, "goto") { return true }
+        if word_part_equal(w, start, length, "if") { return true }
+        if word_part_equal(w, start, length, "inline") { return true }
+        if word_part_equal(w, start, length, "register") { return true }
+        if word_part_equal(w, start, length, "restrict") { return true }
+        if word_part_equal(w, start, length, "return") { return true }
+        if word_part_equal(w, start, length, "sizeof") { return true }
+        if word_part_equal(w, start, length, "static") { return true }
+        if word_part_equal(w, start, length, "struct") { return true }
+        if word_part_equal(w, start, length, "switch") { return true }
+        if word_part_equal(w, start, length, "typedef") { return true }
+        if word_part_equal(w, start, length, "union") { return true }
+        if word_part_equal(w, start, length, "volatile") { return true }
+        if word_part_equal(w, start, length, "while") { return true }
+        if word_part_equal(w, start, length, "true") { return true }
+        if word_part_equal(w, start, length, "false") { return true }
+        if word_part_equal(w, start, length, "NULL") { return true }
+        if word_part_equal(w, start, length, "nullptr") { return true }
+        return false
+    }
     if language == 1 {
         if word_part_equal(w, start, length, "function") { return true }
         if word_part_equal(w, start, length, "const") { return true }
@@ -1151,6 +1199,33 @@ fn is_type_word_part(w: str, start: i32, length: i32) bool {
 }
 
 fn is_type_word_language(w: str, start: i32, length: i32, language: i32) bool {
+    if language == 3 {
+        if word_part_equal(w, start, length, "char") { return true }
+        if word_part_equal(w, start, length, "double") { return true }
+        if word_part_equal(w, start, length, "float") { return true }
+        if word_part_equal(w, start, length, "int") { return true }
+        if word_part_equal(w, start, length, "long") { return true }
+        if word_part_equal(w, start, length, "short") { return true }
+        if word_part_equal(w, start, length, "signed") { return true }
+        if word_part_equal(w, start, length, "unsigned") { return true }
+        if word_part_equal(w, start, length, "void") { return true }
+        if word_part_equal(w, start, length, "bool") { return true }
+        if word_part_equal(w, start, length, "size_t") { return true }
+        if word_part_equal(w, start, length, "ssize_t") { return true }
+        if word_part_equal(w, start, length, "ptrdiff_t") { return true }
+        if word_part_equal(w, start, length, "intptr_t") { return true }
+        if word_part_equal(w, start, length, "uintptr_t") { return true }
+        if word_part_equal(w, start, length, "int8_t") { return true }
+        if word_part_equal(w, start, length, "int16_t") { return true }
+        if word_part_equal(w, start, length, "int32_t") { return true }
+        if word_part_equal(w, start, length, "int64_t") { return true }
+        if word_part_equal(w, start, length, "uint8_t") { return true }
+        if word_part_equal(w, start, length, "uint16_t") { return true }
+        if word_part_equal(w, start, length, "uint32_t") { return true }
+        if word_part_equal(w, start, length, "uint64_t") { return true }
+        if word_part_equal(w, start, length, "FILE") { return true }
+        return false
+    }
     if language == 1 {
         if word_part_equal(w, start, length, "string") { return true }
         if word_part_equal(w, start, length, "number") { return true }
@@ -1352,6 +1427,14 @@ fn tokenize_line(li: i32) i32 {
             if g_syntax_language == 2 {
                 add_token(p, m - p, TK_COMMENT())
                 p = m
+            } else if g_syntax_language == 3 {
+                // A C preprocessor directive reads as one keyword: `#include`.
+                let q = p + 1
+                loop q < m && is_word_byte(dc(s + q)) {
+                    q = q + 1
+                }
+                add_token(p, q - p, TK_KEYWORD())
+                p = q
             } else {
                 add_token(p, 1, TK_PUNCT())
                 p = p + 1
@@ -1362,6 +1445,15 @@ fn tokenize_line(li: i32) i32 {
                 if dc(s + p + 1) == 47 {
                     add_token(p, m - p, TK_COMMENT())
                     p = m
+                } else if g_syntax_language == 3 && dc(s + p + 1) == 42 {
+                    // A C block comment, closed on this line or run to its end.
+                    let q = p + 2
+                    loop q < m && !(dc(s + q) == 42 && (q + 1) < m && dc(s + q + 1) == 47) {
+                        q = q + 1
+                    }
+                    q = clamp_i(q + 2, p + 2, m)
+                    add_token(p, q - p, TK_COMMENT())
+                    p = q
                 } else {
                     add_token(p, 1, TK_PUNCT())
                     p = p + 1
