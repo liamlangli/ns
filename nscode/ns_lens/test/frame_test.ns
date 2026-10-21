@@ -1,4 +1,17 @@
 fn main() {
+    g_lens_poll_time = -1.0
+    assert lens_poll_due(10.0, true)
+    assert lens_poll_due(10.0, false)
+    g_lens_poll_time = 10.0
+    g_lens_frame_active = true
+    assert lens_poll_due(10.05, true) == false
+    assert lens_poll_due(10.2, true)
+    assert lens_poll_due(10.9, false) == false
+    assert lens_poll_due(11.1, false)
+    assert lens_poll_due(9.0, true)
+    g_lens_frame_active = false
+    assert lens_poll_due(10.01, true)
+    assert lens_poll_due(10.01, false) == false
     g_lens_frame_time = -1.0
     assert lens_frame_due(10.0, true, false, false)
     assert lens_frame_due(10.0, false, true, true) == false

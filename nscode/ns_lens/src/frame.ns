@@ -29,14 +29,21 @@ fn lens_frame_due(now: f64, active: bool, input: bool, resized: bool) bool {
     return now < g_lens_frame_time || now - g_lens_frame_time >= delay
 }
 
+// Polling must continue after the activation frame so PTY output is drained.
+fn lens_poll_due(now: f64, active: bool) bool {
+    if g_lens_poll_time < 0.0 || now < g_lens_poll_time { return true }
+    if active && g_lens_frame_active == false { return true }
+    let delay: f64 = LENS_IDLE_POLL_MS as f64 / 1000.0
+    if active == false { delay = LENS_BACKGROUND_POLL_MS as f64 / 1000.0 }
+    return now - g_lens_poll_time >= delay
+}
+
 fn lens_frame(r: ref ui_renderer, v: ref view) {
     let now = os_time()
     let active = view_is_active(v)
     // Dock actions (including opening a project) must work while inactive.
     lens_dock_menu(v)
-    let poll_delay = LENS_IDLE_POLL_MS
-    if active == false { poll_delay = LENS_BACKGROUND_POLL_MS }
-    if g_lens_poll_time < 0.0 || now < g_lens_poll_time || now - g_lens_poll_time >= poll_delay as f64 / 1000.0 || active && g_lens_frame_active == false {
+    if lens_poll_due(now, active) {
         g_lens_poll_time = now
         workspace_poll_changes()
         terminal_poll()
