@@ -1,0 +1,76 @@
+use shader
+
+lit CNN_DENSE_CHUNK = 64
+
+// Split a long dot product along its input dimension. The x axis still
+// covers independent outputs; the y axis covers sample/chunk pairs.
+fn cs_cnn_dense_partial() void {
+    let output = shader_global_id_x()
+    let row = shader_global_id_y()
+    let inputs = shader_root_f32(3) as i32
+    let outputs = shader_root_f32(4) as i32
+    let chunks = (inputs + CNN_DENSE_CHUNK - 1) / CNN_DENSE_CHUNK
+    let sample = row / chunks
+    let chunk = row % chunks
+    if output >= outputs || sample >= shader_root_f32(0) as i32 { return }
+    let source = sample * CNN_ACTS + shader_root_f32(5) as i32
+    let weights = shader_root_f32(7) as i32 + output * inputs
+    let end = (chunk + 1) * CNN_DENSE_CHUNK
+    if end > inputs { end = inputs }
+    let sum: f32 = 0.0
+    for input in chunk * CNN_DENSE_CHUNK to end {
+        sum = sum + shader_buffer_f32(2, source + input) * shader_buffer_f32(0, weights + input)
+    }
+    shader_buffer_store_f32(7, row * outputs + output, sum)
+}
+
+fn cs_cnn_dense_reduce() void {
+    let output = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let inputs = shader_root_f32(3) as i32
+    let outputs = shader_root_f32(4) as i32
+    if output >= outputs || sample >= shader_root_f32(0) as i32 { return }
+    let chunks = (inputs + CNN_DENSE_CHUNK - 1) / CNN_DENSE_CHUNK
+    let base = sample * chunks * outputs + output
+    let sum = shader_buffer_f32(0, shader_root_f32(8) as i32 + output)
+    for chunk in 0 to chunks { sum = sum + shader_buffer_f32(7, base + chunk * outputs) }
+    if shader_root_f32(9) > 0.5 && sum < 0.0 { sum = 0.0 }
+    shader_buffer_store_f32(2, sample * CNN_ACTS + shader_root_f32(6) as i32 + output, sum)
+}
+
+// A middle reduction level keeps the final parameter writer from scanning
+// hundreds of partials. Each independent GPU task folds at most 32 values.
+lit CNN_GRAD_FOLD = 32
+
+fn cs_cnn_conv_gradient_fold() void {
+    let index = shader_global_id_x()
+    let group = shader_global_id_y()
+    let parameters = (shader_root_f32(3) as i32 * 9 + 1) * shader_root_f32(4) as i32
+    let side = shader_root_f32(2) as i32
+    let count = shader_root_f32(0) as i32
+    let chunks = (count * side * side + CNN_GRAD_CHUNK - 1) / CNN_GRAD_CHUNK
+    let groups = (chunks + CNN_GRAD_FOLD - 1) / CNN_GRAD_FOLD
+    if index >= parameters || group >= groups { return }
+    let end = (group + 1) * CNN_GRAD_FOLD
+    if end > chunks { end = chunks }
+    let total: f32 = 0.0
+    for chunk in group * CNN_GRAD_FOLD to end {
+        total = total + shader_buffer_f32(7, chunk * parameters + index)
+    }
+    shader_buffer_store_f32(7, (chunks + group) * parameters + index, total)
+}
+
+fn cs_cnn_conv_gradient_finish() void {
+    let index = shader_global_id_x()
+    let parameters = (shader_root_f32(3) as i32 * 9 + 1) * shader_root_f32(4) as i32
+    if index >= parameters { return }
+    let side = shader_root_f32(2) as i32
+    let count = shader_root_f32(0) as i32
+    let chunks = (count * side * side + CNN_GRAD_CHUNK - 1) / CNN_GRAD_CHUNK
+    let groups = (chunks + CNN_GRAD_FOLD - 1) / CNN_GRAD_FOLD
+    let total: f32 = 0.0
+    for group in 0 to groups {
+        total = total + shader_buffer_f32(7, (chunks + group) * parameters + index)
+    }
+    shader_buffer_store_f32(4, shader_root_f32(7) as i32 + index, total / count as f32)
+}

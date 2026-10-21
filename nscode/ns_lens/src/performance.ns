@@ -28,6 +28,12 @@ fn status_sample(now: f64) {
     }
 }
 
+// A full meter represents 60 rendered frames per second; faster displays
+// retain their actual rate in the adjacent numeric readout.
+fn status_fps_fraction(fps: i32) f64 {
+    return clamp(fps as f64 / 60.0, 0.0, 1.0)
+}
+
 fn status_memory_fraction(used: u64, total: u64) f64 {
     if total == 0 {
         return 0.0

@@ -1,6 +1,11 @@
 use os
 
 fn main() {
+    assert status_fps_fraction(0) == 0.0
+    assert status_fps_fraction(30) == 0.5
+    assert status_fps_fraction(60) == 1.0
+    assert status_fps_fraction(120) == 1.0
+    assert status_fps_fraction(-1) == 0.0
     assert status_memory_fraction(1, 4) == 0.25
     assert status_memory_fraction(1, 0) == 0.0
     assert status_memory_fraction(5, 4) == 1.0

@@ -1,0 +1,61 @@
+use os
+use std
+
+let g_nn_status_started = false
+let g_nn_status_time: f64 = 0.0
+let g_nn_status_frames: i32 = 0
+let g_nn_status_fps: i32 = 0
+let g_nn_status_memory: u64 = 0
+let g_nn_status_memory_total: u64 = 0
+
+fn nn_status_sample(now: f64) {
+    if !g_nn_status_started || now < g_nn_status_time {
+        g_nn_status_started = true
+        g_nn_status_time = now
+        g_nn_status_frames = 0
+        g_nn_status_fps = 0
+        g_nn_status_memory = os_process_memory()
+        g_nn_status_memory_total = os_memory_total()
+        return
+    }
+    g_nn_status_frames = g_nn_status_frames + 1
+    let elapsed = now - g_nn_status_time
+    if elapsed >= 1.0 {
+        g_nn_status_fps = (g_nn_status_frames as f64 / elapsed + 0.5) as i32
+        g_nn_status_memory = os_process_memory()
+        g_nn_status_time = now
+        g_nn_status_frames = 0
+    }
+}
+
+// A full meter represents 60 rendered frames per second; faster displays
+// retain their actual rate in the adjacent numeric readout.
+fn nn_status_fps_fraction(fps: i32) f64 {
+    return nn_status_clamp(fps as f64 / 60.0, 0.0, 1.0)
+}
+
+fn nn_status_memory_fraction(used: u64, total: u64) f64 {
+    if total == 0 {
+        return 0.0
+    }
+    return nn_status_clamp(used as f64 / total as f64, 0.0, 1.0)
+}
+
+fn nn_status_memory_text(used: u64, total: u64) str {
+    if used == 0 {
+        return "RAM unavailable"
+    }
+    let mib = ((used as f64 / 1048576.0) + 0.5) as i64
+    let label = `RAM {mib} MiB`
+    if total > 0 {
+        let tenths = (nn_status_memory_fraction(used, total) * 1000.0 + 0.5) as i32
+        label = label + ` ({tenths / 10}.{tenths % 10}%)`
+    }
+    return label
+}
+
+fn nn_status_clamp(value: f64, low: f64, high: f64) f64 {
+    if value < low { return low }
+    if value > high { return high }
+    return value
+}

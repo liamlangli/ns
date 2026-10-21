@@ -12,7 +12,7 @@ lit APP_ROW_H: f64 = 30.0
 lit APP_TEXT_PX: f64 = 12.0
 
 // Replaced by the GPU engine once main has a device; nothing runs before that.
-let app_engine = cnn_engine(true, [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](16), [u64](7), [u32](10), [i32](2))
+let app_engine = cnn_engine(true, true, [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](16), [u64](CNN_STORAGE), [u32](CNN_PROGRAMS), [i32](2), [f32](0), [bool](1))
 let app_view = cnn_view(0, 0, 0u, 0u, 0u, 0u, [f32](VIEW_ROOT_WORDS), [f32](16), [f64](6))
 let app_model = "untrained: initial weights"
 
@@ -114,7 +114,58 @@ fn nn_layer_panel(r: ref ui_renderer, v: ref view, top: f64) i32 {
     return hovered
 }
 
+// The status text yields space to performance readings as the window narrows.
+fn nn_status_bar(r: ref ui_renderer, width: f64, y: f64) {
+    ui_fill_rect(r, 0.0, y, width, APP_STATUS_H, col_bar(), 0.0)
+    ui_push_clip(r, 0.0, y, width, APP_STATUS_H)
+    let text_y = ui_text_v_center_y(r, y, APP_STATUS_H, APP_TEXT_PX, UI_FONT_MONO)
+    let right = width - 14.0
+    if width >= 320.0 {
+        if width >= 560.0 {
+            right = right - 64.0
+            nn_status_meter(r, right, y + 9.0, 64.0, nn_status_memory_fraction(g_nn_status_memory, g_nn_status_memory_total))
+            right = right - 8.0
+        }
+        let label = nn_status_memory_text(g_nn_status_memory, g_nn_status_memory_total)
+        nn_text_right(r, right, text_y, label, col_muted())
+        right = right - ui_text_width(r, label, APP_TEXT_PX, UI_FONT_MONO) - 16.0
+    }
+    if width >= 160.0 {
+        if width >= 560.0 {
+            right = right - 48.0
+            nn_status_meter(r, right, y + 9.0, 48.0, nn_status_fps_fraction(g_nn_status_fps))
+            right = right - 8.0
+        }
+        let label = `{g_nn_status_fps} FPS`
+        nn_text_right(r, right, text_y, label, col_muted())
+        right = right - ui_text_width(r, label, APP_TEXT_PX, UI_FONT_MONO) - 16.0
+    }
+    let help = "gray = sum |weights| per neuron  /  drag rotate  /  right-drag pan  /  scroll zoom"
+    let help_w = ui_text_width(r, help, APP_TEXT_PX, UI_FONT_MONO)
+    let model_w = ui_text_width(r, app_model, APP_TEXT_PX, UI_FONT_MONO)
+    if right - 14.0 >= help_w + model_w + 24.0 {
+        nn_text_right(r, right, text_y, help, col_muted())
+        right = right - help_w - 24.0
+    }
+    if right > 14.0 {
+        ui_push_clip(r, 14.0, y, right - 14.0, APP_STATUS_H)
+        nn_text(r, 14.0, text_y, app_model, col_muted())
+        ui_pop_clip(r)
+    }
+    ui_pop_clip(r)
+}
+
+fn nn_status_meter(r: ref ui_renderer, x: f64, y: f64, width: f64, fraction: f64) {
+    ui_fill_round_rect(r, x, y, width, 10.0, 3.0, col_background(), 0.0)
+    let fill = (width - 4.0) * nn_status_clamp(fraction, 0.0, 1.0)
+    if fill > 0.0 {
+        ui_fill_round_rect(r, x + 2.0, y + 2.0, fill, 6.0, 2.0, col_muted(), 0.0)
+    }
+    ui_stroke_round_rect(r, x + 0.5, y + 0.5, width - 1.0, 9.0, 3.0, 1.0, col_muted(), 0.0)
+}
+
 fn nn_frame(r: ref ui_renderer, v: ref view) {
+    nn_status_sample(os_time())
     ui_resize(r)
     let width = v.width as f64
     let height = v.height as f64
@@ -143,13 +194,14 @@ fn nn_frame(r: ref ui_renderer, v: ref view) {
     nn_text(r, 14.0, bar_y, "nn", col_accent())
     nn_text(r, 44.0, bar_y, `convolutional network / {VIEW_INSTANCES} neurons / {CNN_PARAMS} parameters`, col_muted())
     if nn_button(r, v, width - 108.0, 6.0, 96.0, APP_BAR_H - 12.0, "Reset view") { cnn_view_reset_camera(app_view) }
-    ui_fill_rect(r, 0.0, height - APP_STATUS_H, width, APP_STATUS_H, col_bar(), 0.0)
-    let status_y = ui_text_v_center_y(r, height - APP_STATUS_H, APP_STATUS_H, APP_TEXT_PX, UI_FONT_MONO)
-    nn_text(r, 14.0, status_y, app_model, col_muted())
-    nn_text_right(r, width - 14.0, status_y, "gray = sum |weights| per neuron  /  drag rotate  /  right-drag pan  /  scroll zoom", col_muted())
+    nn_status_bar(r, width, height - APP_STATUS_H)
     ui_flush(r, ui_color_rgba(0.071, 0.071, 0.071, 1.0))
     view_input_reset(v)
-    if moving || app_view.control[0] > 0.5 || app_view.control[1] > 0.5 { ui_request_render(r, 2) }
+    if moving || app_view.control[0] > 0.5 || app_view.control[1] > 0.5 {
+        ui_request_render(r, 2)
+    } else {
+        ui_request_render_after(r, 1000)
+    }
 }
 
 fn main() {

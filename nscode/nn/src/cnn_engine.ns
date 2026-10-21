@@ -2,6 +2,7 @@ use gpu
 
 struct cnn_engine {
     device: bool,
+    optimized: bool,
     weights: [f32],
     images: [f32],
     activations: [f32],
@@ -12,7 +13,9 @@ struct cnn_engine {
     root: [f32],
     memory: [u64],
     programs: [u32],
-    progress: [i32]
+    progress: [i32],
+    scratch: [f32],
+    batch_ready: [bool]
 }
 
 fn cnn_stage(engine: cnn_engine, side: i32, output_side: i32, inputs: i32, outputs: i32, source: i32, destination: i32, weights: i32, bias: i32) {
@@ -25,6 +28,7 @@ fn cnn_stage(engine: cnn_engine, side: i32, output_side: i32, inputs: i32, outpu
     engine.root[7] = weights as f32
     engine.root[8] = bias as f32
     engine.root[9] = 0.0
+    engine.root[10] = -1.0
 }
 
 fn cnn_dense_stage(engine: cnn_engine, inputs: i32, outputs: i32, source: i32, destination: i32, weights: i32, relu: bool) {
@@ -40,6 +44,7 @@ fn cnn_bind_host(engine: cnn_engine) {
     assert shader_host_buffer(4, engine.gradients)
     assert shader_host_buffer(5, engine.results)
     assert shader_host_buffer(6, engine.moments)
+    assert shader_host_buffer(7, engine.scratch)
     assert shader_host_root(engine.root)
 }
 
@@ -47,7 +52,7 @@ fn cnn_launch(engine: cnn_engine, program: i32, width: i32, height: i32, label: 
     if engine.device {
         gpu_set_shader(engine.programs[program])
         gpu_set_root_data(engine.root, 64)
-        for slot in 0 to 7 { gpu_set_storage_at(slot, engine.memory[slot]) }
+        for slot in 0 to CNN_STORAGE { gpu_set_storage_at(slot, engine.memory[slot]) }
         gpu_dispatch(label, width, height, 1)
     } else {
         cnn_bind_host(engine)
@@ -64,13 +69,26 @@ fn cnn_launch(engine: cnn_engine, program: i32, width: i32, height: i32, label: 
                 if program == 7 { cs_cnn_conv_backward() }
                 if program == 8 { cs_cnn_conv_gradient() }
                 if program == 9 { cs_cnn_adam() }
+                if program == 10 { cs_cnn_winograd_input() }
+                if program == 11 { cs_cnn_winograd_weight() }
+                if program == 12 { cs_cnn_winograd() }
+                if program == 13 { cs_cnn_conv_gradient_partial() }
+                if program == 14 { cs_cnn_conv_gradient_reduce() }
+                if program == 15 { cs_cnn_conv_tiled() }
+                if program == 16 { cs_cnn_dense_fast() }
+                if program == 17 { cs_cnn_dense_partial() }
+                if program == 18 { cs_cnn_dense_reduce() }
+                if program == 19 { cs_cnn_conv_gradient_fold() }
+                if program == 20 { cs_cnn_conv_gradient_finish() }
+                if program == 21 { cs_cnn_prepare_batch() }
             }
         }
     }
 }
 
 fn cnn_create(device: bool) cnn_engine {
-    let engine = cnn_engine(device, [f32](CNN_PARAMS), [f32](CNN_BATCH * CNN_IMAGE), [f32](CNN_BATCH * CNN_ACTS), [f32](CNN_BATCH * CNN_ACTS), [f32](CNN_PARAMS), [f32](CNN_BATCH * 12), [f32](CNN_PARAMS * 2), [f32](16), [u64](7), [u32](10), [i32](2))
+    let engine = cnn_engine(device, device, [f32](CNN_PARAMS), [f32](CNN_BATCH * CNN_IMAGE), [f32](CNN_BATCH * CNN_ACTS), [f32](CNN_BATCH * CNN_ACTS), [f32](CNN_PARAMS), [f32](CNN_BATCH * 12), [f32](CNN_PARAMS * 2), [f32](16), [u64](CNN_STORAGE), [u32](CNN_PROGRAMS), [i32](2), [f32](0), [bool](1))
+    if !device { engine.scratch = [f32](CNN_SCRATCH) }
     let random = [i64](1)
     random[0] = 17
     for index in 0 to CNN_PARAMS {
@@ -82,10 +100,10 @@ fn cnn_create(device: bool) cnn_engine {
         engine.weights[index] = ((nn_random(random) * 2.0 - 1.0) * scale) as f32
     }
     if device {
-        if gpu_storage_slot_count() < 7 { mnist_fail("CNN needs seven GPU storage slots") }
-        let sizes = [CNN_PARAMS, CNN_BATCH * CNN_IMAGE, CNN_BATCH * CNN_ACTS, CNN_BATCH * CNN_ACTS, CNN_PARAMS, CNN_BATCH * 12, CNN_PARAMS * 2]
-        let names = ["CNN parameters", "MNIST minibatch pixels and labels", "CNN forward activations", "CNN activation gradients", "CNN parameter gradients", "CNN probabilities and predictions", "CNN Adam first and second moments"]
-        for slot in 0 to 7 {
+        if gpu_storage_slot_count() < CNN_STORAGE as u32 { mnist_fail("CNN needs eight GPU storage slots") }
+        let sizes = [CNN_PARAMS, CNN_BATCH * CNN_IMAGE, CNN_BATCH * CNN_ACTS, CNN_BATCH * CNN_ACTS, CNN_PARAMS, CNN_BATCH * 12, CNN_PARAMS * 2, CNN_SCRATCH]
+        let names = ["CNN parameters", "MNIST minibatch pixels and labels", "CNN forward activations", "CNN activation gradients", "CNN parameter gradients", "CNN probabilities and predictions", "CNN Adam first and second moments", "CNN Winograd transforms and gradient partial sums"]
+        for slot in 0 to CNN_STORAGE {
             engine.memory[slot] = gpu_malloc((sizes[slot] * 4) as u64, GPU_MEM_DEVICE, names[slot])
             if engine.memory[slot] == 0 { mnist_fail(`GPU allocation failed: {names[slot]}`) }
         }
@@ -109,7 +127,31 @@ fn cnn_create(device: bool) cnn_engine {
         engine.programs[8] = program.resource_id
         program = gpu_shader_compute(cs_cnn_adam)
         engine.programs[9] = program.resource_id
-        for index in 0 to 10 {
+        program = gpu_shader_compute(cs_cnn_winograd_input)
+        engine.programs[10] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_winograd_weight)
+        engine.programs[11] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_winograd)
+        engine.programs[12] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_conv_gradient_partial)
+        engine.programs[13] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_conv_gradient_reduce)
+        engine.programs[14] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_conv_tiled)
+        engine.programs[15] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_dense_fast)
+        engine.programs[16] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_dense_partial)
+        engine.programs[17] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_dense_reduce)
+        engine.programs[18] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_conv_gradient_fold)
+        engine.programs[19] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_conv_gradient_finish)
+        engine.programs[20] = program.resource_id
+        program = gpu_shader_compute(cs_cnn_prepare_batch)
+        engine.programs[21] = program.resource_id
+        for index in 0 to CNN_PROGRAMS {
             if engine.programs[index] == 0u { mnist_fail(`CNN shader compilation failed: kernel {index}`) }
         }
         gpu_write(engine.memory[0], engine.weights, (CNN_PARAMS * 4) as u64)
@@ -128,7 +170,7 @@ fn cnn_sync(engine: cnn_engine) {
     for frame in 0 to 3 {
         gpu_set_shader(engine.programs[3])
         gpu_set_root_data(fence, 64)
-        for slot in 0 to 7 { gpu_set_storage_at(slot, engine.memory[slot]) }
+        for slot in 0 to CNN_STORAGE { gpu_set_storage_at(slot, engine.memory[slot]) }
         gpu_dispatch("CNN completed readback fence", 1, 1, 1)
         gpu_commit()
     }
@@ -149,22 +191,76 @@ fn cnn_download(engine: cnn_engine) {
     assert gpu_read(engine.memory[6], engine.moments, (CNN_PARAMS * 8) as u64)
 }
 
+fn cnn_convolution(engine: cnn_engine, count: i32) {
+    let side = engine.root[2] as i32
+    let inputs = engine.root[3] as i32
+    let outputs = engine.root[4] as i32
+    if !engine.optimized {
+        cnn_launch(engine, 0, side * side * outputs, count, "CNN reference convolution and ReLU")
+        return
+    }
+    let tiles = (side + 1) / 2
+    if count <= 4 {
+        cnn_launch(engine, 15, tiles * tiles * outputs, count, "CNN register tiled convolution ReLU and pooling")
+        return
+    }
+    cnn_launch(engine, 10, tiles * tiles * inputs, count, "CNN Winograd input transform")
+    cnn_launch(engine, 11, inputs * outputs, 1, "CNN Winograd weight transform")
+    cnn_launch(engine, 12, tiles * tiles * outputs, count, "CNN Winograd convolution ReLU and pooling")
+}
+
+fn cnn_convolution_gradient(engine: cnn_engine, count: i32) {
+    let side = engine.root[2] as i32
+    let parameters = (engine.root[3] as i32 * 9 + 1) * engine.root[4] as i32
+    if !engine.optimized {
+        cnn_launch(engine, 8, parameters, 1, "CNN reference convolution parameter gradients")
+        return
+    }
+    let chunks = (count * side * side + CNN_GRAD_CHUNK - 1) / CNN_GRAD_CHUNK
+    let groups = (chunks + CNN_GRAD_FOLD - 1) / CNN_GRAD_FOLD
+    assert (chunks + groups) * parameters <= CNN_SCRATCH
+    cnn_launch(engine, 13, parameters, chunks, "CNN convolution gradient partial sums")
+    if chunks <= CNN_GRAD_FOLD {
+        cnn_launch(engine, 14, parameters, 1, "CNN convolution gradient final reduction")
+    } else {
+        cnn_launch(engine, 19, parameters, groups, "CNN convolution gradient tree reduction")
+        cnn_launch(engine, 20, parameters, 1, "CNN convolution gradient final reduction")
+    }
+}
+
+fn cnn_dense_forward(engine: cnn_engine, count: i32) {
+    let inputs = engine.root[3] as i32
+    let outputs = engine.root[4] as i32
+    if engine.optimized && inputs > CNN_DENSE_CHUNK {
+        let chunks = (inputs + CNN_DENSE_CHUNK - 1) / CNN_DENSE_CHUNK
+        assert count * chunks * outputs <= CNN_SCRATCH
+        cnn_launch(engine, 17, outputs, count * chunks, "CNN dense input chunk partial sums")
+        cnn_launch(engine, 18, outputs, count, "CNN dense partial reduction and ReLU")
+    } else {
+        let program = 2
+        if engine.optimized { program = 16 }
+        cnn_launch(engine, program, outputs, count, "CNN dense projection and ReLU")
+    }
+}
+
 fn cnn_forward(engine: cnn_engine, count: i32) {
     assert count > 0 && count <= CNN_BATCH
     engine.root[0] = count as f32
-    if engine.device { gpu_write(engine.memory[1], engine.images, (count * CNN_IMAGE * 4) as u64) }
+    if engine.device && !engine.batch_ready[0] { gpu_write(engine.memory[1], engine.images, (count * CNN_IMAGE * 4) as u64) }
     cnn_stage(engine, 28, 26, 1, CNN_K1, -1, CNN_C1, CNN_W1, CNN_B1)
-    cnn_launch(engine, 0, 676 * CNN_K1, count, "CNN first convolution and ReLU")
+    engine.root[10] = CNN_P1 as f32
+    cnn_convolution(engine, count)
     cnn_stage(engine, 26, 13, CNN_K1, CNN_K1, CNN_C1, CNN_P1, 0, 0)
-    cnn_launch(engine, 1, 169 * CNN_K1, count, "CNN first max pooling")
+    if !engine.optimized { cnn_launch(engine, 1, 169 * CNN_K1, count, "CNN first max pooling") }
     cnn_stage(engine, 13, 11, CNN_K1, CNN_K2, CNN_P1, CNN_C2, CNN_W2, CNN_B2)
-    cnn_launch(engine, 0, 121 * CNN_K2, count, "CNN second convolution and ReLU")
+    engine.root[10] = CNN_P2 as f32
+    cnn_convolution(engine, count)
     cnn_stage(engine, 11, 5, CNN_K2, CNN_K2, CNN_C2, CNN_P2, 0, 0)
-    cnn_launch(engine, 1, CNN_FEATURES, count, "CNN second max pooling")
+    if !engine.optimized { cnn_launch(engine, 1, CNN_FEATURES, count, "CNN second max pooling") }
     cnn_dense_stage(engine, CNN_FEATURES, CNN_HIDDEN, CNN_P2, CNN_H1, CNN_W3, true)
-    cnn_launch(engine, 2, CNN_HIDDEN, count, "CNN hidden dense layer and ReLU")
+    cnn_dense_forward(engine, count)
     cnn_dense_stage(engine, CNN_HIDDEN, 10, CNN_H1, CNN_LOGITS, CNN_W4, false)
-    cnn_launch(engine, 2, 10, count, "CNN ten-class dense projection")
+    cnn_dense_forward(engine, count)
     cnn_launch(engine, 3, count, 1, "CNN softmax and cross-entropy derivative")
 }
 
@@ -178,12 +274,12 @@ fn cnn_backward(engine: cnn_engine, count: i32) {
     cnn_stage(engine, 11, 5, CNN_K2, CNN_K2, CNN_C2, CNN_P2, 0, 0)
     cnn_launch(engine, 6, 121 * CNN_K2, count, "CNN second pooling and ReLU backward")
     cnn_stage(engine, 13, 11, CNN_K1, CNN_K2, CNN_P1, CNN_C2, CNN_W2, CNN_B2)
-    cnn_launch(engine, 8, CNN_W3 - CNN_W2, 1, "CNN second convolution parameter gradient reduction")
+    cnn_convolution_gradient(engine, count)
     cnn_launch(engine, 7, 169 * CNN_K1, count, "CNN second convolution input gradients")
     cnn_stage(engine, 26, 13, CNN_K1, CNN_K1, CNN_C1, CNN_P1, 0, 0)
     cnn_launch(engine, 6, 676 * CNN_K1, count, "CNN first pooling and ReLU backward")
     cnn_stage(engine, 28, 26, 1, CNN_K1, -1, CNN_C1, CNN_W1, CNN_B1)
-    cnn_launch(engine, 8, CNN_W2, 1, "CNN first convolution parameter gradient reduction")
+    cnn_convolution_gradient(engine, count)
 }
 
 fn cnn_update(engine: cnn_engine, count: i32) {
@@ -200,6 +296,7 @@ fn cnn_update(engine: cnn_engine, count: i32) {
 }
 
 fn cnn_fill(engine: cnn_engine, data: mnist_dataset, order: [i32], start: i32, count: i32, shuffled: bool) {
+    engine.batch_ready[0] = false
     let random = [i64](1)
     for item in 0 to count {
         let sample = start + item
@@ -227,8 +324,8 @@ fn cnn_fill(engine: cnn_engine, data: mnist_dataset, order: [i32], start: i32, c
 fn cnn_release(engine: cnn_engine) {
     if engine.device {
         cnn_sync(engine)
-        for program in 0 to 10 { gpu_shader_destroy(engine.programs[program]) }
-        for slot in 0 to 7 { gpu_free(engine.memory[slot]) }
+        for program in 0 to CNN_PROGRAMS { gpu_shader_destroy(engine.programs[program]) }
+        for slot in 0 to CNN_STORAGE { gpu_free(engine.memory[slot]) }
     }
     shader_host_release()
 }

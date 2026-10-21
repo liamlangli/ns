@@ -230,6 +230,12 @@ fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, detail: lens_deta
         right = right - 16.0
     }
     if w >= 220.0 {
+        if w >= 440.0 {
+            lit fps_bar_w = 48.0
+            right = right - fps_bar_w
+            draw_status_meter(r, right, bar_y, fps_bar_w, status_fps_fraction(g_status_fps))
+            right = right - 8.0
+        }
         let fps = itos(g_status_fps) + " FPS"
         let fps_w = ui_text_width(r, fps, small_px(), FONT_MONO())
         right = right - fps_w

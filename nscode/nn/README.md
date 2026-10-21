@@ -29,8 +29,8 @@ ns run nscode/nn
 | `ns run nscode/nn --train [1..10]` | GPU 训练 CNN，可指定轮数，从初始权重开始 |
 | `ns run nscode/nn --evaluate` | 加载 CNN 检查点，在 GPU 上评估全部测试图；低于 99% 断言失败 |
 | `ns run nscode/nn --gpu-check` | 用同一批数据分别在 CPU 和 GPU 上执行全部计算核，比对激活、梯度和 Adam 结果 |
-| `ns run nscode/nn --benchmark` | 10 个 64 张图的训练批次：CPU 参考实现 vs GPU |
-| `ns run nscode/nn --emit-shaders` | 把 10 个计算核的四种着色语言输出写到 `bin/shaders/` |
+| `ns run nscode/nn --benchmark` | 比较原始与优化 GPU 实现：各 100 次训练、单张推理和 64 张批量推理 |
+| `ns run nscode/nn --emit-shaders` | 把 22 个计算核的四种着色语言输出写到 `bin/shaders/` |
 
 清单使用 `target = "exec"`，`ns run` 构建原生代码后启动。
 `ns build nscode/nn` 打包原生应用，只包含已有的检查点（约 1.4 MB），不含 MNIST 数据。
@@ -55,12 +55,25 @@ ns run nscode/nn
 | 16/32 通道、最大池化、±2 像素平移增强、学习率指数衰减，10 轮 | 99.03% |
 | 再加 64 单元 ReLU 隐藏层（当前） | 99.29% |
 
-`--gpu-check` 的 CPU/GPU 最大绝对误差（×1e-6）：激活 0.83、概率 0.09、
-参数梯度 0.31、激活梯度 0.09；一次 Adam 更新后权重 0.01、动量 0.03。
+`--gpu-check` 用 batch 1、5、64 对照独立的直接卷积 CPU 实现，检查激活、概率、
+参数梯度、激活梯度及 Adam 权重和动量。检查导数时给输入加微小的确定性扰动，
+避开空白区域的池化并列最大值和 ReLU 不可导点；Winograd 的舍入会改变这些点的梯度选择。
+优化前后，同一已有检查点在原始 10,000 张测试图上的准确率均为 **99.29%**。
 
-`--benchmark`：10 个批次，CPU 参考实现原生执行同一批计算核 33,269 ms，GPU 87 ms，约 **384 倍**。
-计时包含主机端派发、批次上传和最终 GPU 同步，不含着色器编译和 IDX 解码。
-耗时随机器变化。
+本机 Metal 原生实测：本次继续并行化，相对于上一版 Winograd／两级归约实现，
+三次交替运行的中位数如下。
+
+| 工作负载 | 上一版 | 当前 | 加速 |
+| --- | ---: | ---: | ---: |
+| 100 次训练，batch 64（计算基准） | 97.85 ms | 92.13 ms | 1.06× |
+| 100 次推理，batch 1（计算基准） | 5.87 ms | 4.38 ms | 1.34× |
+| 100 次推理，batch 64（计算基准） | 13.26 ms | 12.70 ms | 1.04× |
+| 完整训练一轮并评估 10,000 张图 | 1.25 s | 0.91 s | 1.37× |
+
+计算基准包含主机派发、输入批次上传和最终 GPU 同步，不含着色器编译、IDX 解码及逐批数据准备；
+每条路径先预热再计时。完整训练计时则包含逐批准备、平移增强及轮末评估，不含初始文件加载和编译。
+新旧实现各在独立目录从固定种子训练一轮，准确率分别为 98.00% 和 98.05%。已有模型未被覆盖。
+`--benchmark` 继续比较原始直接卷积 GPU 实现与当前优化路径；上述“上一版”对照使用本次修改前的原生程序。
 
 ## 网络
 
@@ -78,7 +91,7 @@ ns run nscode/nn
 
 ## GPU 实现
 
-`src/cnn_kernels.ns` 中的 10 个 `cs_cnn_*` 函数就是全部计算：
+`src/cnn_kernels.ns` 保留 10 个参考计算核，其余 12 个优化核位于 `cnn_fast.ns`、`cnn_parallel.ns` 和 `cnn_data.ns`；GPU 默认使用优化路径：
 
 | 计算核 | 网格 | 作用 |
 | --- | --- | --- |
@@ -93,16 +106,40 @@ ns run nscode/nn
 | `cs_cnn_conv_gradient` | 权重 + 偏置 | 卷积权重和偏置梯度，在批次和空间上归约 |
 | `cs_cnn_adam` | 56,714 | 带偏差修正的 Adam 更新 |
 
-每个参数梯度由一个线程独立求和，没有原子操作，结果是确定的。
-数据放在 7 个 `GPU_MEM_DEVICE` 存储槽中：参数、批次像素与标签、激活、激活梯度、
-参数梯度、概率与预测、Adam 一阶和二阶动量。计算核通过 `shader_buffer_f32` /
+优化路径的实现：
+
+- batch 大于 4 时使用 Winograd F(2×2, 3×3)：每输入通道生成 4 个输出的乘法由 36 次减为 16 次。
+  输入变换跨输出通道复用，权重变换跨批次复用；支持第二层 11×11 输出的边缘瓦片。
+- batch 不超过 4 时用 2×2 寄存器分块直接卷积，复用 4×4 输入和权重，避免变换派发开销。
+- 两条路径均在卷积核中融合 ReLU 和 2×2 最大池化，同时保留反向传播所需的卷积激活。
+- 卷积参数梯度先按 64 个 batch/空间元素分块，再由独立线程每组归约至多 32 个部分和，
+  最后归约至多 22 组；小批次跳过中间层。第一层原来的 43,264 项串行累加被分到更多 GPU 任务。
+  没有浮点原子操作，写入互不竞争；归约顺序固定。
+- 全连接层的长点积按输入维度拆分到更多 GPU 线程，800 项输入分为 13 个块并行计算，再归约。
+  短点积继续用四条独立累加链，避免小任务增加一次派发。
+- 原始 MNIST 图片和标签各上传一次；每个像素独立执行平移增强、越界补零及归一化。
+  CPU 每批只传样本编号和偏移量（最多 832 字节 root 数据），不再循环转换并上传约 196 KiB 浮点图像。
+  训练／评估数据驻留显存合计约 52.4 MiB，完成后释放。
+
+线程内仍保留短归约和固定尺寸瓦片的循环，以复用数据并控制同步、显存流量。
+卷积输入梯度的四份拆分未测得收益，未启用；通道、像素、样本、参数维度原本就已并行。
+
+新增核为 `cs_cnn_winograd_input`、`cs_cnn_winograd_weight`、`cs_cnn_winograd`、
+`cs_cnn_conv_tiled`、`cs_cnn_conv_gradient_partial`、`cs_cnn_conv_gradient_reduce`、
+`cs_cnn_dense_fast`、`cs_cnn_dense_partial`、`cs_cnn_dense_reduce`、
+`cs_cnn_conv_gradient_fold`、`cs_cnn_conv_gradient_finish`、`cs_cnn_prepare_batch`。
+
+数据放在 8 个 `GPU_MEM_DEVICE` 存储槽中：参数、批次像素与标签、激活、激活梯度、
+参数梯度、概率与预测、Adam 一阶和二阶动量，以及复用的 Winograd／部分梯度临时区（约 2.3 MiB）。计算核通过 `shader_buffer_f32` /
 `shader_buffer_store_f32` 读写这些槽，层尺寸和偏移经 root 常量传入，
 所以两层卷积、两层全连接分别共用同一组计算核。
 
-一个训练批次是 CPU 端的一次像素上传加 17 次派发（前向 7、反向 9、Adam 1）；权重、动量和激活
+一个 64 张训练批次包含 25 次派发（GPU 数据准备 1、前向 10、反向 13、Adam 1）；权重、动量和激活
 始终驻留在 GPU 上，只在评估或保存时读回概率或参数。
 `src/cnn_engine.ns` 的 `cnn_launch` 在 GPU 上派发，在 CPU 上用 `shader_host_buffer`
-绑定同样的数组后逐个 invocation 调用同一函数，这就是 `--gpu-check` 和单元测试的依据。
+绑定数组后逐个 invocation 执行参考或优化核。CPU 默认使用原始实现，保证 `--gpu-check` 的对照独立；
+单元测试另行比较优化核与参考核，覆盖奇数边缘、多个通道、64 项归约尾块、三级归约尾组及全连接分块尾项。
+真实 GPU 检查额外对照像素准备和洗牌／平移增强，归一化允许 1e-7 的浮点舍入差异，标签精确匹配。
 
 目前仅在 macOS 的 Metal 后端实际运行验证；GLSL / HLSL / WGSL 输出经转译测试，
 未在 Vulkan / DirectX 12 设备上运行。
@@ -151,7 +188,10 @@ CNN 检查点 `model-cnn.nn`（格式版本 2，1,361,168 字节）带魔数、�
 
 ## 源码
 
-- `src/cnn_kernels.ns`：张量布局常量和 10 个计算核。
+- `src/cnn_kernels.ns`：张量布局常量和 10 个参考计算核。
+- `src/cnn_fast.ns`：Winograd、寄存器分块、融合池化、分块归约和全连接优化核。
+- `src/cnn_parallel.ns`：全连接输入分块和卷积参数梯度树形归约。
+- `src/cnn_data.ns`：常驻 GPU 数据集、像素并行准备及数据集生命周期。
 - `src/cnn_engine.ns`：GPU 内存和着色器创建、CPU/GPU 双路派发、前向 / 反向 / Adam 编排、同步与读回。
 - `src/cnn_cli.ns`：GPU 校验、基准、检查点、评估和命令行训练。
 - `src/cnn_export.ns`：导出转译后的着色器源码。

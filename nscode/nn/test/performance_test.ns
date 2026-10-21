@@ -1,0 +1,28 @@
+use os
+
+fn main() {
+    assert nn_status_fps_fraction(0) == 0.0
+    assert nn_status_fps_fraction(30) == 0.5
+    assert nn_status_fps_fraction(60) == 1.0
+    assert nn_status_fps_fraction(120) == 1.0
+    assert nn_status_fps_fraction(-1) == 0.0
+    assert nn_status_memory_fraction(1, 4) == 0.25
+    assert nn_status_memory_fraction(1, 0) == 0.0
+    assert nn_status_memory_fraction(5, 4) == 1.0
+    assert nn_status_memory_text(0, 0) == "RAM unavailable"
+    assert nn_status_memory_text(1048576, 4194304) == "RAM 1 MiB (25.0%)"
+    assert nn_status_memory_text(1048576, 0) == "RAM 1 MiB"
+    nn_status_sample(100.0)
+    assert g_nn_status_memory > 0
+    assert g_nn_status_memory_total > 0
+    for i in 1 to 11 {
+        nn_status_sample(100.0 + i as f64 * 0.1)
+    }
+    assert g_nn_status_fps == 10
+    nn_status_sample(102.0)
+    assert g_nn_status_fps == 1
+    // A clock adjustment restarts the sampling window.
+    nn_status_sample(90.0)
+    assert g_nn_status_fps == 0
+    assert g_nn_status_frames == 0
+}

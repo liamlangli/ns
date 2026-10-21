@@ -41,5 +41,53 @@ fn cnn_export_shaders(directory: str) {
     assert os_write_file_atomic(`{directory}/cs_cnn_adam.comp`, shader_transpile_stage(cs_cnn_adam, "glsl", "compute")) == 1
     assert os_write_file_atomic(`{directory}/cs_cnn_adam.hlsl`, shader_transpile_stage(cs_cnn_adam, "hlsl", "compute")) == 1
     assert os_write_file_atomic(`{directory}/cs_cnn_adam.wgsl`, shader_transpile_stage(cs_cnn_adam, "wgsl", "compute")) == 1
-    print(`CNN: exported 10 kernels for MSL, GLSL, HLSL and WGSL to {directory}\n`)
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd_input.metal`, shader_transpile_stage(cs_cnn_winograd_input, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd_input.comp`, shader_transpile_stage(cs_cnn_winograd_input, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd_input.hlsl`, shader_transpile_stage(cs_cnn_winograd_input, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd_input.wgsl`, shader_transpile_stage(cs_cnn_winograd_input, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd_weight.metal`, shader_transpile_stage(cs_cnn_winograd_weight, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd_weight.comp`, shader_transpile_stage(cs_cnn_winograd_weight, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd_weight.hlsl`, shader_transpile_stage(cs_cnn_winograd_weight, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd_weight.wgsl`, shader_transpile_stage(cs_cnn_winograd_weight, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd.metal`, shader_transpile_stage(cs_cnn_winograd, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd.comp`, shader_transpile_stage(cs_cnn_winograd, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd.hlsl`, shader_transpile_stage(cs_cnn_winograd, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_winograd.wgsl`, shader_transpile_stage(cs_cnn_winograd, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_partial.metal`, shader_transpile_stage(cs_cnn_conv_gradient_partial, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_partial.comp`, shader_transpile_stage(cs_cnn_conv_gradient_partial, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_partial.hlsl`, shader_transpile_stage(cs_cnn_conv_gradient_partial, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_partial.wgsl`, shader_transpile_stage(cs_cnn_conv_gradient_partial, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_reduce.metal`, shader_transpile_stage(cs_cnn_conv_gradient_reduce, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_reduce.comp`, shader_transpile_stage(cs_cnn_conv_gradient_reduce, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_reduce.hlsl`, shader_transpile_stage(cs_cnn_conv_gradient_reduce, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_reduce.wgsl`, shader_transpile_stage(cs_cnn_conv_gradient_reduce, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_tiled.metal`, shader_transpile_stage(cs_cnn_conv_tiled, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_tiled.comp`, shader_transpile_stage(cs_cnn_conv_tiled, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_tiled.hlsl`, shader_transpile_stage(cs_cnn_conv_tiled, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_tiled.wgsl`, shader_transpile_stage(cs_cnn_conv_tiled, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_fast.metal`, shader_transpile_stage(cs_cnn_dense_fast, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_fast.comp`, shader_transpile_stage(cs_cnn_dense_fast, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_fast.hlsl`, shader_transpile_stage(cs_cnn_dense_fast, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_fast.wgsl`, shader_transpile_stage(cs_cnn_dense_fast, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_partial.metal`, shader_transpile_stage(cs_cnn_dense_partial, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_partial.comp`, shader_transpile_stage(cs_cnn_dense_partial, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_partial.hlsl`, shader_transpile_stage(cs_cnn_dense_partial, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_partial.wgsl`, shader_transpile_stage(cs_cnn_dense_partial, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_reduce.metal`, shader_transpile_stage(cs_cnn_dense_reduce, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_reduce.comp`, shader_transpile_stage(cs_cnn_dense_reduce, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_reduce.hlsl`, shader_transpile_stage(cs_cnn_dense_reduce, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_dense_reduce.wgsl`, shader_transpile_stage(cs_cnn_dense_reduce, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_fold.metal`, shader_transpile_stage(cs_cnn_conv_gradient_fold, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_fold.comp`, shader_transpile_stage(cs_cnn_conv_gradient_fold, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_fold.hlsl`, shader_transpile_stage(cs_cnn_conv_gradient_fold, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_fold.wgsl`, shader_transpile_stage(cs_cnn_conv_gradient_fold, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_finish.metal`, shader_transpile_stage(cs_cnn_conv_gradient_finish, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_finish.comp`, shader_transpile_stage(cs_cnn_conv_gradient_finish, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_finish.hlsl`, shader_transpile_stage(cs_cnn_conv_gradient_finish, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_conv_gradient_finish.wgsl`, shader_transpile_stage(cs_cnn_conv_gradient_finish, "wgsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_prepare_batch.metal`, shader_transpile_stage(cs_cnn_prepare_batch, "msl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_prepare_batch.comp`, shader_transpile_stage(cs_cnn_prepare_batch, "glsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_prepare_batch.hlsl`, shader_transpile_stage(cs_cnn_prepare_batch, "hlsl", "compute")) == 1
+    assert os_write_file_atomic(`{directory}/cs_cnn_prepare_batch.wgsl`, shader_transpile_stage(cs_cnn_prepare_batch, "wgsl", "compute")) == 1
+    print(`CNN: exported {CNN_PROGRAMS} kernels for MSL, GLSL, HLSL and WGSL to {directory}\n`)
 }

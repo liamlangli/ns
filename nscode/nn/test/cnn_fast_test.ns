@@ -1,0 +1,138 @@
+// Exercise tiled and Winograd paths against the independent direct kernels,
+// including odd output edges, several channels, and partial gradient chunks.
+fn fast_convolution_case(count: i32, side: i32, inputs: i32, outputs: i32) {
+    let direct = cnn_create(false)
+    let fast = cnn_create(false)
+    fast.optimized = true
+    let input_side = side + 2
+    for sample in 0 to count {
+        for pixel in 0 to input_side * input_side * inputs {
+            let value = ((pixel * 13 + sample * 7) % 31 - 15) as f32 * 0.025
+            direct.activations[sample * CNN_ACTS + CNN_P1 + pixel] = value
+            fast.activations[sample * CNN_ACTS + CNN_P1 + pixel] = value
+        }
+        for pixel in 0 to side * side * outputs {
+            let delta = ((pixel * 3 + sample * 11) % 17 - 8) as f32 * 0.01
+            direct.deltas[sample * CNN_ACTS + CNN_C2 + pixel] = delta
+            fast.deltas[sample * CNN_ACTS + CNN_C2 + pixel] = delta
+        }
+    }
+    cnn_stage(direct, input_side, side, inputs, outputs, CNN_P1, CNN_C2, CNN_W2, CNN_B2)
+    cnn_stage(fast, input_side, side, inputs, outputs, CNN_P1, CNN_C2, CNN_W2, CNN_B2)
+    direct.root[0] = count as f32
+    fast.root[0] = count as f32
+    fast.root[10] = CNN_P2 as f32
+    cnn_convolution(direct, count)
+    cnn_convolution(fast, count)
+    for sample in 0 to count {
+        for pixel in 0 to side * side * outputs {
+            let offset = sample * CNN_ACTS + CNN_C2 + pixel
+            assert nn_abs(direct.activations[offset] as f64 - fast.activations[offset] as f64) < 0.00001
+        }
+    }
+    let pool_side = side / 2
+    for sample in 0 to count {
+        for channel in 0 to outputs {
+            for y in 0 to pool_side {
+                for x in 0 to pool_side {
+                    let pooled: f32 = 0.0
+                    for ky in 0 to 2 {
+                        for kx in 0 to 2 {
+                            let value = direct.activations[sample * CNN_ACTS + CNN_C2 + (channel * side + y * 2 + ky) * side + x * 2 + kx]
+                            if value > pooled { pooled = value }
+                        }
+                    }
+                    let offset = sample * CNN_ACTS + CNN_P2 + (channel * pool_side + y) * pool_side + x
+                    assert nn_abs(fast.activations[offset] as f64 - pooled as f64) < 0.00001
+                }
+            }
+        }
+    }
+    cnn_convolution_gradient(direct, count)
+    cnn_convolution_gradient(fast, count)
+    for parameter in 0 to (inputs * 9 + 1) * outputs {
+        let offset = CNN_W2 + parameter
+        assert nn_abs(direct.gradients[offset] as f64 - fast.gradients[offset] as f64) < 0.00001
+    }
+    // Exercise both the register kernel and parallel dense reduction tails.
+    let input_counts = [7, 137]
+    let relu_modes = [false, true]
+    for input_count in input_counts {
+        for relu in relu_modes {
+            cnn_dense_stage(direct, input_count, 5, CNN_P1, CNN_H1, CNN_W3, relu)
+            cnn_dense_stage(fast, input_count, 5, CNN_P1, CNN_H1, CNN_W3, relu)
+            cnn_dense_forward(direct, count)
+            cnn_dense_forward(fast, count)
+            for sample in 0 to count {
+                for output in 0 to 5 {
+                    let offset = sample * CNN_ACTS + CNN_H1 + output
+                    assert nn_abs(direct.activations[offset] as f64 - fast.activations[offset] as f64) < 0.00001
+                }
+            }
+        }
+    }
+    cnn_release(direct)
+    cnn_release(fast)
+}
+
+fn main() {
+    fast_convolution_case(1, 4, 1, 4)
+    fast_convolution_case(5, 11, 3, 5)
+    fast_convolution_case(CNN_BATCH, 3, 2, 3)
+    fast_convolution_case(19, 11, 3, 5)
+    // Worst production shapes must fit the shared scratch allocation.
+    assert CNN_BATCH * 169 * 16 <= CNN_WINOGRAD_INPUTS
+    lit first_chunks = (CNN_BATCH * 676 + CNN_GRAD_CHUNK - 1) / CNN_GRAD_CHUNK
+    lit second_chunks = (CNN_BATCH * 121 + CNN_GRAD_CHUNK - 1) / CNN_GRAD_CHUNK
+    assert (first_chunks + (first_chunks + CNN_GRAD_FOLD - 1) / CNN_GRAD_FOLD) * CNN_W2 <= CNN_SCRATCH
+    assert (second_chunks + (second_chunks + CNN_GRAD_FOLD - 1) / CNN_GRAD_FOLD) * (CNN_W3 - CNN_W2) <= CNN_SCRATCH
+    assert shader_transpile_stage(cs_cnn_winograd_input, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd_input, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd_input, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd_input, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd_weight, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd_weight, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd_weight, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd_weight, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_winograd, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_partial, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_partial, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_partial, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_partial, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_reduce, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_reduce, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_reduce, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_reduce, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_tiled, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_tiled, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_tiled, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_tiled, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_fast, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_fast, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_fast, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_fast, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_partial, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_partial, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_partial, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_partial, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_reduce, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_reduce, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_reduce, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_dense_reduce, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_fold, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_fold, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_fold, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_fold, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_finish, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_finish, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_finish, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_conv_gradient_finish, "wgsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_prepare_batch, "msl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_prepare_batch, "glsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_prepare_batch, "hlsl", "compute").len > 0
+    assert shader_transpile_stage(cs_cnn_prepare_batch, "wgsl", "compute").len > 0
+    print("CNN: register tiles, Winograd, split gradients and four shader targets passed\n")
+}

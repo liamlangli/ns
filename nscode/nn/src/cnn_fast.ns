@@ -1,0 +1,256 @@
+use shader
+
+// F(2x2, 3x3): four output pixels use 16 products per input channel,
+// versus 36 for direct convolution. Transform inputs once for all output
+// channels and weights once for the whole minibatch. Slot 7 is temporary
+// storage reused by forward transforms and backward partial reductions.
+lit CNN_WINOGRAD_INPUTS = CNN_BATCH * 36 * CNN_K1 * 16
+lit CNN_SCRATCH = CNN_WINOGRAD_INPUTS + CNN_K2 * CNN_K1 * 16
+lit CNN_GRAD_CHUNK = 64
+lit CNN_PROGRAMS = 22
+lit CNN_STORAGE = 8
+
+fn cs_cnn_winograd_input() void {
+    let index = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let side = shader_root_f32(2) as i32
+    let tiles = (side + 1) / 2
+    let inputs = shader_root_f32(3) as i32
+    if index >= tiles * tiles * inputs || sample >= shader_root_f32(0) as i32 { return }
+    let channel = index / (tiles * tiles)
+    let y = ((index / tiles) % tiles) * 2
+    let x = (index % tiles) * 2
+    let input_side = shader_root_f32(1) as i32
+    let temp = [f32](16)
+    for row in 0 to 4 {
+        let d = [f32](4)
+        for col in 0 to 4 {
+            if y + row < input_side && x + col < input_side {
+                d[col] = cnn_activation(sample, (channel * input_side + y + row) * input_side + x + col)
+            } else {
+                d[col] = 0.0
+            }
+        }
+        temp[row * 4] = d[0] - d[2]
+        temp[row * 4 + 1] = d[1] + d[2]
+        temp[row * 4 + 2] = d[2] - d[1]
+        temp[row * 4 + 3] = d[1] - d[3]
+    }
+    let base = (sample * inputs * tiles * tiles + index) * 16
+    for col in 0 to 4 {
+        shader_buffer_store_f32(7, base + col, temp[col] - temp[8 + col])
+        shader_buffer_store_f32(7, base + 4 + col, temp[4 + col] + temp[8 + col])
+        shader_buffer_store_f32(7, base + 8 + col, temp[8 + col] - temp[4 + col])
+        shader_buffer_store_f32(7, base + 12 + col, temp[4 + col] - temp[12 + col])
+    }
+}
+
+fn cs_cnn_winograd_weight() void {
+    let index = shader_global_id_x()
+    let inputs = shader_root_f32(3) as i32
+    if index >= inputs * shader_root_f32(4) as i32 { return }
+    let source = shader_root_f32(7) as i32 + index * 9
+    let temp = [f32](12)
+    for row in 0 to 3 {
+        let a = shader_buffer_f32(0, source + row * 3)
+        let b = shader_buffer_f32(0, source + row * 3 + 1)
+        let c = shader_buffer_f32(0, source + row * 3 + 2)
+        temp[row * 4] = a
+        temp[row * 4 + 1] = (a + b + c) * 0.5
+        temp[row * 4 + 2] = (a - b + c) * 0.5
+        temp[row * 4 + 3] = c
+    }
+    let base = CNN_WINOGRAD_INPUTS + index * 16
+    for col in 0 to 4 {
+        shader_buffer_store_f32(7, base + col, temp[col])
+        shader_buffer_store_f32(7, base + 4 + col, (temp[col] + temp[4 + col] + temp[8 + col]) * 0.5)
+        shader_buffer_store_f32(7, base + 8 + col, (temp[col] - temp[4 + col] + temp[8 + col]) * 0.5)
+        shader_buffer_store_f32(7, base + 12 + col, temp[8 + col])
+    }
+}
+
+fn cs_cnn_winograd() void {
+    let index = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let side = shader_root_f32(2) as i32
+    let tiles = (side + 1) / 2
+    let inputs = shader_root_f32(3) as i32
+    let outputs = shader_root_f32(4) as i32
+    if index >= tiles * tiles * outputs || sample >= shader_root_f32(0) as i32 { return }
+    let channel = index / (tiles * tiles)
+    let tile = index % (tiles * tiles)
+    let sums = [f32](16)
+    for element in 0 to 16 { sums[element] = 0.0 }
+    for input in 0 to inputs {
+        let source = ((sample * inputs + input) * tiles * tiles + tile) * 16
+        let weight = CNN_WINOGRAD_INPUTS + (channel * inputs + input) * 16
+        for element in 0 to 16 {
+            sums[element] = sums[element] + shader_buffer_f32(7, source + element) * shader_buffer_f32(7, weight + element)
+        }
+    }
+    let temp = [f32](8)
+    for row in 0 to 4 {
+        temp[row * 2] = sums[row * 4] + sums[row * 4 + 1] + sums[row * 4 + 2]
+        temp[row * 2 + 1] = sums[row * 4 + 1] - sums[row * 4 + 2] - sums[row * 4 + 3]
+    }
+    let y = (tile / tiles) * 2
+    let x = (tile % tiles) * 2
+    let bias = shader_buffer_f32(0, shader_root_f32(8) as i32 + channel)
+    let destination = sample * CNN_ACTS + shader_root_f32(6) as i32 + (channel * side + y) * side + x
+    let pooled: f32 = 0.0
+    for col in 0 to 2 {
+        if x + col < side {
+            let top = temp[col] + temp[2 + col] + temp[4 + col] + bias
+            let bottom = temp[2 + col] - temp[4 + col] - temp[6 + col] + bias
+            if top < 0.0 { top = 0.0 }
+            if bottom < 0.0 { bottom = 0.0 }
+            if top > pooled { pooled = top }
+            if bottom > pooled { pooled = bottom }
+            shader_buffer_store_f32(2, destination + col, top)
+            if y + 1 < side { shader_buffer_store_f32(2, destination + side + col, bottom) }
+        }
+    }
+    let pool_side = side / 2
+    if shader_root_f32(10) >= 0.0 && x / 2 < pool_side && y / 2 < pool_side {
+        shader_buffer_store_f32(2, sample * CNN_ACTS + shader_root_f32(10) as i32 + (channel * pool_side + y / 2) * pool_side + x / 2, pooled)
+    }
+}
+
+// Split the batch/spatial reduction into independent chunks, then reduce
+// those partial sums. No atomics: each invocation owns exactly one output.
+fn cs_cnn_conv_gradient_partial() void {
+    let index = shader_global_id_x()
+    let chunk = shader_global_id_y()
+    let input_side = shader_root_f32(1) as i32
+    let side = shader_root_f32(2) as i32
+    let inputs = shader_root_f32(3) as i32
+    let outputs = shader_root_f32(4) as i32
+    let weight_count = inputs * outputs * 9
+    let parameters = weight_count + outputs
+    let count = shader_root_f32(0) as i32
+    let length = count * side * side
+    let chunks = (length + CNN_GRAD_CHUNK - 1) / CNN_GRAD_CHUNK
+    if index >= parameters || chunk >= chunks { return }
+    let bias = index >= weight_count
+    let output = index / (inputs * 9)
+    if bias { output = index - weight_count }
+    let input = (index / 9) % inputs
+    let ky = (index / 3) % 3
+    let kx = index % 3
+    let end = (chunk + 1) * CNN_GRAD_CHUNK
+    if end > length { end = length }
+    let total: f32 = 0.0
+    for element in chunk * CNN_GRAD_CHUNK to end {
+        let sample = element / (side * side)
+        let pixel = element % (side * side)
+        let y = pixel / side
+        let x = pixel % side
+        let value: f32 = 1.0
+        if !bias { value = cnn_activation(sample, (input * input_side + y + ky) * input_side + x + kx) }
+        let delta = sample * CNN_ACTS + shader_root_f32(6) as i32 + output * side * side + pixel
+        total = total + value * shader_buffer_f32(3, delta)
+    }
+    // Adjacent lanes write adjacent parameters for each partial chunk.
+    shader_buffer_store_f32(7, chunk * parameters + index, total)
+}
+
+fn cs_cnn_conv_gradient_reduce() void {
+    let index = shader_global_id_x()
+    let parameters = (shader_root_f32(3) as i32 * 9 + 1) * shader_root_f32(4) as i32
+    if index >= parameters { return }
+    let side = shader_root_f32(2) as i32
+    let count = shader_root_f32(0) as i32
+    let chunks = (count * side * side + CNN_GRAD_CHUNK - 1) / CNN_GRAD_CHUNK
+    let total: f32 = 0.0
+    for chunk in 0 to chunks { total = total + shader_buffer_f32(7, chunk * parameters + index) }
+    shader_buffer_store_f32(4, shader_root_f32(7) as i32 + index, total / count as f32)
+}
+
+// Small batches avoid the extra Winograd dispatches. A register tile reuses
+// each weight across four outputs and loads each 4x4 input patch only once.
+fn cs_cnn_conv_tiled() void {
+    let index = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let side = shader_root_f32(2) as i32
+    let tiles = (side + 1) / 2
+    let inputs = shader_root_f32(3) as i32
+    if index >= tiles * tiles * shader_root_f32(4) as i32 || sample >= shader_root_f32(0) as i32 { return }
+    let channel = index / (tiles * tiles)
+    let y = ((index / tiles) % tiles) * 2
+    let x = (index % tiles) * 2
+    let input_side = shader_root_f32(1) as i32
+    let weights = shader_root_f32(7) as i32 + channel * inputs * 9
+    let a = shader_buffer_f32(0, shader_root_f32(8) as i32 + channel)
+    let b = a
+    let c = a
+    let d = a
+    for input in 0 to inputs {
+        let patch = [f32](16)
+        for row in 0 to 4 {
+            for col in 0 to 4 {
+                let value: f32 = 0.0
+                if y + row < input_side && x + col < input_side {
+                    value = cnn_activation(sample, (input * input_side + y + row) * input_side + x + col)
+                }
+                patch[row * 4 + col] = value
+            }
+        }
+        for ky in 0 to 3 {
+            for kx in 0 to 3 {
+                let weight = shader_buffer_f32(0, weights + (input * 3 + ky) * 3 + kx)
+                let pixel = ky * 4 + kx
+                a = a + patch[pixel] * weight
+                b = b + patch[pixel + 1] * weight
+                c = c + patch[pixel + 4] * weight
+                d = d + patch[pixel + 5] * weight
+            }
+        }
+    }
+    if a < 0.0 { a = 0.0 }
+    if b < 0.0 { b = 0.0 }
+    if c < 0.0 { c = 0.0 }
+    if d < 0.0 { d = 0.0 }
+    let destination = sample * CNN_ACTS + shader_root_f32(6) as i32 + (channel * side + y) * side + x
+    shader_buffer_store_f32(2, destination, a)
+    if x + 1 < side { shader_buffer_store_f32(2, destination + 1, b) }
+    if y + 1 < side {
+        shader_buffer_store_f32(2, destination + side, c)
+        if x + 1 < side { shader_buffer_store_f32(2, destination + side + 1, d) }
+    }
+    let pool_side = side / 2
+    if shader_root_f32(10) >= 0.0 && x / 2 < pool_side && y / 2 < pool_side {
+        let pooled = a
+        if b > pooled { pooled = b }
+        if c > pooled { pooled = c }
+        if d > pooled { pooled = d }
+        shader_buffer_store_f32(2, sample * CNN_ACTS + shader_root_f32(10) as i32 + (channel * pool_side + y / 2) * pool_side + x / 2, pooled)
+    }
+}
+
+// Four independent dot-product chains expose instruction parallelism in the
+// 800-input hidden layer instead of one long dependent accumulation.
+fn cs_cnn_dense_fast() void {
+    let output = shader_global_id_x()
+    let sample = shader_global_id_y()
+    let inputs = shader_root_f32(3) as i32
+    if output >= shader_root_f32(4) as i32 || sample >= shader_root_f32(0) as i32 { return }
+    let source = sample * CNN_ACTS + shader_root_f32(5) as i32
+    let weights = shader_root_f32(7) as i32 + output * inputs
+    let a: f32 = 0.0
+    let b: f32 = 0.0
+    let c: f32 = 0.0
+    let d: f32 = 0.0
+    for block in 0 to inputs / 4 {
+        let input = block * 4
+        a = a + shader_buffer_f32(2, source + input) * shader_buffer_f32(0, weights + input)
+        b = b + shader_buffer_f32(2, source + input + 1) * shader_buffer_f32(0, weights + input + 1)
+        c = c + shader_buffer_f32(2, source + input + 2) * shader_buffer_f32(0, weights + input + 2)
+        d = d + shader_buffer_f32(2, source + input + 3) * shader_buffer_f32(0, weights + input + 3)
+    }
+    let sum = (a + b) + (c + d) + shader_buffer_f32(0, shader_root_f32(8) as i32 + output)
+    for input in (inputs / 4) * 4 to inputs {
+        sum = sum + shader_buffer_f32(2, source + input) * shader_buffer_f32(0, weights + input)
+    }
+    if shader_root_f32(9) > 0.5 && sum < 0.0 { sum = 0.0 }
+    shader_buffer_store_f32(2, sample * CNN_ACTS + shader_root_f32(6) as i32 + output, sum)
+}

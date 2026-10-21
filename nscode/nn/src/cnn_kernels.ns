@@ -27,10 +27,11 @@ lit CNN_B4 = CNN_W4 + 10 * CNN_HIDDEN
 lit CNN_PARAMS = CNN_B4 + 10
 lit CNN_IMAGE = 785
 
-// Seven portable storage slots: parameters, image batch, activations,
+// Reference kernels use seven storage slots: parameters, image batch, activations,
 // activation gradients, parameter gradients, probabilities, Adam moments.
 // Root words: batch, input/output side, input/output channels, input/output
-// activation offsets, weight/bias offsets; words 12..14 hold Adam controls.
+// activation offsets, weight/bias offsets; word 10 holds the optional fused
+// pool output offset (-1 disables it); words 12..14 hold Adam controls.
 fn cnn_activation(sample: i32, index: i32) f32 {
     let offset = shader_root_f32(5) as i32
     if offset < 0 { return shader_buffer_f32(1, sample * CNN_IMAGE + index) }

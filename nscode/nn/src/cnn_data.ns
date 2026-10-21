@@ -1,0 +1,78 @@
+use gpu
+
+// Immutable IDX bytes stay on the device across minibatches and epochs.
+// Each caller owns a training/test dataset and releases it after completion.
+struct cnn_device_dataset {
+    images: u64,
+    labels: u64,
+    count: i32
+}
+
+fn cnn_upload_dataset(data: mnist_dataset) cnn_device_dataset {
+    let images = gpu_malloc(((data.images.len + 3) / 4 * 4) as u64, GPU_MEM_DEVICE, "CNN immutable MNIST IDX pixels")
+    let labels = gpu_malloc(((data.labels.len + 3) / 4 * 4) as u64, GPU_MEM_DEVICE, "CNN immutable MNIST IDX labels")
+    if images == 0 || labels == 0 { mnist_fail("GPU dataset allocation failed") }
+    gpu_write(images, data.images, data.images.len as u64)
+    gpu_write(labels, data.labels, data.labels.len as u64)
+    return cnn_device_dataset(images, labels, data.count)
+}
+
+// Only sample IDs and two translation offsets per image cross from the CPU.
+// The GPU handles every pixel's crop, zero fill, conversion and normalization.
+fn cnn_fill_device(engine: cnn_engine, data: cnn_device_dataset, order: [i32], start: i32, count: i32, shuffled: bool) {
+    assert engine.device && count > 0 && count <= CNN_BATCH
+    assert start >= 0 && start + count <= data.count
+    let root = [f32](16 + CNN_BATCH * 3)
+    root[0] = count as f32
+    let random = [i64](1)
+    for item in 0 to count {
+        let sample = start + item
+        let shift_x = 0
+        let shift_y = 0
+        if shuffled {
+            sample = order[start + item]
+            random[0] = (engine.progress[0] + item) as i64 * 7919 % 2147483646 + 1
+            shift_x = (nn_random(random) * 5.0) as i32 - 2
+            shift_y = (nn_random(random) * 5.0) as i32 - 2
+        }
+        root[16 + item * 3] = sample as f32
+        root[17 + item * 3] = shift_x as f32
+        root[18 + item * 3] = shift_y as f32
+    }
+    gpu_set_shader(engine.programs[21])
+    gpu_set_root_data(root, ((16 + count * 3) * 4) as u64)
+    // Dataset preparation does not touch parameters or optimizer moments.
+    // Subsequent cnn_launch calls restore every ordinary storage binding.
+    gpu_set_storage_at(1, engine.memory[1])
+    gpu_set_storage_at(6, data.labels)
+    gpu_set_storage_at(7, data.images)
+    gpu_dispatch("CNN parallel pixel translation and normalization", 784, count, 1)
+    engine.batch_ready[0] = true
+}
+
+fn cs_cnn_prepare_batch() void {
+    let pixel = shader_global_id_x()
+    let item = shader_global_id_y()
+    if pixel >= 784 || item >= shader_root_f32(0) as i32 { return }
+    let sample = shader_root_f32(16 + item * 3) as i32
+    let x = pixel % 28 - shader_root_f32(17 + item * 3) as i32
+    let y = pixel / 28 - shader_root_f32(18 + item * 3) as i32
+    let value: f32 = 0.0
+    if x >= 0 && x < 28 && y >= 0 && y < 28 {
+        let offset = 16 + sample * 784 + y * 28 + x
+        let word = shader_buffer_i32(7, offset / 4)
+        value = ((word >> ((offset % 4) * 8)) & 255) as f32 / 255.0
+    }
+    shader_buffer_store_f32(1, item * CNN_IMAGE + pixel, value)
+    if pixel == 0 {
+        let offset = 8 + sample
+        let word = shader_buffer_i32(6, offset / 4)
+        shader_buffer_store_f32(1, item * CNN_IMAGE + 784, ((word >> ((offset % 4) * 8)) & 255) as f32)
+    }
+}
+
+fn cnn_release_dataset(data: cnn_device_dataset) {
+    // The caller completes outstanding work before dropping its datasets.
+    gpu_free(data.images)
+    gpu_free(data.labels)
+}
