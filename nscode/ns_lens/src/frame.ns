@@ -7,6 +7,11 @@ use ui
 lit LENS_IDLE_POLL_MS = 100
 lit LENS_BACKGROUND_POLL_MS = 1000
 lit LENS_IDLE_REFRESH = 1.0
+// After input the display paces frames and polling for this many seconds, so
+// the next key, a terminal echo or a settling animation does not wait on the
+// idle cadence.
+lit LENS_INPUT_HOLD: f64 = 5.0
+let g_lens_input_time: f64 = -1.0
 let g_lens_frame_delay: i32 = 1
 let g_lens_frame_time: f64 = -1.0
 let g_lens_poll_time: f64 = -1.0
@@ -15,11 +20,17 @@ let g_lens_frame_w: i32 = 0
 let g_lens_frame_h: i32 = 0
 let g_lens_frame_ratio: f64 = 0.0
 
+fn lens_input_recent(now: f64) bool {
+    if g_lens_input_time < 0.0 || now < g_lens_input_time { return false }
+    return now - g_lens_input_time < LENS_INPUT_HOLD
+}
+
 fn lens_frame_due(now: f64, active: bool, input: bool, resized: bool) bool {
     if active == false { return false }
     if g_lens_frame_time < 0.0 || g_lens_frame_active == false || input || resized || g_lens_input_dirty || g_lens_generation != g_workspace_generation {
         return true
     }
+    if lens_input_recent(now) { return true }
     // Periodic maintenance samples RAM/FPS, refreshes Git and recent projects,
     // and settles deferred saves. It runs at 1 Hz instead of the poll rate.
     let delay: f64 = LENS_IDLE_REFRESH
@@ -33,6 +44,7 @@ fn lens_frame_due(now: f64, active: bool, input: bool, resized: bool) bool {
 fn lens_poll_due(now: f64, active: bool) bool {
     if g_lens_poll_time < 0.0 || now < g_lens_poll_time { return true }
     if active && g_lens_frame_active == false { return true }
+    if active && lens_input_recent(now) { return true }
     let delay: f64 = LENS_IDLE_POLL_MS as f64 / 1000.0
     if active == false { delay = LENS_BACKGROUND_POLL_MS as f64 / 1000.0 }
     return now - g_lens_poll_time >= delay
@@ -41,6 +53,14 @@ fn lens_poll_due(now: f64, active: bool) bool {
 fn lens_frame(r: ref ui_renderer, v: ref view) {
     let now = os_time()
     let active = view_is_active(v)
+    let input = view_input_pending(v)
+    if active == false {
+        terminal_repeat_stop()
+    }
+    // A held terminal key repeats without new events; keep frames coming.
+    if active && (input || terminal_repeating()) {
+        g_lens_input_time = now
+    }
     // Dock actions (including opening a project) must work while inactive.
     lens_dock_menu(v)
     if lens_poll_due(now, active) {
@@ -50,7 +70,7 @@ fn lens_frame(r: ref ui_renderer, v: ref view) {
     }
     window_size_tick(v.width, v.height, now)
     let resized = v.framebuffer_width != g_lens_frame_w || v.framebuffer_height != g_lens_frame_h || v.display_ratio != g_lens_frame_ratio
-    if lens_frame_due(now, active, view_input_pending(v), resized) {
+    if lens_frame_due(now, active, input, resized) {
         g_lens_frame_time = now
         g_lens_frame_w = v.framebuffer_width
         g_lens_frame_h = v.framebuffer_height
@@ -68,7 +88,7 @@ fn lens_frame(r: ref ui_renderer, v: ref view) {
     g_lens_frame_active = active
     if active == false {
         view_request_frame_after(v, LENS_BACKGROUND_POLL_MS)
-    } else if g_lens_frame_delay == 0 {
+    } else if g_lens_frame_delay == 0 || lens_input_recent(now) {
         view_request_frame(v, 1)
     } else {
         view_request_frame_after(v, g_lens_frame_delay)

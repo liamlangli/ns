@@ -1,0 +1,144 @@
+// PNG files on the change and full maps show their picture. The pictures live
+// in the ui renderer's shared preview texture; this cache maps each file to
+// its preview, loads at most one per frame, and when the cells run out hands
+// the one drawn longest ago to the next file.
+use std
+use os
+use ui
+
+lit LENS_PREVIEW_LOADS_PER_FRAME = 1
+lit LENS_PREVIEW_FAILED_MAX = 1024
+// A preview smaller than this on screen is not worth decoding a file for.
+lit LENS_PREVIEW_MIN_PX: f64 = 12.0
+
+let g_lens_preview_path = [str](64)
+let g_lens_preview_hash = [str](64)
+let g_lens_preview_id = [i32](64)
+let g_lens_preview_seen = [i64](64)
+let g_lens_preview_failed = set[str](1024)
+let g_lens_preview_failed_count = 0
+let g_lens_preview_frame: i64 = 0
+let g_lens_preview_loads = 0
+let g_lens_preview_generation = -1
+
+fn lens_preview_kind(path: str) bool {
+    if path.len < 4 {
+        return false
+    }
+    let ext = ".png"
+    for i in 0 to 4 {
+        if (path[path.len - 4 + i] | 32) != ext[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn lens_preview_drop(r: ref ui_renderer, slot: i32) {
+    if g_lens_preview_id[slot] > 0 {
+        ui_preview_release(r, g_lens_preview_id[slot])
+    }
+    g_lens_preview_id[slot] = 0
+    g_lens_preview_path[slot] = ""
+    g_lens_preview_hash[slot] = ""
+}
+
+// Start a map frame. After the workspace changed on disk, a preview whose file
+// now hashes differently (or is gone) is dropped and reloads when drawn.
+fn lens_preview_frame(r: ref ui_renderer, generation: i32) {
+    g_lens_preview_frame = g_lens_preview_frame + 1
+    g_lens_preview_loads = 0
+    if generation == g_lens_preview_generation {
+        return
+    }
+    g_lens_preview_generation = generation
+    for slot in 0 to UI_PREVIEW_SLOTS {
+        if g_lens_preview_id[slot] > 0 && os_file_hash(g_lens_preview_path[slot]) != g_lens_preview_hash[slot] {
+            lens_preview_drop(r, slot)
+        }
+    }
+    if g_lens_preview_failed_count > 0 {
+        g_lens_preview_failed = set[str](LENS_PREVIEW_FAILED_MAX)
+        g_lens_preview_failed_count = 0
+    }
+}
+
+// The preview of `path`, loading it when the frame's budget allows. 0 while
+// it is not loaded yet, or when the file does not decode. A load left for a
+// later frame marks input dirty, so frames keep coming until it is done.
+fn lens_preview_get(r: ref ui_renderer, path: str) i32 {
+    let oldest = -1
+    for slot in 0 to UI_PREVIEW_SLOTS {
+        if g_lens_preview_id[slot] > 0 && g_lens_preview_path[slot] == path {
+            g_lens_preview_seen[slot] = g_lens_preview_frame
+            return g_lens_preview_id[slot]
+        }
+        if g_lens_preview_id[slot] == 0 {
+            if oldest < 0 || g_lens_preview_id[oldest] > 0 {
+                oldest = slot
+            }
+        } else if g_lens_preview_seen[slot] < g_lens_preview_frame {
+            if oldest < 0 || (g_lens_preview_id[oldest] > 0 && g_lens_preview_seen[slot] < g_lens_preview_seen[oldest]) {
+                oldest = slot
+            }
+        }
+    }
+    if has(g_lens_preview_failed, path) {
+        return 0
+    }
+    // Every cell is on screen this frame; the rest wait for a closer zoom.
+    if oldest < 0 {
+        return 0
+    }
+    if g_lens_preview_loads >= LENS_PREVIEW_LOADS_PER_FRAME {
+        g_lens_input_dirty = true
+        return 0
+    }
+    g_lens_preview_loads = g_lens_preview_loads + 1
+    lens_preview_drop(r, oldest)
+    let hash = os_file_hash(path)
+    let id = ui_preview_load(r, path)
+    if id <= 0 {
+        if g_lens_preview_failed_count < LENS_PREVIEW_FAILED_MAX {
+            insert(g_lens_preview_failed, path)
+            g_lens_preview_failed_count = g_lens_preview_failed_count + 1
+        }
+        return 0
+    }
+    g_lens_preview_id[oldest] = id
+    g_lens_preview_path[oldest] = path
+    g_lens_preview_hash[oldest] = hash
+    g_lens_preview_seen[oldest] = g_lens_preview_frame
+    // The next frame draws the loaded picture.
+    g_lens_input_dirty = true
+    return id
+}
+
+// Draw the picture of file `index` aspect-fit in the box (x, y, w, h).
+// Returns false when it has nothing to show yet.
+fn lens_preview_draw(r: ref ui_renderer, index: i32, x: f64, y: f64, w: f64, h: f64) bool {
+    if w < LENS_PREVIEW_MIN_PX || h < LENS_PREVIEW_MIN_PX {
+        return false
+    }
+    let path = os_entry_path(index)
+    if lens_preview_kind(path) == false {
+        return false
+    }
+    let id = lens_preview_get(r, path)
+    if id <= 0 {
+        return false
+    }
+    let iw = ui_preview_width(r, id) as f64
+    let ih = ui_preview_height(r, id) as f64
+    if iw <= 0.0 || ih <= 0.0 {
+        return false
+    }
+    let scale = w / iw
+    if h / ih < scale {
+        scale = h / ih
+    }
+    let dw = iw * scale
+    let dh = ih * scale
+    ui_preview_draw(r, id, x + (w - dw) * 0.5, y + (h - dh) * 0.5, dw, dh, ui_pack_color("#ffffff"))
+    return true
+}

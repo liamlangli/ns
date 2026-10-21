@@ -43,7 +43,7 @@ rewritten. Font loaders and `io_load_image` still require original image files.
 ## Build dependencies
 
 On macOS, Apple texture cooking delegates to the Nano Script tool
-[`ns_tex`](../nscode/ns_tex/README.md): `make ns_tex` places it beside `bin/ns`,
+[`ns_tex`](../nscode/ns_tex/README.md): `make` places it beside `bin/ns`,
 and `make install` installs its launcher and sources. It uses Xcode's bundled
 `textureconverter` for ASTC and does not require Python, Pillow or astcenc:
 

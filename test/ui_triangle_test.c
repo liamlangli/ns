@@ -374,7 +374,76 @@ static void test_mixed_faces_share_a_middle(void) {
     free(r);
 }
 
+// A preview shrinks into its cell inside a transparent border, averages
+// colour by coverage, and draws from that cell of the one preview texture.
+static void test_preview(void) {
+    ui_renderer *r = calloc(1, sizeof(*r));
+    assert(r);
+    ui_vertex vertices[64];
+    r->rect = (ui_rect){0, 0, 1000, 1000};
+    r->vertices = vertices;
+    r->vertex_capacity = 64;
+    r->preview_pixels = calloc((size_t)UI_PREVIEW_SIZE * UI_PREVIEW_SIZE, 4);
+    assert(r->preview_pixels);
+    // 508 x 254: halves to 254 x 127. Even columns are opaque red, odd ones
+    // transparent green, so each 2 x 2 box is half-covered pure red.
+    io_image image = {.width = 508, .height = 254, .channels = 4};
+    image.data = calloc((size_t)image.width * image.height, 4);
+    assert(image.data);
+    for (i32 i = 0; i < image.width * image.height; i++) {
+        u8 *px = image.data + (size_t)i * 4;
+        if ((i % image.width) % 2 == 0) {
+            px[0] = 255;
+            px[3] = 255;
+        } else {
+            px[1] = 255;
+        }
+    }
+    const i32 slot = UI_PREVIEW_COLUMNS + 1;
+    memset(r->preview_pixels, 0x7f, (size_t)UI_PREVIEW_SIZE * UI_PREVIEW_SIZE * 4);
+    ui_preview_compose(r, slot, &image);
+    r->preview_used[slot] = true;
+    assert(r->preview_cell_widths[slot] == 254 && r->preview_cell_heights[slot] == 127);
+    assert(ui_preview_width(r, slot + 1) == 508 && ui_preview_height(r, slot + 1) == 254);
+    const i32 cx = UI_PREVIEW_CELL, cy = UI_PREVIEW_CELL;
+    const u8 *border = r->preview_pixels + ((size_t)cy * UI_PREVIEW_SIZE + cx) * 4;
+    assert(border[0] == 0 && border[3] == 0);
+    const u8 *inside = r->preview_pixels + ((size_t)(cy + 1) * UI_PREVIEW_SIZE + cx + 1) * 4;
+    assert(inside[0] == 255 && inside[1] == 0 && inside[3] == 128);
+    const u8 *below = r->preview_pixels + ((size_t)(cy + 1 + 127) * UI_PREVIEW_SIZE + cx + 1) * 4;
+    assert(below[3] == 0);
+    // A neighbouring cell is left alone.
+    assert(r->preview_pixels[((size_t)cy * UI_PREVIEW_SIZE + cx - 1) * 4] == 0x7f);
+
+    ui_preview_draw(r, slot + 1, 10, 20, 100, 50, 0xffffffffu);
+    assert(r->vertex_count == 6 && r->command_count == 1);
+    assert(r->commands[0].texture_id == UI_PREVIEW_TEXTURE);
+    r->preview_texture = 77;
+    assert(ui_command_rgba(r, &r->commands[0]) == 77);
+    f32 u_min = 1, v_min = 1, u_max = 0, v_max = 0;
+    for (i32 i = 0; i < r->vertex_count; i++) {
+        u_min = fminf(u_min, vertices[i].u);
+        v_min = fminf(v_min, vertices[i].v);
+        u_max = fmaxf(u_max, vertices[i].u);
+        v_max = fmaxf(v_max, vertices[i].v);
+    }
+    assert(fabsf(u_min * UI_PREVIEW_SIZE - (cx + 1)) < 0.01f);
+    assert(fabsf(v_min * UI_PREVIEW_SIZE - (cy + 1)) < 0.01f);
+    assert(fabsf(u_max * UI_PREVIEW_SIZE - (cx + 1 + 254)) < 0.01f);
+    assert(fabsf(v_max * UI_PREVIEW_SIZE - (cy + 1 + 127)) < 0.01f);
+
+    // A released id no longer draws.
+    ui_preview_release(r, slot + 1);
+    ui_preview_draw(r, slot + 1, 10, 20, 100, 50, 0xffffffffu);
+    assert(r->vertex_count == 6 && ui_preview_width(r, slot + 1) == 0);
+    assert(ui_preview_load(r, "") == 0);
+    free(image.data);
+    free(r->preview_pixels);
+    free(r);
+}
+
 int main(void) {
+    test_preview();
     test_mixed_faces_share_a_middle();
     test_batch_gpu_pressure();
     test_one_draw();

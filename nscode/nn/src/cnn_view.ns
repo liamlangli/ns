@@ -1,10 +1,12 @@
 use simd
 use shader
 use gpu
+use os
 
-// 3D architecture view: one beveled cube per neuron, drawn as instances of a
-// single mesh. Each layer is a wall of feature-map tiles in the y/z plane and
-// the walls follow the data flow along +x.
+// 3D architecture view: one smooth-shaded beveled cube per neuron, drawn as
+// instances of a single mesh, and one 3D line per connection. Each layer is a
+// wall of feature-map tiles in the y/z plane and the walls follow the data
+// flow along +x.
 lit VIEW_I1 = 784
 lit VIEW_I2 = VIEW_I1 + 676 * CNN_K1
 lit VIEW_I3 = VIEW_I2 + 169 * CNN_K1
@@ -13,6 +15,18 @@ lit VIEW_I5 = VIEW_I4 + CNN_FEATURES
 lit VIEW_I6 = VIEW_I5 + CNN_HIDDEN
 lit VIEW_INSTANCES = VIEW_I6 + 10
 lit VIEW_LAYERS = 7
+// Per-layer weight scales follow the per-layer gray scales in the values.
+lit VIEW_SCALES = VIEW_INSTANCES + VIEW_LAYERS
+lit VIEW_VALUES = VIEW_SCALES + VIEW_LAYERS
+// Connections grouped by the layer they feed: conv1 3x3 taps, pool1 2x2
+// windows, conv2 3x3 taps over every input map, pool2 windows, then the two
+// dense layers.
+lit VIEW_L1 = 676 * CNN_K1 * 9
+lit VIEW_L2 = VIEW_L1 + 169 * CNN_K1 * 4
+lit VIEW_L3 = VIEW_L2 + 121 * CNN_K2 * CNN_K1 * 9
+lit VIEW_L4 = VIEW_L3 + CNN_FEATURES * 4
+lit VIEW_L5 = VIEW_L4 + CNN_HIDDEN * CNN_FEATURES
+lit VIEW_LINKS = VIEW_L5 + 10 * CNN_HIDDEN
 lit VIEW_CUBE_VERTICES = 132
 lit VIEW_BEVEL: f32 = 0.14
 lit VIEW_COLS1 = 4
@@ -24,7 +38,21 @@ lit VIEW_ROOT_WORDS = 16
 struct cnn_view_fragment {
     position: float4,
     normal: float3,
+    to_eye: float3,
     shade: f32
+}
+
+struct cnn_view_line {
+    position: float4,
+    shade: f32
+}
+
+// Source and destination instances of a connection and the parameter index
+// of its weight, -1 for a pooling window.
+struct cnn_view_link {
+    source: i32,
+    destination: i32,
+    weight: i32
 }
 
 fn cnn_view_layer(instance: i32) i32 {
@@ -178,7 +206,23 @@ fn cs_cnn_view() void {
     shader_buffer_store_f32(7, instance, value)
 }
 
-// One invocation per layer: store 1 / max so each layer spans the gray range.
+fn cnn_view_weight_start(layer: i32) i32 {
+    if layer == 1 { return CNN_W1 }
+    if layer == 3 { return CNN_W2 }
+    if layer == 5 { return CNN_W3 }
+    return CNN_W4
+}
+
+fn cnn_view_weight_count(layer: i32) i32 {
+    if layer == 1 { return 9 * CNN_K1 }
+    if layer == 3 { return 9 * CNN_K1 * CNN_K2 }
+    if layer == 5 { return CNN_HIDDEN * CNN_FEATURES }
+    if layer == 6 { return 10 * CNN_HIDDEN }
+    return 0
+}
+
+// One invocation per layer: store 1 / max so each layer spans the gray range,
+// and 1 / max |weight| of the connections feeding it.
 fn cs_cnn_view_scale() void {
     let layer = shader_global_id_x()
     if layer >= VIEW_LAYERS { return }
@@ -193,6 +237,30 @@ fn cs_cnn_view_scale() void {
     let scale: f32 = 0.0
     if maximum > 0.0 { scale = 1.0 / maximum }
     shader_buffer_store_f32(7, VIEW_INSTANCES + layer, scale)
+    let start_weight = cnn_view_weight_start(layer)
+    let largest: f32 = 0.0
+    for index in 0 to cnn_view_weight_count(layer) {
+        let weight = cnn_view_abs(shader_buffer_f32(0, start_weight + index))
+        if weight > largest { largest = weight }
+    }
+    let weight_scale: f32 = 0.0
+    if largest > 0.0 { weight_scale = 1.0 / largest }
+    shader_buffer_store_f32(7, VIEW_SCALES + layer, weight_scale)
+}
+
+fn cnn_view_clip(world: float3) float4 {
+    let eye = float3 { shader_root_f32(0), shader_root_f32(1), shader_root_f32(2) }
+    let right = float3 { shader_root_f32(4), shader_root_f32(5), shader_root_f32(6) }
+    let up = float3 { shader_root_f32(8), shader_root_f32(9), shader_root_f32(10) }
+    let forward = float3 { shader_root_f32(12), shader_root_f32(13), shader_root_f32(14) }
+    let relative = world - eye
+    let tangent = shader_root_f32(3)
+    return float4 {
+        dot(relative, right) / (tangent * shader_root_f32(7)),
+        dot(relative, up) / tangent,
+        shader_root_f32(11),
+        dot(relative, forward)
+    }
 }
 
 // Storage: 0 cube mesh (position, normal per vertex), 1 view values.
@@ -211,17 +279,6 @@ fn vs_cnn_view() cnn_view_fragment {
     let value = shader_buffer_f32(1, instance) * shader_buffer_f32(1, VIEW_INSTANCES + layer)
     if value > 1.0 { value = 1.0 }
     let eye = float3 { shader_root_f32(0), shader_root_f32(1), shader_root_f32(2) }
-    let right = float3 { shader_root_f32(4), shader_root_f32(5), shader_root_f32(6) }
-    let up = float3 { shader_root_f32(8), shader_root_f32(9), shader_root_f32(10) }
-    let forward = float3 { shader_root_f32(12), shader_root_f32(13), shader_root_f32(14) }
-    let relative = world - eye
-    let tangent = shader_root_f32(3)
-    let clip = float4 {
-        dot(relative, right) / (tangent * shader_root_f32(7)),
-        dot(relative, up) / tangent,
-        shader_root_f32(11),
-        dot(relative, forward)
-    }
     let shade = 0.1 + value * 0.85
     // A highlighted layer stands out and the rest of the network recedes.
     let highlight = shader_root_f32(15)
@@ -232,16 +289,104 @@ fn vs_cnn_view() cnn_view_fragment {
             shade = shade * 0.3
         }
     }
-    return cnn_view_fragment { clip, normal, shade }
+    return cnn_view_fragment { cnn_view_clip(world), normal, eye - world, shade }
 }
 
+// Diffuse plus a soft Blinn-Phong highlight over the interpolated normals.
 fn fs_cnn_view(input: cnn_view_fragment) float4 {
     let normal = normalize(input.normal)
     let light = normalize(float3 { -0.45, 0.8, -0.4 })
     let diffuse = dot(normal, light)
     if diffuse < 0.0 { diffuse = 0.0 }
-    let shade = input.shade * (0.42 + 0.58 * diffuse)
+    let halfway = normalize(light + normalize(input.to_eye))
+    let specular = dot(normal, halfway)
+    if specular < 0.0 { specular = 0.0 }
+    for power in 0 to 5 { specular = specular * specular }
+    let shade = input.shade * (0.42 + 0.58 * diffuse) + specular * (0.04 + 0.2 * input.shade)
     return float4 { shade, shade, shade, 1.0 }
+}
+
+fn cnn_view_link_at(index: i32) cnn_view_link {
+    if index < VIEW_L1 {
+        let neuron = index / 9
+        let tap = index % 9
+        let source = (neuron / 26 % 26 + tap / 3) * 28 + neuron % 26 + tap % 3
+        return cnn_view_link { source, VIEW_I1 + neuron, CNN_W1 + neuron / 676 * 9 + tap }
+    }
+    if index < VIEW_L2 {
+        let local = index - VIEW_L1
+        let neuron = local / 4
+        let tap = local % 4
+        let row = neuron / 13 % 13 * 2 + tap / 2
+        let source = VIEW_I1 + (neuron / 169 * 26 + row) * 26 + neuron % 13 * 2 + tap % 2
+        return cnn_view_link { source, VIEW_I2 + neuron, -1 }
+    }
+    if index < VIEW_L3 {
+        let local = index - VIEW_L2
+        let neuron = local / (CNN_K1 * 9)
+        let input = local % (CNN_K1 * 9) / 9
+        let tap = local % 9
+        let source = VIEW_I2 + (input * 13 + neuron / 11 % 11 + tap / 3) * 13 + neuron % 11 + tap % 3
+        return cnn_view_link { source, VIEW_I3 + neuron, CNN_W2 + (neuron / 121 * CNN_K1 + input) * 9 + tap }
+    }
+    if index < VIEW_L4 {
+        let local = index - VIEW_L3
+        let neuron = local / 4
+        let tap = local % 4
+        let row = neuron / 5 % 5 * 2 + tap / 2
+        let source = VIEW_I3 + (neuron / 25 * 11 + row) * 11 + neuron % 5 * 2 + tap % 2
+        return cnn_view_link { source, VIEW_I4 + neuron, -1 }
+    }
+    if index < VIEW_L5 {
+        let local = index - VIEW_L4
+        return cnn_view_link { VIEW_I4 + local % CNN_FEATURES, VIEW_I5 + local / CNN_FEATURES, CNN_W3 + local }
+    }
+    let local = index - VIEW_L5
+    return cnn_view_link { VIEW_I5 + local % CNN_HIDDEN, VIEW_I6 + local / CNN_HIDDEN, CNN_W4 + local }
+}
+
+// Additive brightness per connection; the dense groups overlap far more.
+fn cnn_view_link_gain(layer: i32) f32 {
+    if layer == 1 { return 0.012 }
+    if layer == 2 { return 0.012 }
+    if layer == 3 { return 0.006 }
+    if layer == 4 { return 0.03 }
+    if layer == 5 { return 0.01 }
+    return 0.12
+}
+
+// Two vertices per connection, from the source cube's +x face to the
+// destination's -x face. Storage: 0 parameters, 1 view values.
+fn vs_cnn_view_link() cnn_view_line {
+    let corner = shader_vertex_id()
+    let link = cnn_view_link_at(corner / 2)
+    let layer = cnn_view_layer(link.destination)
+    let cell = cnn_view_cell(link.source)
+    let world = float3 { cell.x + cell.w * 0.5, cell.y, cell.z }
+    if corner % 2 == 1 {
+        cell = cnn_view_cell(link.destination)
+        world = float3 { cell.x - cell.w * 0.5, cell.y, cell.z }
+    }
+    let strength: f32 = 1.0
+    if link.weight >= 0 {
+        // Squared, so the strong weights stand out of the dense groups.
+        strength = cnn_view_abs(shader_buffer_f32(0, link.weight)) * shader_buffer_f32(1, VIEW_SCALES + layer)
+        strength = strength * strength
+    }
+    let shade = strength * cnn_view_link_gain(layer)
+    let highlight = shader_root_f32(15)
+    if highlight > -0.5 {
+        if layer == highlight as i32 || layer - 1 == highlight as i32 {
+            shade = shade * 2.5
+        } else {
+            shade = shade * 0.2
+        }
+    }
+    return cnn_view_line { cnn_view_clip(world), shade }
+}
+
+fn fs_cnn_view_link(input: cnn_view_line) float4 {
+    return float4 { input.shade, input.shade, input.shade, 1.0 }
 }
 
 struct cnn_view {
@@ -251,19 +396,49 @@ struct cnn_view {
     compute: u32,
     scale: u32,
     state: u32,
+    links: u32,
+    link_state: u32,
     root: [f32],
     control: [f32],
-    // yaw, pitch, distance, target x/y/z
+    // yaw, pitch, distance, target x/y/z as drawn in 0..5, the goal input
+    // steers in 6..11, and the time of the last eased frame in 12.
     camera: [f64]
 }
 
+// Exponential rate, per second, at which the drawn camera closes on the goal:
+// higher is snappier, lower glides longer.
+lit VIEW_CAMERA_DAMPING: f64 = 16.0
+
 fn cnn_view_reset_camera(scene: cnn_view) {
-    scene.camera[0] = 2.35
-    scene.camera[1] = 0.32
-    scene.camera[2] = 315.0
-    scene.camera[3] = 108.0
-    scene.camera[4] = -10.0
-    scene.camera[5] = 0.0
+    scene.camera[6] = 2.35
+    scene.camera[7] = 0.32
+    scene.camera[8] = 315.0
+    scene.camera[9] = 108.0
+    scene.camera[10] = -10.0
+    scene.camera[11] = 0.0
+}
+
+// Move the drawn camera toward the goal; frame-rate independent. Returns true
+// while it is still moving.
+fn cnn_view_ease_camera(scene: cnn_view, seconds: f64) bool {
+    let step = seconds
+    if step > 0.05 { step = 0.05 }
+    if step < 0.0 { step = 0.0 }
+    let blend = 1.0 - nn_exp(0.0 - step * VIEW_CAMERA_DAMPING)
+    let moving = false
+    for index in 0 to 6 {
+        let gap = scene.camera[index + 6] - scene.camera[index]
+        // Angles settle below a hundredth of a degree, lengths below a thousandth of a unit.
+        let rest: f64 = 0.001
+        if index < 2 { rest = 0.0001 }
+        if nn_abs(gap) > rest {
+            scene.camera[index] = scene.camera[index] + gap * blend
+            moving = true
+        } else {
+            scene.camera[index] = scene.camera[index + 6]
+        }
+    }
+    return moving
 }
 
 fn cnn_view_put(mesh: [f32], vertex: i32, position: float3, normal: float3) {
@@ -348,16 +523,63 @@ fn cnn_view_cube() [f32] {
         vertex = vertex + 3
     }
     assert vertex == VIEW_CUBE_VERTICES
+    cnn_view_smooth(mesh)
     return mesh
 }
 
+fn cnn_view_position(mesh: [f32], vertex: i32) float3 {
+    return float3 { mesh[vertex * 6], mesh[vertex * 6 + 1], mesh[vertex * 6 + 2] }
+}
+
+fn cnn_view_normal(mesh: [f32], vertex: i32) float3 {
+    return float3 { mesh[vertex * 6 + 3], mesh[vertex * 6 + 4], mesh[vertex * 6 + 5] }
+}
+
+fn cnn_view_near(a: float3, b: float3) bool {
+    let delta = a - b
+    return dot(delta, delta) < 0.000001
+}
+
+// Replace each vertex normal by the average of the distinct face normals that
+// meet at its position, so faces, edge strips and corners shade smoothly.
+fn cnn_view_smooth(mesh: [f32]) {
+    let smooth = [f32](VIEW_CUBE_VERTICES * 3)
+    for vertex in 0 to VIEW_CUBE_VERTICES {
+        let position = cnn_view_position(mesh, vertex)
+        let total = float3 { 0.0, 0.0, 0.0 }
+        for other in 0 to VIEW_CUBE_VERTICES {
+            if cnn_view_near(cnn_view_position(mesh, other), position) {
+                let normal = cnn_view_normal(mesh, other)
+                let seen = false
+                for earlier in 0 to other {
+                    if cnn_view_near(cnn_view_position(mesh, earlier), position) && cnn_view_near(cnn_view_normal(mesh, earlier), normal) {
+                        seen = true
+                        break
+                    }
+                }
+                if !seen { total = total + normal }
+            }
+        }
+        let normal = normalize(total)
+        smooth[vertex * 3] = normal.x
+        smooth[vertex * 3 + 1] = normal.y
+        smooth[vertex * 3 + 2] = normal.z
+    }
+    for vertex in 0 to VIEW_CUBE_VERTICES {
+        mesh[vertex * 6 + 3] = smooth[vertex * 3]
+        mesh[vertex * 6 + 4] = smooth[vertex * 3 + 1]
+        mesh[vertex * 6 + 5] = smooth[vertex * 3 + 2]
+    }
+}
+
 fn cnn_view_create() cnn_view {
-    let scene = cnn_view(0, 0, 0u, 0u, 0u, 0u, [f32](VIEW_ROOT_WORDS), [f32](16), [f64](6))
+    let scene = cnn_view(0, 0, 0u, 0u, 0u, 0u, 0u, 0u, [f32](VIEW_ROOT_WORDS), [f32](16), [f64](13))
     cnn_view_reset_camera(scene)
+    for index in 0 to 6 { scene.camera[index] = scene.camera[index + 6] }
     if gpu_storage_slot_count() < 8 { mnist_fail("The architecture view needs eight GPU storage slots") }
     let mesh = cnn_view_cube()
     scene.mesh = gpu_malloc((VIEW_CUBE_VERTICES * 24) as u64, GPU_MEM_DEVICE, "CNN view beveled cube mesh")
-    scene.values = gpu_malloc(((VIEW_INSTANCES + VIEW_LAYERS) * 4) as u64, GPU_MEM_DEVICE, "CNN view neuron values and layer scales")
+    scene.values = gpu_malloc((VIEW_VALUES * 4) as u64, GPU_MEM_DEVICE, "CNN view neuron values and layer scales")
     if scene.mesh == 0 || scene.values == 0 { mnist_fail("GPU allocation failed: CNN view") }
     gpu_write(scene.mesh, mesh, (VIEW_CUBE_VERTICES * 24) as u64)
     let shader = gpu_shader_graphics(vs_cnn_view, fs_cnn_view)
@@ -366,8 +588,12 @@ fn cnn_view_create() cnn_view {
     scene.compute = shader.resource_id
     shader = gpu_shader_compute(cs_cnn_view_scale)
     scene.scale = shader.resource_id
-    if scene.shader == 0u || scene.compute == 0u || scene.scale == 0u { mnist_fail("CNN view shader compilation failed") }
+    shader = gpu_shader_graphics(vs_cnn_view_link, fs_cnn_view_link)
+    scene.links = shader.resource_id
+    if scene.shader == 0u || scene.compute == 0u || scene.scale == 0u || scene.links == 0u { mnist_fail("CNN view shader compilation failed") }
     scene.state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_NEARER, true, GPU_BLEND_OFF, GPU_COLOR_MASK_ALL)
+    // Lines add light behind the cubes' depth without writing their own.
+    scene.link_state = gpu_state_create(GPU_PRIMITIVE_LINES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_NEARER, false, GPU_BLEND_ADDITIVE, GPU_COLOR_MASK_ALL)
     return scene
 }
 
@@ -375,6 +601,7 @@ fn cnn_view_release(scene: cnn_view) {
     gpu_shader_destroy(scene.shader)
     gpu_shader_destroy(scene.compute)
     gpu_shader_destroy(scene.scale)
+    gpu_shader_destroy(scene.links)
     gpu_free(scene.mesh)
     gpu_free(scene.values)
 }
@@ -421,7 +648,8 @@ fn cnn_view_project(scene: cnn_view, x: f64, y: f64, z: f64, left: f64, top: f64
 }
 
 // Orbit with the left button, pan with the right, zoom with wheel or pinch.
-// Returns true while the camera moves, so the caller keeps rendering.
+// Input steers the goal camera and the drawn one eases after it. Returns true
+// while the camera moves, so the caller keeps rendering.
 // `blocked` is true while the pointer is over ui drawn on top of the view.
 fn cnn_view_input(scene: cnn_view, v: ref view, left: f64, top: f64, width: f64, height: f64, blocked: bool) bool {
     let inside = !blocked && v.mouse_x >= left && v.mouse_x < left + width && v.mouse_y >= top && v.mouse_y < top + height
@@ -436,17 +664,17 @@ fn cnn_view_input(scene: cnn_view, v: ref view, left: f64, top: f64, width: f64,
     control[3] = v.mouse_y as f32
     let moved = false
     if control[0] > 0.5 && (dx != 0.0 || dy != 0.0) {
-        scene.camera[0] = scene.camera[0] + dx * 0.008
-        scene.camera[1] = scene.camera[1] + dy * 0.008
-        if scene.camera[1] > 1.45 { scene.camera[1] = 1.45 }
-        if scene.camera[1] < -1.45 { scene.camera[1] = -1.45 }
+        scene.camera[6] = scene.camera[6] + dx * 0.008
+        scene.camera[7] = scene.camera[7] + dy * 0.008
+        if scene.camera[7] > 1.45 { scene.camera[7] = 1.45 }
+        if scene.camera[7] < -1.45 { scene.camera[7] = -1.45 }
         moved = true
     }
     if control[1] > 0.5 && (dx != 0.0 || dy != 0.0) {
-        let scale = scene.camera[2] * 0.84 / height
-        scene.camera[3] = scene.camera[3] - (scene.root[4] as f64 * dx - scene.root[8] as f64 * dy) * scale
-        scene.camera[4] = scene.camera[4] - (scene.root[5] as f64 * dx - scene.root[9] as f64 * dy) * scale
-        scene.camera[5] = scene.camera[5] - (scene.root[6] as f64 * dx - scene.root[10] as f64 * dy) * scale
+        let scale = scene.camera[8] * 0.84 / height
+        scene.camera[9] = scene.camera[9] - (scene.root[4] as f64 * dx - scene.root[8] as f64 * dy) * scale
+        scene.camera[10] = scene.camera[10] - (scene.root[5] as f64 * dx - scene.root[9] as f64 * dy) * scale
+        scene.camera[11] = scene.camera[11] - (scene.root[6] as f64 * dx - scene.root[10] as f64 * dy) * scale
         moved = true
     }
     let zoom: f64 = 1.0
@@ -454,16 +682,19 @@ fn cnn_view_input(scene: cnn_view, v: ref view, left: f64, top: f64, width: f64,
     let gesture = view_gesture(v)
     if inside && gesture.zoom_factor > 0.0 && gesture.zoom_factor != 1.0 { zoom = zoom / gesture.zoom_factor }
     if zoom != 1.0 {
-        scene.camera[2] = scene.camera[2] * zoom
-        if scene.camera[2] < 20.0 { scene.camera[2] = 20.0 }
-        if scene.camera[2] > 900.0 { scene.camera[2] = 900.0 }
+        scene.camera[8] = scene.camera[8] * zoom
+        if scene.camera[8] < 20.0 { scene.camera[8] = 20.0 }
+        if scene.camera[8] > 900.0 { scene.camera[8] = 900.0 }
         moved = true
     }
-    return moved
+    let now = os_time()
+    let eased = cnn_view_ease_camera(scene, now - scene.camera[12])
+    scene.camera[12] = now
+    return moved || eased
 }
 
 // Compute the gray values on the GPU from the resident parameters, then draw
-// every neuron in one instanced call. `highlight` is a layer index or -1.
+// every neuron in one instanced call and every connection in one line draw. `highlight` is a layer index or -1.
 fn cnn_view_draw(scene: cnn_view, engine: cnn_engine, v: ref view, highlight: i32, left: f64, top: f64, width: f64, height: f64) {
     cnn_view_camera(scene, width / height)
     scene.root[15] = highlight as f32
@@ -489,5 +720,11 @@ fn cnn_view_draw(scene: cnn_view, engine: cnn_engine, v: ref view, highlight: i3
     gpu_set_storage_at(0, scene.mesh)
     gpu_set_storage_at(1, scene.values)
     gpu_draw_vertices(0, VIEW_CUBE_VERTICES, VIEW_INSTANCES)
+    gpu_set_shader(scene.links)
+    gpu_set_state(scene.link_state)
+    gpu_set_root_data(scene.root, (VIEW_ROOT_WORDS * 4) as u64)
+    gpu_set_storage_at(0, engine.memory[0])
+    gpu_set_storage_at(1, scene.values)
+    gpu_draw_vertices(0, VIEW_LINKS * 2, 1)
     gpu_pass_end()
 }

@@ -1,6 +1,6 @@
 fn main() {
-    // Beveled cube: 44 triangles inside the unit cube, unit normals, every
-    // triangle wound counterclockwise around its outward normal.
+    // Beveled cube: 44 triangles inside the unit cube, unit smoothed normals,
+    // every triangle wound counterclockwise around its outward direction.
     let mesh = cnn_view_cube()
     assert mesh.len == VIEW_CUBE_VERTICES * 6
     for triangle in 0 to VIEW_CUBE_VERTICES / 3 {
@@ -11,6 +11,10 @@ fn main() {
         let normal = float3 { mesh[base + 3], mesh[base + 4], mesh[base + 5] }
         assert nn_abs(dot(normal, normal) as f64 - 1.0) < 0.0001
         assert dot(cross(b - a, c - a), normal) > 0.0
+        // Shared positions share one normal, so no crease shows.
+        for other in 0 to VIEW_CUBE_VERTICES {
+            if cnn_view_near(cnn_view_position(mesh, other), a) { assert cnn_view_near(cnn_view_normal(mesh, other), normal) }
+        }
         // The face points outward: its centre lies along the normal.
         let centre = float3 { (a.x + b.x + c.x) / 3.0, (a.y + b.y + c.y) / 3.0, (a.z + b.z + c.z) / 3.0 }
         assert dot(centre, normal) > 0.3
@@ -33,7 +37,7 @@ fn main() {
     // Weight mode on the CPU: the top-left input pixel only feeds tap (0, 0)
     // of each first-layer kernel; a first-layer neuron reads its 9 taps and bias.
     let engine = cnn_create(false)
-    let values = [f32](VIEW_INSTANCES + VIEW_LAYERS)
+    let values = [f32](VIEW_VALUES)
     let root = [f32](16)
     assert shader_host_buffer(0, engine.weights)
     assert shader_host_buffer(7, values)
@@ -66,6 +70,32 @@ fn main() {
         assert nn_abs(maximum - 1.0) < 0.00001
     }
 
+    // Weight scales: the strongest weight feeding a layer maps to exactly 1.
+    let strongest: f64 = 0.0
+    for index in 0 to 10 * CNN_HIDDEN {
+        let weight = nn_abs(engine.weights[CNN_W4 + index] as f64)
+        if weight > strongest { strongest = weight }
+    }
+    assert nn_abs(strongest * values[VIEW_SCALES + 6] as f64 - 1.0) < 0.00001
+    assert values[VIEW_SCALES + 2] == 0.0
+
+    // Connections: every link runs from one layer to the next, and each group
+    // matches the kernels' indexing.
+    for index in 0 to VIEW_LINKS {
+        let link = cnn_view_link_at(index)
+        assert link.source >= 0 && link.destination < VIEW_INSTANCES
+        assert cnn_view_layer(link.source) + 1 == cnn_view_layer(link.destination)
+        if link.weight >= 0 { assert link.weight >= CNN_W1 && link.weight < CNN_PARAMS }
+    }
+    // conv1 neuron (x 3, y 2) of map 1, tap (1, 2) reads pixel (5, 3).
+    let conv1 = cnn_view_link_at(((676 + 2 * 26 + 3) * 9) + 5)
+    assert conv1.source == 3 * 28 + 5 && conv1.destination == VIEW_I1 + 676 + 55 && conv1.weight == CNN_W1 + 9 + 5
+    // pool2 neuron (4, 4) of the last map, bottom-right tap, reads conv2 (9, 9).
+    let pool2 = cnn_view_link_at(VIEW_L3 + CNN_FEATURES * 4 - 1)
+    assert pool2.source == VIEW_I3 + (CNN_K2 - 1) * 121 + 9 * 11 + 9 && pool2.weight == -1
+    let dense = cnn_view_link_at(VIEW_LINKS - 1)
+    assert dense.source == VIEW_I6 - 1 && dense.destination == VIEW_INSTANCES - 1 && dense.weight == CNN_B4 - 1
+
     cnn_release(engine)
 
     assert shader_transpile_stage(vs_cnn_view, "msl", "vertex").len > 0
@@ -79,5 +109,25 @@ fn main() {
     assert shader_transpile_stage(cs_cnn_view, "hlsl", "compute").len > 0
     assert shader_transpile_stage(cs_cnn_view, "wgsl", "compute").len > 0
     assert shader_transpile_stage(cs_cnn_view_scale, "wgsl", "compute").len > 0
-    print(`CNN view: {VIEW_INSTANCES} neuron cubes, beveled mesh, weight grays, shader targets passed\n`)
+    assert shader_transpile_stage(vs_cnn_view_link, "msl", "vertex").len > 0
+    assert shader_transpile_stage(vs_cnn_view_link, "glsl", "vertex").len > 0
+    assert shader_transpile_stage(vs_cnn_view_link, "hlsl", "vertex").len > 0
+    assert shader_transpile_stage(vs_cnn_view_link, "wgsl", "vertex").len > 0
+    assert shader_transpile_stage(fs_cnn_view_link, "msl", "fragment").len > 0
+    // Damped camera: the drawn camera trails the goal, never overshoots it,
+    // and settles exactly on it.
+    let scene = cnn_view(0, 0, 0u, 0u, 0u, 0u, 0u, 0u, [f32](VIEW_ROOT_WORDS), [f32](16), [f64](13))
+    cnn_view_reset_camera(scene)
+    scene.camera[8] = 100.0
+    assert cnn_view_ease_camera(scene, 1.0 / 60.0)
+    assert scene.camera[2] > 0.0 && scene.camera[2] < 100.0
+    let previous = scene.camera[2]
+    assert cnn_view_ease_camera(scene, 10.0)
+    assert scene.camera[2] > previous && scene.camera[2] < 100.0
+    let frames = 0
+    loop cnn_view_ease_camera(scene, 1.0 / 60.0) { frames = frames + 1 }
+    assert frames < 120
+    for index in 0 to 6 { assert scene.camera[index] == scene.camera[index + 6] }
+    assert !cnn_view_ease_camera(scene, 1.0 / 60.0)
+    print(`CNN view: {VIEW_INSTANCES} smooth neuron cubes, {VIEW_LINKS} connections, weight grays, shader targets passed\n`)
 }

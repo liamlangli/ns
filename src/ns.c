@@ -77,7 +77,6 @@ typedef struct ns_compile_option_t {
     ns_bool profile: 2; // write a profile and print a colored hot-path summary
     ns_bool profile_cmd: 2; // `ns profile [path]` - CLI run with profiling
     ns_bool profile_view: 2; // `ns profiler [file]` - open the GUI viewer
-    ns_bool lens_view: 2; // `ns lens [path]` - open the ns_lens code map
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
@@ -148,8 +147,6 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.profile = true;
         } else if (i == 1 && strcmp(argv[i], "profiler") == 0) {
             option.profile_view = true;
-        } else if (i == 1 && strcmp(argv[i], "lens") == 0) {
-            option.lens_view = true;
         } else if (i == 1 && strcmp(argv[i], "lint") == 0) {
             option.lint = true;
         } else if (i == 1 && (strcmp(argv[i], "lint_fix") == 0 || strcmp(argv[i], "lint-fix") == 0)) {
@@ -340,8 +337,8 @@ void ns_help() {
     printf("                    --device [name|usb|wifi|host:port] profiles a Debug app\n");
     printf("                    running on a device, over USB or the local network\n");
     printf("                    --devices lists the devices that can be reached\n");
-    printf("  lens [path]       open the ns_lens code map of a project directory\n");
-    printf("                    (default: the current directory)\n");
+    printf("  <app> [args...]   any other word that names no file opens the installed\n");
+    printf("                    nscode app ns_<app> or <app> beside ns (`ns lens`, `ns nn`)\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("                    --cpu runs each entry on the ns_cpu interpreter\n");
     printf("  build [path|target] compile and link a script/module to an executable or static lib\n");
@@ -3805,7 +3802,7 @@ static i32 ns_cook_command(i32 argc, const char **argv) {
         ns_str self = ns_project_current_executable();
         ns_str directory = ns_path_dirname_safe(self);
         ns_str launcher = ns_path_join(directory, ns_str_cstr("ns_tex"));
-        if (access(launcher.data, X_OK)) ns_exit(1, "cook", "missing ns_tex beside ns; run make ns_tex or make install.\n");
+        if (access(launcher.data, X_OK)) ns_exit(1, "cook", "missing ns_tex beside ns; run make or make install.\n");
         ns_str command = ns_str_null;
         ns_str_append_cstr(&command, "NS_EXECUTABLE=");
         ns_str quoted = ns_shell_quote(self);
@@ -5984,7 +5981,6 @@ typedef struct ns_tool_app {
 } ns_tool_app;
 
 static const ns_tool_app ns_tool_profiler = {"nscode-profile", "nscode/profile", "main.ns"};
-static const ns_tool_app ns_tool_lens = {"ns_lens", "nscode/ns_lens", "src/main.ns"};
 
 // The executable inside a built app: the Darwin bundle's binary, or the
 // artifact itself (a Linux AppImage).
@@ -6202,37 +6198,6 @@ static void ns_exec_profile_live(ns_str filename) {
 }
 
 static void ns_setenv(const char *name, const char *value);
-
-// `ns lens [path]`: open the ns_lens code map of a project directory. The app
-// enters its own resource directory on launch, so the directory travels
-// resolved, as the program argument NS_ARG0 it reads.
-static void ns_exec_lens(ns_str filename) {
-    ns_str cwd = ns_getcwd();
-    ns_str root = filename.len > 0 ? ns_path_resolve(cwd, filename) : ns_str_concat(cwd, ns_str_cstr(""));
-    if (!ns_is_dir(root)) {
-        ns_exit(1, "lens", "not a directory: %.*s\n", root.len, root.data);
-    }
-    ns_setenv("NS_ARGC", "1");
-    ns_setenv("NS_ARG0", root.data);
-    ns_str compiled = ns_tool_find_compiled(&ns_tool_lens);
-    if (compiled.data != ns_null) {
-        ns_info("lens", "opening %.*s\n", root.len, root.data);
-        if (!ns_tool_launch_compiled(&ns_tool_lens, compiled)) {
-            ns_warn("lens", "failed to launch %.*s\n", compiled.len, compiled.data);
-        }
-        ns_str_free(compiled);
-    } else {
-        ns_str app = ns_tool_find_source(&ns_tool_lens);
-        if (app.data == ns_null) {
-            ns_exit(1, "lens", "ns_lens not found; build it with `make lens` or `ns build nscode/ns_lens`\n");
-        }
-        ns_info("lens", "building and opening ns_lens for %.*s\n", root.len, root.data);
-        ns_exec_run(app, 0, false, true);
-        ns_str_free(app);
-    }
-    ns_str_free(root);
-    ns_str_free(cwd);
-}
 
 static void ns_exec_profile_view(ns_str filename) {
     // Resolve against the caller's cwd before launch. The compiled .app may
@@ -7175,10 +7140,183 @@ static void ns_publish_program_args(i32 argc, i8 **argv) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// `ns <word> [args...]`: installed nscode apps
+// ---------------------------------------------------------------------------
+
+// The first words parse_options reads as commands. Any other first word that
+// names no file is looked up as an installed app before it fails as a script.
+static const char *ns_command_words[] = {
+    "run", "test", "build", "clean", "project", "init", "create", "update",
+    "patch", "profile", "profiler", "lint", "lint_fix", "lint-fix", "cook",
+};
+
+#if !defined(_WIN32)
+#define NS_APP_PATH_MAX 4096
+
+// What `ns <word>` opens: a compiled app (a Darwin bundle, whose program is
+// `exe`, or an executable file) or, without one, an app's source project.
+typedef struct ns_app_hit {
+    char exe[NS_APP_PATH_MAX];
+    ns_bool bundle;
+    ns_bool source;
+} ns_app_hit;
+
+static ns_bool ns_app_executable_file(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode) && access(path, X_OK) == 0;
+}
+
+// The program of a Darwin bundle: Contents/MacOS/<name>, else the first
+// executable there (an app's program is named after its manifest).
+static ns_bool ns_app_bundle_executable(const char *bundle, const char *name, char *out) {
+    char macos[NS_APP_PATH_MAX];
+    snprintf(macos, sizeof(macos), "%s/Contents/MacOS", bundle);
+    snprintf(out, NS_APP_PATH_MAX, "%s/%s", macos, name);
+    if (ns_app_executable_file(out)) return true;
+    DIR *dir = opendir(macos);
+    if (!dir) return false;
+    ns_bool found = false;
+    struct dirent *entry;
+    while (!found && (entry = readdir(dir)) != ns_null) {
+        if (entry->d_name[0] == '.') continue;
+        snprintf(out, NS_APP_PATH_MAX, "%s/%s", macos, entry->d_name);
+        found = ns_app_executable_file(out);
+    }
+    closedir(dir);
+    return found;
+}
+
+// Look for ns_<word>, then <word>: compiled beside this ns (where `make` and
+// `make install` put every nscode app), then as a source project under the
+// install share directory or the checkout's nscode directory.
+static ns_bool ns_app_find(const char *word, ns_app_hit *hit) {
+    ns_str self = ns_project_current_executable();
+    if (self.data == ns_null) return false;
+    ns_str bin = ns_path_dirname_safe(self);
+    ns_str root = ns_path_parent(bin);
+    char names[2][NS_APP_PATH_MAX];
+    snprintf(names[0], sizeof(names[0]), "ns_%s", word);
+    snprintf(names[1], sizeof(names[1]), "%s", word);
+    char path[NS_APP_PATH_MAX];
+    ns_bool found = false;
+    memset(hit, 0, sizeof(*hit));
+    for (i32 i = 0; i < 2 && !found; i++) {
+#if defined(NS_DARWIN)
+        snprintf(path, sizeof(path), "%.*s/%s.app", bin.len, bin.data, names[i]);
+        if (ns_is_dir(ns_str_cstr(path)) && ns_app_bundle_executable(path, names[i], hit->exe)) {
+            hit->bundle = true;
+            found = true;
+            break;
+        }
+#endif
+        snprintf(path, sizeof(path), "%.*s/%s.AppImage", bin.len, bin.data, names[i]);
+        if (!ns_app_executable_file(path)) {
+            snprintf(path, sizeof(path), "%.*s/%s", bin.len, bin.data, names[i]);
+        }
+        // `ns ns` must not start this executable again.
+        if (ns_app_executable_file(path) && strcmp(path, self.data) != 0) {
+            snprintf(hit->exe, sizeof(hit->exe), "%s", path);
+            found = true;
+        }
+    }
+    const char *sources[2] = {"share/nscode", "nscode"};
+    for (i32 i = 0; i < 2 && !found; i++) {
+        for (i32 j = 0; j < 2 && !found; j++) {
+            snprintf(path, sizeof(path), "%.*s/%s/%s/ns.mod", root.len, root.data, sources[j], names[i]);
+            if (ns_file_exists(ns_str_cstr(path))) {
+                snprintf(hit->exe, sizeof(hit->exe), "%.*s/%s/%s", root.len, root.data, sources[j], names[i]);
+                hit->source = true;
+                found = true;
+            }
+        }
+    }
+    ns_str_free(root);
+    ns_str_free(bin);
+    ns_str_free(self);
+    return found;
+}
+
+// Open `argv[0]` as an installed app with the rest of argv as its arguments,
+// or return -1 when no app has that name. An app bundle enters its own
+// resource directory, so an argument naming an existing path travels
+// absolute. The arguments are also published as NS_ARGC / NS_ARG0... for an
+// ns program, which reads them through os_env.
+static i32 ns_exec_installed_app(i32 argc, i8 **argv) {
+    const char *word = argv[0];
+    if (!word || !word[0] || word[0] == '-' || strchr(word, '/') != ns_null) return -1;
+    for (size_t i = 0; i < sizeof(ns_command_words) / sizeof(ns_command_words[0]); i++) {
+        if (strcmp(word, ns_command_words[i]) == 0) return -1;
+    }
+    struct stat st;
+    if (stat(word, &st) == 0) return -1;
+    ns_app_hit hit;
+    if (!ns_app_find(word, &hit)) return -1;
+
+    i32 count = argc - 1;
+    i8 **args = (i8 **)calloc((size_t)argc + 1, sizeof(i8 *));
+    if (!args) return -1;
+    args[0] = hit.exe;
+    for (i32 i = 0; i < count; i++) {
+        char resolved[NS_APP_PATH_MAX];
+        const char *arg = argv[i + 1];
+        args[i + 1] = arg[0] != '-' && realpath(arg, resolved) ? strdup(resolved) : strdup(arg);
+    }
+    ns_publish_program_args(count, args + 1);
+    // An inherited NS_ARGn past the count would read as an argument.
+    for (i32 i = count; i < 64; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "NS_ARG%d", i);
+        unsetenv(name);
+    }
+    i32 code = 0;
+    if (hit.source) {
+        ns_info("app", "running %s\n", hit.exe);
+        ns_configure_vm_runtime_paths(&vm);
+        ns_exec_run(ns_str_cstr(hit.exe), 0, false, true);
+    } else if (hit.bundle) {
+        // A windowed app detaches so `ns` returns at once.
+        ns_info("app", "opening %s\n", hit.exe);
+        pid_t pid = fork();
+        if (pid == 0) {
+            if (fork() > 0) _exit(0);
+            setsid();
+            execv(hit.exe, (char *const *)args);
+            _exit(127);
+        }
+        int status = 0;
+        if (pid < 0 || waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            ns_warn("app", "failed to launch %s\n", hit.exe);
+            code = 1;
+        }
+    } else {
+        // A command-line app takes this process, its terminal and exit code.
+        fflush(stdout);
+        execv(hit.exe, (char *const *)args);
+        ns_warn("app", "failed to run %s: %s\n", hit.exe, strerror(errno));
+        code = 127;
+    }
+    for (i32 i = 1; i <= count; i++) free(args[i]);
+    free(args);
+    return code;
+}
+#else
+static i32 ns_exec_installed_app(i32 argc, i8 **argv) {
+    ns_unused(argc);
+    ns_unused(argv);
+    ns_unused(ns_command_words);
+    return -1;
+}
+#endif
+
 i32 main(i32 argc, i8** argv) {
     if (argc > 1 && strcmp(argv[1], "cook") == 0) {
         ns_configure_vm_runtime_paths(&vm);
         return ns_cook_command(argc - 2, (const char **)(argv + 2));
+    }
+    if (argc > 1) {
+        i32 code = ns_exec_installed_app(argc - 1, argv + 1);
+        if (code >= 0) return code;
     }
     ns_compile_option_t option = parse_options(argc, argv);
 
@@ -7222,9 +7360,7 @@ i32 main(i32 argc, i8** argv) {
 
     ns_configure_vm_runtime_paths(&vm);
 
-    if (option.lens_view) {
-        ns_exec_lens(option.filename);
-    } else if (option.profile_view) {
+    if (option.profile_view) {
         if (option.device_list) {
             return ns_profile_device_list();
         } else if (option.device_view) {

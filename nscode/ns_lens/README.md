@@ -9,8 +9,9 @@ ns lens [path]
 ```
 
 `make` builds the app to `bin/ns_lens.app` beside `ns`, and `make install`
-installs it with the source in `share/nscode/ns_lens`; without a compiled app,
-`ns lens` builds and runs this project. From the repository root it also runs
+installs it with the source in `share/nscode/ns_lens`. `ns lens` is no command
+of its own: `ns` opens the installed app named `ns_lens`, and without a
+compiled app it runs this project. From the repository root it also runs
 directly with `bin/ns run nscode/ns_lens /absolute/path/to/project`.
 
 Opened from Finder or the Dock, the app starts in its own resource directory

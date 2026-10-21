@@ -7,8 +7,8 @@ Apple texture cooking written in Nano Script. `ns_tex` reads the project's
 and Xcode; Python, Pillow and a separate astcenc installation are unnecessary.
 
 ```sh
-make ns_tex                  # bin/ns_tex, alongside bin/ns
-make install-ns_tex          # install launcher and .ns sources into the SDK
+make                         # bin/ns_tex, alongside bin/ns
+make install                 # install launcher and .ns sources into the SDK
 bin/ns_tex /absolute/project ios /absolute/project/bin/resources
 bin/ns_tex /absolute/project macosx /absolute/project/bin/mac-resources
 ```

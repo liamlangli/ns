@@ -1,0 +1,43 @@
+// A held terminal key repeats after the delay, at most once per frame, and
+// stops on release; keys outside the repeat set fire only on their press.
+use view
+
+fn main() {
+    let v = view_create("terminal repeat test", 200, 200)
+    view_on_key_action(v, 259, 0)
+    assert terminal_key_at(v, 259, 10.0)
+    assert terminal_repeating()
+    assert terminal_key_at(v, 259, 10.1) == false
+    assert terminal_key_at(v, 259, 10.39) == false
+    assert terminal_key_at(v, 259, 10.4)
+    assert terminal_key_at(v, 259, 10.41) == false
+    assert terminal_key_at(v, 259, 10.434)
+    // A long frame yields one repeat, not a burst.
+    assert terminal_key_at(v, 259, 11.0)
+    assert terminal_key_at(v, 259, 11.001) == false
+    // Another key does not repeat the held one.
+    assert terminal_key_at(v, 262, 12.0) == false
+    view_on_key_action(v, 259, 1)
+    assert terminal_key_at(v, 259, 12.0) == false
+    assert terminal_repeating() == false
+
+    // Enter is not repeated.
+    view_on_key_action(v, 257, 0)
+    assert terminal_key_at(v, 257, 20.0)
+    assert terminal_repeating() == false
+    assert terminal_key_at(v, 257, 21.0) == false
+    view_on_key_action(v, 257, 1)
+    view_input_reset(v)
+
+    // Printable keys repeat with the modifiers of their press.
+    view_on_key_action(v, 65, 0)
+    assert terminal_key_at(v, 65, 30.0)
+    g_key_event_mods = 7
+    assert terminal_key_at(v, 65, 30.5)
+    assert g_key_event_mods == g_term_repeat_mods
+    terminal_repeat_stop()
+    assert terminal_key_at(v, 65, 31.0) == false
+    view_on_key_action(v, 65, 1)
+    view_close(v)
+    print("terminal repeat: passed\n")
+}

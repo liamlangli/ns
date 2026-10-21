@@ -429,6 +429,22 @@ ref fn ui_atlas_height(r: ref ui_renderer, atlas: i32) i32
 ref fn ui_atlas_draw(r: ref ui_renderer, atlas: i32, x: f64, y: f64, w: f64, h: f64)
 ref fn ui_atlas_draw_region(r: ref ui_renderer, atlas: i32, x: f64, y: f64, w: f64, h: f64, atlas_x: f64, atlas_y: f64, atlas_w: f64, atlas_h: f64, rgba: u32)
 
+// Previews: small copies of image files in one renderer-owned texture. A
+// load decodes the file, shrinks it to fit a UI_PREVIEW_CELL square (smaller
+// images keep their size) and composes it into a free cell; the next flush
+// uploads the changed texture. Every preview samples that same texture, so
+// any number of them on screen stay in one ubershader draw. A load returns a
+// preview id, or 0 when the file does not decode or all UI_PREVIEW_SLOTS
+// cells are taken; release ids that are no longer drawn. Width and height
+// are the source image's.
+lit UI_PREVIEW_CELL = 256
+lit UI_PREVIEW_SLOTS = 64
+ref fn ui_preview_load(r: ref ui_renderer, path: str) i32
+ref fn ui_preview_release(r: ref ui_renderer, preview: i32)
+ref fn ui_preview_width(r: ref ui_renderer, preview: i32) i32
+ref fn ui_preview_height(r: ref ui_renderer, preview: i32) i32
+ref fn ui_preview_draw(r: ref ui_renderer, preview: i32, x: f64, y: f64, w: f64, h: f64, rgba: u32)
+
 // Place a child of child_w/child_h inside a container rect using UI_ALIGN_* flags.
 ref fn ui_layout(x: f64, y: f64, w: f64, h: f64, child_w: f64, child_h: f64, align: i32) ref ui_rect
 

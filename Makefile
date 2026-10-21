@@ -292,8 +292,8 @@ NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
 NS_DIRS = bin bin/src bin/lib
 
 ifeq ($(NS_OS), $(NS_DARWIN))
-all: $(NS_DIRS) $(TARGET) $(NS_LIB) std profiler lens ns_tex
-test: ns_tex
+all: $(NS_DIRS) $(TARGET) $(NS_LIB) std apps
+test: apps
 else ifeq ($(NS_OS), $(NS_LINUX))
 all: $(NS_DIRS) $(TARGET) $(NS_LIB) std $(NS_APPIMAGE_RUNTIME)
 test: $(NS_APPIMAGE_RUNTIME)
@@ -304,31 +304,15 @@ endif
 all:
 	$(call ns_say,DONE,$(TARGET)$(NS_SUFFIX) and feature modules ready)
 
-.PHONY: profiler
-profiler: $(TARGET) std
-	$(Q)$(call ns_step,BUILD,nscode/profile,quiet) $(CURDIR)/$(TARGET)$(NS_SUFFIX) build $(CURDIR)/nscode/profile
-	$(Q)$(NS_RMDIR) $(NS_BINDIR)/nscode-profile.app
-	$(Q)$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_BINDIR)/nscode-profile.app
+.PHONY: apps install-apps
+# Every nscode project with an ns.mod is an app: `make` builds each one beside
+# bin/ns and `make install` installs it, so `ns <word>` (`ns lens`, `ns nn`)
+# finds it as ns_<word> or <word> (scripts/nscode_apps.sh).
+apps: $(TARGET) std
+	$(Q)sh scripts/nscode_apps.sh build $(CURDIR)/$(TARGET)$(NS_SUFFIX) $(CURDIR)/$(NS_BINDIR)
 
-# `ns lens` opens this compiled code map (bin/ns_lens.app beside ns).
-.PHONY: lens
-lens: $(TARGET) std
-	$(Q)$(call ns_step,BUILD,nscode/ns_lens,quiet) $(CURDIR)/$(TARGET)$(NS_SUFFIX) build $(CURDIR)/nscode/ns_lens
-	$(Q)$(NS_RMDIR) $(NS_BINDIR)/ns_lens.app
-	$(Q)$(NS_CP) nscode/ns_lens/bin/ns_lens.app $(NS_BINDIR)/ns_lens.app
-
-# The launcher locates its .ns project in the checkout or installed SDK.
-.PHONY: ns_tex install-ns_tex
-ns_tex: $(TARGET) std
-	$(Q)cp nscode/ns_tex/ns_tex $(NS_BINDIR)/ns_tex
-	$(Q)chmod +x $(NS_BINDIR)/ns_tex
-
-install-ns_tex: ns_tex
-	$(Q)$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/share/nscode/ns_tex/src
-	$(Q)cp nscode/ns_tex/ns.mod $(NS_INSTALL_ROOT)/share/nscode/ns_tex/
-	$(Q)cp nscode/ns_tex/src/*.ns $(NS_INSTALL_ROOT)/share/nscode/ns_tex/src/
-	$(Q)cp nscode/ns_tex/ns_tex $(NS_INSTALL_ROOT)/bin/ns_tex
-	$(Q)chmod +x $(NS_INSTALL_ROOT)/bin/ns_tex
+install-apps: $(TARGET) std
+	$(Q)sh scripts/nscode_apps.sh install $(CURDIR)/$(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)
 
 $(NS_DIRS):
 	$(Q)$(NS_MKDIR) $(NS_DIRS)
@@ -424,6 +408,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_lint_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_run_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	sh test/ns_app_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_patch_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_build_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_parity_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -497,8 +482,7 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/src $(NS_INSTALL_ROOT)/share/ns-runtime/include \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include $(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets \
-		$(NS_INSTALL_ROOT)/share/licenses/zlib \
-		$(NS_INSTALL_ROOT)/share/nscode/profile $(NS_INSTALL_ROOT)/share/nscode/ns_lens/src
+		$(NS_INSTALL_ROOT)/share/licenses/zlib
 	$(Q)cp $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new
 	$(Q)mv -f $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX)
 	$(Q)$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
@@ -506,7 +490,7 @@ install: all
 	$(Q)cp lib/ns-cook.py $(NS_INSTALL_ROOT)/ref/ns-cook.py
 	$(Q)if [ -f bin/astcenc ]; then cp bin/astcenc $(NS_INSTALL_ROOT)/bin/astcenc; fi
 	$(Q)cp sample/ns.svg $(NS_INSTALL_ROOT)/ref/ns.svg
-	$(Q)$(MAKE) install-ns_tex
+	$(Q)$(MAKE) install-apps
 	$(Q)$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
 	$(Q)cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
 	$(Q)cp $(NS_NATIVE_RT_OBJ) $(NS_INSTALL_ROOT)/lib/ns_native_rt.o
@@ -533,21 +517,6 @@ install: all
 		lib/assets/bitmap_zh_cn.json lib/assets/bitmap_zh_cn.png \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets/
 	$(Q)cp third_party/zlib/LICENSE $(NS_INSTALL_ROOT)/share/licenses/zlib/LICENSE
-	$(Q)cp nscode/profile/ns.mod nscode/profile/main.ns nscode/profile/live.ns $(NS_INSTALL_ROOT)/share/nscode/profile/
-	$(Q)if [ -d nscode/profile/bin/nscode-profile.app ]; then \
-		$(NS_RMDIR) $(NS_INSTALL_ROOT)/share/nscode/profile/nscode-profile.app; \
-		$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_INSTALL_ROOT)/share/nscode/profile/nscode-profile.app; \
-		$(NS_RMDIR) $(NS_INSTALL_ROOT)/bin/nscode-profile.app; \
-		$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_INSTALL_ROOT)/bin/nscode-profile.app; \
-	fi
-	$(Q)cp nscode/ns_lens/ns.mod nscode/ns_lens/icon.png $(NS_INSTALL_ROOT)/share/nscode/ns_lens/
-	$(Q)cp nscode/ns_lens/src/*.ns $(NS_INSTALL_ROOT)/share/nscode/ns_lens/src/
-	$(Q)if [ -d nscode/ns_lens/bin/ns_lens.app ]; then \
-		$(NS_RMDIR) $(NS_INSTALL_ROOT)/share/nscode/ns_lens/ns_lens.app; \
-		$(NS_CP) nscode/ns_lens/bin/ns_lens.app $(NS_INSTALL_ROOT)/share/nscode/ns_lens/ns_lens.app; \
-		$(NS_RMDIR) $(NS_INSTALL_ROOT)/bin/ns_lens.app; \
-		$(NS_CP) nscode/ns_lens/bin/ns_lens.app $(NS_INSTALL_ROOT)/bin/ns_lens.app; \
-	fi
 	$(Q)find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec sh -c '\
 		for ns_lib_file do ns_lib_name=$$(basename "$$ns_lib_file"); \
 			cp "$$ns_lib_file" "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name.new"; \

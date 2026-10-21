@@ -43,4 +43,18 @@ fn main() {
     g_workspace_generation = g_workspace_generation + 1
     g_lens_frame_delay = LENS_IDLE_POLL_MS
     assert lens_frame_due(10.1, true, false, false)
+    g_workspace_generation = g_lens_generation
+    g_lens_frame_time = 10.0
+    g_lens_poll_time = 10.0
+    g_lens_input_time = 10.0
+    assert lens_input_recent(10.5)
+    assert lens_frame_due(10.001, true, false, false)
+    assert lens_poll_due(10.001, true)
+    assert lens_poll_due(10.001, false) == false
+    assert lens_frame_due(10.001, false, false, false) == false
+    assert lens_input_recent(14.9)
+    assert lens_input_recent(15.1) == false
+    g_lens_frame_time = 15.0
+    assert lens_frame_due(15.1, true, false, false) == false
+    assert lens_input_recent(9.0) == false
 }

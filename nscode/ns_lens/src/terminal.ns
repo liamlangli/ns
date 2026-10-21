@@ -1471,6 +1471,59 @@ fn terminal_paste(v: ref view) {
     }
 }
 
+// The view reports a held key once, so the terminal repeats editing,
+// arrow and printable keys itself: after a delay, then at a steady rate.
+lit TERM_REPEAT_DELAY: f64 = 0.4
+lit TERM_REPEAT_INTERVAL: f64 = 0.033
+let g_term_repeat_key: i32 = -1
+let g_term_repeat_mods: i32 = 0
+let g_term_repeat_time: f64 = 0.0
+
+fn terminal_repeatable(k: i32) bool {
+    return (k >= 32 && k < 97) || k == 259 || (k >= 261 && k <= 265)
+}
+
+fn terminal_repeat_stop() {
+    g_term_repeat_key = -1
+}
+
+fn terminal_repeating() bool {
+    return g_term_repeat_key >= 0
+}
+
+// A fresh press of `k`, or a repeat of the key held since its last press.
+fn terminal_key_at(v: ref view, k: i32, now: f64) bool {
+    if key_edge(v, k) {
+        if terminal_repeatable(k) {
+            g_term_repeat_key = k
+            g_term_repeat_mods = g_key_event_mods
+            g_term_repeat_time = now + TERM_REPEAT_DELAY
+        }
+        return true
+    }
+    if k != g_term_repeat_key {
+        return false
+    }
+    if view_is_key_pressed(v, k) == false {
+        terminal_repeat_stop()
+        return false
+    }
+    if now < g_term_repeat_time {
+        return false
+    }
+    // One repeat per frame; a slow frame does not release a burst.
+    g_term_repeat_time = g_term_repeat_time + TERM_REPEAT_INTERVAL
+    if g_term_repeat_time < now {
+        g_term_repeat_time = now + TERM_REPEAT_INTERVAL
+    }
+    g_key_event_mods = g_term_repeat_mods
+    return true
+}
+
+fn terminal_key(v: ref view, k: i32) bool {
+    return terminal_key_at(v, k, os_time())
+}
+
 fn terminal_keys(v: ref view) {
     if g_terminal_handle <= 0 {
         return
@@ -1521,25 +1574,25 @@ fn terminal_keys(v: ref view) {
             send = send + "\t"
         }
     }
-    if key_edge(v, 259) {
+    if terminal_key(v, 259) {
         send = send + "\u{7f}"
     }
     if key_edge(v, 260) {
         send = send + "\u{1b}[2~"
     }
-    if key_edge(v, 261) {
+    if terminal_key(v, 261) {
         send = send + "\u{1b}[3~"
     }
-    if key_edge(v, 262) {
+    if terminal_key(v, 262) {
         send = send + terminal_arrow("C")
     }
-    if key_edge(v, 263) {
+    if terminal_key(v, 263) {
         send = send + terminal_arrow("D")
     }
-    if key_edge(v, 264) {
+    if terminal_key(v, 264) {
         send = send + terminal_arrow("B")
     }
-    if key_edge(v, 265) {
+    if terminal_key(v, 265) {
         send = send + terminal_arrow("A")
     }
     if key_edge(v, 266) {
@@ -1583,7 +1636,7 @@ fn terminal_keys(v: ref view) {
     }
     // Printable keys. Control and alt modify the byte that is sent.
     for k in 32 to 97 {
-        if key_edge(v, k) {
+        if terminal_key(v, k) {
             let shift = key_event_shift()
             let alt = (g_key_event_mods & 4) != 0
             let ctrl = (g_key_event_mods & 2) != 0

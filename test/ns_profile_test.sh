@@ -18,12 +18,14 @@ if [ ! -f "$root/nscode/profile/ns.mod" ] || [ ! -f "$root/nscode/profile/main.n
     printf '%s\n' 'FAIL: nscode/profile viewer sources are missing.' >&2
     exit 1
 fi
-if ! grep -q 'share/nscode/profile' "$root/Makefile"; then
-    printf '%s\n' 'FAIL: make install does not install nscode/profile.' >&2
+# nscode/profile is one of the nscode apps `make` builds and `make install`
+# installs, with its whole source, through scripts/nscode_apps.sh.
+if ! grep -q 'nscode_apps.sh build' "$root/Makefile" || ! grep -q 'nscode_apps.sh install' "$root/Makefile"; then
+    printf '%s\n' 'FAIL: Makefile does not build and install the nscode apps.' >&2
     exit 1
 fi
-if ! grep -q 'nscode/profile' "$root/Makefile" || ! grep -q 'profiler:' "$root/Makefile"; then
-    printf '%s\n' 'FAIL: Makefile does not compile nscode/profile via ns build.' >&2
+if ! grep -q 'nscode/\*/ns.mod' "$root/scripts/nscode_apps.sh" || ! grep -q 'share/nscode/' "$root/scripts/nscode_apps.sh"; then
+    printf '%s\n' 'FAIL: make install does not install nscode/profile.' >&2
     exit 1
 fi
 if [ "$(uname -s)" = Darwin ]; then
@@ -53,10 +55,6 @@ if ! "$ns" --help | grep -q '\-\-live-port'; then
 fi
 if [ ! -f "$root/nscode/profile/live.ns" ]; then
     printf '%s\n' 'FAIL: nscode/profile/live.ns is missing.' >&2
-    exit 1
-fi
-if ! grep -q 'nscode/profile/live.ns' "$root/Makefile"; then
-    printf '%s\n' 'FAIL: make install does not install nscode/profile/live.ns.' >&2
     exit 1
 fi
 if "$ns" --help | grep -q 'profile view'; then

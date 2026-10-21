@@ -82,11 +82,20 @@ The common commands are:
   advertises `_nsprofile._tcp`; the viewer reaches it over USB (usbmuxd) or
   the local network and relays it like a live session. Collection runs only
   while a viewer is connected. `ns profiler --devices` lists reachable devices.
-- `ns lens [path]`: open ns_lens, a zoomable code map of a project directory
-  (default: the current directory): folders as frames, files as leaves whose
-  syntax-highlighted code scales with the camera, editable up close.
-  `make` / `make install` build it with `ns build nscode/ns_lens`; without a
-  compiled app, `ns lens` builds and runs the source project.
+- `ns <app> [args...]`: a first word that is no command and names no file
+  opens the installed app `ns_<app>`, else `<app>`, before it would fail as a
+  script. `make` builds every `nscode/` project with an `ns.mod` beside
+  `bin/ns` and `make install` installs each one into the SDK `bin/` with its
+  source in `share/nscode/<project>`. A compiled app is preferred: a Darwin
+  `.app` opens detached, an executable or AppImage takes over the terminal;
+  without one the source project runs as `ns run` would. The arguments follow
+  as the app's argv and as `NS_ARGC` / `NS_ARG0`...; one naming an existing
+  path travels absolute. Only when nothing matches does the script error
+  appear.
+- `ns lens [path]`: open ns_lens (an installed app, as above), a zoomable code
+  map of a project directory (default: the current directory): folders as
+  frames, files as leaves whose syntax-highlighted code scales with the
+  camera, editable up close. `ns nn` opens the MNIST digit recognizer.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported. In a

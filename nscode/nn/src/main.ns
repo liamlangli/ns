@@ -13,7 +13,7 @@ lit APP_TEXT_PX: f64 = 12.0
 
 // Replaced by the GPU engine once main has a device; nothing runs before that.
 let app_engine = cnn_engine(true, true, [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](0), [f32](16), [u64](CNN_STORAGE), [u32](CNN_PROGRAMS), [i32](2), [f32](0), [bool](1))
-let app_view = cnn_view(0, 0, 0u, 0u, 0u, 0u, [f32](VIEW_ROOT_WORDS), [f32](16), [f64](6))
+let app_view = cnn_view(0, 0, 0u, 0u, 0u, 0u, 0u, 0u, [f32](VIEW_ROOT_WORDS), [f32](16), [f64](6))
 let app_model = "untrained: initial weights"
 
 // ns_lens palette: near-black surfaces, gray text, white accents.

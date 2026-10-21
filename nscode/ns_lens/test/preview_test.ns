@@ -1,0 +1,84 @@
+// The preview cache loads one picture per frame, finds a loaded one again,
+// skips files that do not decode, and evicts the preview drawn longest ago.
+use std
+use os
+use view
+use gpu
+use ui
+
+fn sample_path(k: i32) str {
+    let path = "../../sample/"
+    for i in 0 to k {
+        path = path + "./"
+    }
+    return path + "ns.png"
+}
+
+fn cached(path: str) bool {
+    for slot in 0 to UI_PREVIEW_SLOTS {
+        if g_lens_preview_id[slot] > 0 && g_lens_preview_path[slot] == path {
+            return true
+        }
+    }
+    return false
+}
+
+fn main() i32 {
+    assert lens_preview_kind("a/b.png")
+    assert lens_preview_kind("a/B.PNG")
+    assert lens_preview_kind("a/b.pngx") == false
+    assert lens_preview_kind("png") == false
+    assert lens_preview_kind("a/b.jpg") == false
+    if os_file_size(sample_path(0)) <= 0 {
+        print("preview: skip, no sample image\n")
+        return 0
+    }
+    let v = view_create("preview test", 320, 200)
+    if !gpu_request_device(v) {
+        view_close(v)
+        return 0
+    }
+    let r = ui_renderer_create(v)
+
+    lens_preview_frame(r, 1)
+    let first = lens_preview_get(r, sample_path(0))
+    assert first > 0
+    assert ui_preview_width(r, first) > 0 && ui_preview_height(r, first) > 0
+    assert lens_preview_get(r, sample_path(0)) == first
+    // The frame's one load is spent; the next file waits and asks for a frame.
+    g_lens_input_dirty = false
+    assert lens_preview_get(r, sample_path(1)) == 0
+    assert g_lens_input_dirty
+
+    // A file that does not decode is not retried.
+    lens_preview_frame(r, 1)
+    assert lens_preview_get(r, "ns.mod") == 0
+    assert has(g_lens_preview_failed, "ns.mod")
+    lens_preview_frame(r, 1)
+    assert lens_preview_get(r, "ns.mod") == 0
+    assert lens_preview_get(r, sample_path(1)) > 0
+
+    // Fill every cell, one load per frame, then one more file takes the cell
+    // of the preview drawn longest ago.
+    for k in 2 to UI_PREVIEW_SLOTS {
+        lens_preview_frame(r, 1)
+        assert lens_preview_get(r, sample_path(k)) > 0
+    }
+    lens_preview_frame(r, 1)
+    assert lens_preview_get(r, sample_path(0)) == first
+    lens_preview_frame(r, 1)
+    assert lens_preview_get(r, sample_path(UI_PREVIEW_SLOTS)) > 0
+    assert cached(sample_path(0))
+    assert cached(sample_path(1)) == false
+    assert cached(sample_path(UI_PREVIEW_SLOTS))
+
+    // A workspace change keeps previews whose files are unchanged.
+    lens_preview_frame(r, 2)
+    assert cached(sample_path(0))
+    assert g_lens_preview_failed_count == 0
+
+    ui_renderer_destroy(r)
+    view_close(v)
+    print("preview: passed\n")
+    return 0
+}

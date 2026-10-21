@@ -703,6 +703,24 @@ io_image* io_load_image(const char *path) {
     return img;
 }
 
+// io_load_image for files that may not be images at all, such as previews of
+// whatever a project holds: a file that does not decode returns NULL
+// instead of reporting an error. Free the result as io_load_image's.
+io_image* io_try_load_image(const char *path) {
+    if (!path || !path[0]) return NULL;
+    io_image *img = (io_image*)ns_malloc(sizeof(io_image));
+    if (img == NULL) return NULL;
+    img->width = 0;
+    img->height = 0;
+    img->channels = 0;
+    img->data = stbi_load(path, &img->width, &img->height, &img->channels, 0);
+    if (img->data == NULL) {
+        ns_free(img);
+        return NULL;
+    }
+    return img;
+}
+
 i32 io_image_copy_data(const io_image *img, u8 *values, i32 capacity) {
     if (!img || !img->data || !values || img->width <= 0 || img->height <= 0 || img->channels <= 0) return 0;
     const i64 count = (i64)img->width * img->height * img->channels;

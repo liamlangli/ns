@@ -998,6 +998,19 @@ fn lens_draw_plain_leaf(r: ref ui_renderer, v: ref view, i: i32, w: f64, top: f6
     } else if content.w > 1.0 && content.h > 1.0 {
         ui_fill_rect(r, content.x, content.y, content.w, content.h, col_editor_panel_hi(), 0.0)
     }
+    // A PNG on the change and full maps shows its picture under the name.
+    if g_lens_view_mode == LENS_MODE_CHANGE || g_lens_view_mode == LENS_MODE_FULL {
+        let name_px = lens_name_px(leaf.w, leaf.h, ui_text_width(r, g_lens_names[i], 10.0, FONT_MONO()))
+        let band: f64 = 0.0
+        if name_px > 0.0 {
+            band = name_px * 1.5 + 2.0
+        }
+        let pad = clamp(pw * 0.04, 2.0, 24.0)
+        if ph < pw {
+            pad = clamp(ph * 0.04, 2.0, 24.0)
+        }
+        lens_preview_draw(r, i, px + pad, py + pad + band, pw - pad * 2.0, ph - pad * 2.0 - band)
+    }
     // A file without code never shows glyphs, so it keeps the large name.
     lens_draw_far_name(r, content, g_lens_names[i], i == g_lens_selected)
     lens_draw_search_mark(r, i, leaf, on_screen)
@@ -1266,6 +1279,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let bars_total: i32 = 0
     let code_ready: i32 = 0
     let code_total: i32 = 0
+    lens_preview_frame(r, g_workspace_generation)
     for i in 0 to g_workspace_count {
         g_lens_on_screen[i] = 0
         if !lens_ref_visible(i) { continue }

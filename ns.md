@@ -175,7 +175,7 @@ With filename and no analysis/emit flag, it evaluates and prints result.
 
 ### Profile viewer (`nscode/profile/`)
 - The GUI timeline viewer, written in ns and compiled by
-  `make profiler` (`ns build nscode/profile`).
+  `make` (`ns build nscode/profile`, like every nscode app).
 - `live.ns` owns a live session: the loopback listener, the profiled child
   process, the wire protocol, and the 128-frame ring. It is
   rendering-agnostic.

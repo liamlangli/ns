@@ -40,6 +40,14 @@
 #define UI_FONT_ZH_TEXTURE (UI_MAX_TEXTURES + 3)
 #define UI_FONT_BITMAP_TEXTURE (UI_MAX_TEXTURES + 4)
 #define UI_FONT_BITMAP_ZH_TEXTURE (UI_MAX_TEXTURES + 5)
+// The shared preview texture (ui_preview_load): every preview lives in one
+// cell of it, so any number of previews draw in one ubershader run.
+#define UI_PREVIEW_TEXTURE (UI_MAX_TEXTURES + 6)
+#define UI_PREVIEW_SIZE 2048
+#define UI_PREVIEW_CELL 256
+#define UI_PREVIEW_COLUMNS (UI_PREVIEW_SIZE / UI_PREVIEW_CELL)
+#define UI_PREVIEW_SLOTS (UI_PREVIEW_COLUMNS * UI_PREVIEW_COLUMNS)
+#define UI_PREVIEW_RETIRED 4
 #define UI_KIND_IMAGE 0
 #define UI_KIND_MSDF 1
 #define UI_KIND_ARC_SDF 2
@@ -93,6 +101,8 @@ typedef struct io_image {
 } io_image;
 
 extern io_image *io_load_image(const char *path);
+extern io_image *io_try_load_image(const char *path);
+extern void io_image_destroy(io_image *img);
 
 #define UI_PATH_MAX 4096
 
@@ -388,6 +398,21 @@ typedef struct ui_renderer {
     u32 render_state_hud;
     u32 textures[UI_MAX_TEXTURES];
     i32 texture_widths[UI_MAX_TEXTURES];
+    // Previews are composed on the CPU into preview_pixels, one cell each,
+    // and the whole image goes up as a fresh texture on the next flush after
+    // a change; the texture it replaces may still be read by a frame in
+    // flight, so it is retired a few frames later.
+    u8 *preview_pixels;
+    ns_bool preview_dirty;
+    u32 preview_texture;
+    u32 preview_retired[UI_PREVIEW_RETIRED];
+    i32 preview_retired_frames[UI_PREVIEW_RETIRED];
+    ns_bool preview_used[UI_PREVIEW_SLOTS];
+    // The source image's size, and the size of its scaled copy in the cell.
+    i32 preview_widths[UI_PREVIEW_SLOTS];
+    i32 preview_heights[UI_PREVIEW_SLOTS];
+    i32 preview_cell_widths[UI_PREVIEW_SLOTS];
+    i32 preview_cell_heights[UI_PREVIEW_SLOTS];
     i32 texture_heights[UI_MAX_TEXTURES];
     ui_rect_batch rect_batches[UI_MAX_RECT_BATCHES];
     ui_retired_buffer retired[UI_RETIRED_BUFFERS];
@@ -1809,6 +1834,11 @@ void ui_renderer_destroy(ui_renderer *r) {
     if (r->font_pack) gpu_texture_destroy(r->font_pack);
     if (r->font_pack_retired) gpu_texture_destroy(r->font_pack_retired);
     if (r->placeholder_texture) gpu_texture_destroy(r->placeholder_texture);
+    if (r->preview_texture) gpu_texture_destroy(r->preview_texture);
+    for (i32 i = 0; i < UI_PREVIEW_RETIRED; i++) {
+        if (r->preview_retired[i]) gpu_texture_destroy(r->preview_retired[i]);
+    }
+    free(r->preview_pixels);
     if (r->font_bitmap_texture) gpu_texture_destroy(r->font_bitmap_texture);
     if (r->font_bitmap_zh_texture) gpu_texture_destroy(r->font_bitmap_zh_texture);
     if (r->shader) gpu_shader_destroy(r->shader);
@@ -1861,6 +1891,12 @@ static void ui_age_retired_buffers(ui_renderer *r) {
     if (r->font_pack_retired && --r->font_pack_retired_frames <= 0) {
         gpu_texture_destroy(r->font_pack_retired);
         r->font_pack_retired = 0;
+    }
+    for (i32 i = 0; i < UI_PREVIEW_RETIRED; i++) {
+        if (r->preview_retired[i] && --r->preview_retired_frames[i] <= 0) {
+            gpu_texture_destroy(r->preview_retired[i]);
+            r->preview_retired[i] = 0;
+        }
     }
 }
 
@@ -2076,6 +2112,144 @@ void ui_atlas_draw_region(ui_renderer *r, i32 atlas, f64 x, f64 y, f64 w, f64 h,
 
 void ui_atlas_draw(ui_renderer *r, i32 atlas, f64 x, f64 y, f64 w, f64 h) {
     ui_atlas_draw_region(r, atlas, x, y, w, h, 0, 0, ui_atlas_width(r, atlas), ui_atlas_height(r, atlas), 0xffffffffu);
+}
+
+// ---- previews -----------------------------------------------------------
+
+static ns_bool ui_preview_valid(const ui_renderer *r, i32 preview) {
+    return r && preview >= 1 && preview <= UI_PREVIEW_SLOTS && r->preview_used[preview - 1];
+}
+
+// Shrink `image` into the cell of `slot`, keeping its aspect, inside a
+// one-texel transparent border so linear sampling never reaches a neighbour.
+// Colours are averaged by coverage so transparent texels do not darken edges.
+static void ui_preview_compose(ui_renderer *r, i32 slot, const io_image *image) {
+    const i32 inner = UI_PREVIEW_CELL - 2;
+    const i32 sw = image->width;
+    const i32 sh = image->height;
+    const f64 scale = fmin(1.0, fmin((f64)inner / sw, (f64)inner / sh));
+    const i32 dw = (i32)fmax(1.0, floor(sw * scale + 0.5));
+    const i32 dh = (i32)fmax(1.0, floor(sh * scale + 0.5));
+    const i32 cell_x = (slot % UI_PREVIEW_COLUMNS) * UI_PREVIEW_CELL;
+    const i32 cell_y = (slot / UI_PREVIEW_COLUMNS) * UI_PREVIEW_CELL;
+    const i32 c = image->channels;
+    for (i32 y = 0; y < UI_PREVIEW_CELL; y++) {
+        memset(r->preview_pixels + ((size_t)(cell_y + y) * UI_PREVIEW_SIZE + cell_x) * 4, 0, UI_PREVIEW_CELL * 4);
+    }
+    for (i32 y = 0; y < dh; y++) {
+        const i32 sy0 = (i32)((i64)y * sh / dh);
+        i32 sy1 = (i32)((i64)(y + 1) * sh / dh);
+        if (sy1 <= sy0) sy1 = sy0 + 1;
+        u8 *row = r->preview_pixels + ((size_t)(cell_y + 1 + y) * UI_PREVIEW_SIZE + cell_x + 1) * 4;
+        for (i32 x = 0; x < dw; x++) {
+            const i32 sx0 = (i32)((i64)x * sw / dw);
+            i32 sx1 = (i32)((i64)(x + 1) * sw / dw);
+            if (sx1 <= sx0) sx1 = sx0 + 1;
+            f64 sum[3] = {0.0, 0.0, 0.0};
+            f64 alpha = 0.0;
+            for (i32 yy = sy0; yy < sy1; yy++) {
+                const u8 *src = image->data + ((size_t)yy * sw + sx0) * c;
+                for (i32 xx = sx0; xx < sx1; xx++, src += c) {
+                    const f64 a = c == 4 ? src[3] : c == 2 ? src[1] : 255.0;
+                    const u8 g = src[0];
+                    sum[0] += a * (c >= 3 ? src[0] : g);
+                    sum[1] += a * (c >= 3 ? src[1] : g);
+                    sum[2] += a * (c >= 3 ? src[2] : g);
+                    alpha += a;
+                }
+            }
+            const f64 count = (f64)(sx1 - sx0) * (f64)(sy1 - sy0);
+            u8 *out = row + (size_t)x * 4;
+            if (alpha > 0.0) {
+                out[0] = (u8)(sum[0] / alpha + 0.5);
+                out[1] = (u8)(sum[1] / alpha + 0.5);
+                out[2] = (u8)(sum[2] / alpha + 0.5);
+            }
+            out[3] = (u8)(alpha / count + 0.5);
+        }
+    }
+    r->preview_widths[slot] = sw;
+    r->preview_heights[slot] = sh;
+    r->preview_cell_widths[slot] = dw;
+    r->preview_cell_heights[slot] = dh;
+}
+
+i32 ui_preview_load(ui_renderer *r, const char *path) {
+    if (!r || !path || !path[0]) return 0;
+    i32 slot = -1;
+    for (i32 i = 0; i < UI_PREVIEW_SLOTS; i++) {
+        if (!r->preview_used[i]) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) return 0;
+    if (!r->preview_pixels) {
+        r->preview_pixels = (u8 *)calloc((size_t)UI_PREVIEW_SIZE * UI_PREVIEW_SIZE, 4);
+        if (!r->preview_pixels) return 0;
+    }
+    io_image *image = io_try_load_image(path);
+    if (!image) return 0;
+    if (image->width <= 0 || image->height <= 0 || image->channels < 1 || image->channels > 4) {
+        io_image_destroy(image);
+        return 0;
+    }
+    ui_preview_compose(r, slot, image);
+    io_image_destroy(image);
+    r->preview_used[slot] = true;
+    r->preview_dirty = true;
+    return slot + 1;
+}
+
+void ui_preview_release(ui_renderer *r, i32 preview) {
+    if (!ui_preview_valid(r, preview)) return;
+    // The cell keeps its pixels until a later load reuses it; nothing draws
+    // a released preview, so the texture need not change now.
+    r->preview_used[preview - 1] = false;
+}
+
+i32 ui_preview_width(ui_renderer *r, i32 preview) {
+    return ui_preview_valid(r, preview) ? r->preview_widths[preview - 1] : 0;
+}
+
+i32 ui_preview_height(ui_renderer *r, i32 preview) {
+    return ui_preview_valid(r, preview) ? r->preview_heights[preview - 1] : 0;
+}
+
+void ui_preview_draw(ui_renderer *r, i32 preview, f64 x, f64 y, f64 w, f64 h, u32 rgba) {
+    if (!ui_preview_valid(r, preview) || w <= 0 || h <= 0) return;
+    const i32 slot = preview - 1;
+    const f64 size = UI_PREVIEW_SIZE;
+    const f64 u0 = ((slot % UI_PREVIEW_COLUMNS) * UI_PREVIEW_CELL + 1) / size;
+    const f64 v0 = ((slot / UI_PREVIEW_COLUMNS) * UI_PREVIEW_CELL + 1) / size;
+    r->current_texture_id = UI_PREVIEW_TEXTURE;
+    ui_push_quad_ex(r, x, y, x + w, y + h, u0, v0,
+                    u0 + r->preview_cell_widths[slot] / size,
+                    v0 + r->preview_cell_heights[slot] / size,
+                    rgba, UI_KIND_IMAGE, 0, 0, 0);
+}
+
+// Upload the composed previews as a new texture after a load changed them.
+static void ui_preview_sync(ui_renderer *r) {
+    if (!r->preview_dirty || !r->preview_pixels) return;
+    u32 texture = ui_create_rgba_texture(r->preview_pixels, UI_PREVIEW_SIZE, UI_PREVIEW_SIZE, "ui preview cells");
+    if (!texture) return;
+    r->preview_dirty = false;
+    if (r->preview_texture) {
+        i32 spare = 0;
+        for (i32 i = 0; i < UI_PREVIEW_RETIRED; i++) {
+            if (!r->preview_retired[i]) {
+                spare = i;
+                break;
+            }
+            if (r->preview_retired_frames[i] < r->preview_retired_frames[spare]) spare = i;
+        }
+        // Every slot is waiting: the oldest one's frames have retired by now.
+        if (r->preview_retired[spare]) gpu_texture_destroy(r->preview_retired[spare]);
+        r->preview_retired[spare] = r->preview_texture;
+        r->preview_retired_frames[spare] = 4;
+    }
+    r->preview_texture = texture;
 }
 
 void ui_resize(ui_renderer *r) {
@@ -2301,6 +2475,7 @@ static u32 ui_command_rgba(const ui_renderer *r, const ui_command *cmd) {
                    : r->font_bitmap_texture;
     }
     if (cmd->kind != UI_KIND_IMAGE || cmd->retained) return 0;
+    if (cmd->texture_id == UI_PREVIEW_TEXTURE) return r->preview_texture;
     if (cmd->texture_id >= 3 && cmd->texture_id < UI_MAX_TEXTURES + 3) return r->textures[cmd->texture_id - 3];
     return 0;
 }
@@ -2756,6 +2931,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     ns_bool hud = ui_hud_solve(&hud_frame);
     // The immersive HUD places itself; a 3D panel otherwise.
     ns_bool panel = !hud && r->panel;
+    ui_preview_sync(r);
     if (!ui_plan_draws(r, panel, hud)) return;
     u32 clip_offset = 0;
     u32 root_offset = 0;
