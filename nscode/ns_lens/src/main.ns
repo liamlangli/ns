@@ -10,6 +10,7 @@ fn main() {
     // without an argument the shell's directory is the project to map; opened
     // from Finder or the Dock, the most recent project opens again.
     g_workspace_root = recent_startup_root(os_env("NS_ARG0"), os_env("PWD"), os_cwd())
+    lens_mobile_start()
     if g_workspace_root != "" {
         workspace_init()
         if g_workspace_count >= 0 {

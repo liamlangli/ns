@@ -3042,17 +3042,26 @@ i32 ui_surface_height(ui_renderer *r) {
 // that takes a rect rather than a width and a height. The safe rect starts at
 // the origin; the drawable rect starts at negative coordinates by exactly the
 // insets, so a panel laid out in it covers the chrome as well.
+// Struct results that ns reads through a `ref` come from a small per-thread
+// ring rather than the allocator: nothing owns such a result, so allocating
+// one per call leaked it, and per-frame callers leaked steadily. Each result
+// stays valid for the next UI_RESULT_RING - 1 calls on the same thread.
+#define UI_RESULT_RING 16
+static ui_rect *ui_result_rect(void) {
+    static _Thread_local ui_rect ring[UI_RESULT_RING];
+    static _Thread_local u32 next;
+    return &ring[next++ % UI_RESULT_RING];
+}
+
 ui_rect *ui_safe_rect(ui_renderer *r) {
-    ui_rect *out = (ui_rect *)ns_malloc(sizeof(ui_rect));
-    if (!out) return NULL;
+    ui_rect *out = ui_result_rect();
     *out = r ? (ui_rect){0.0, 0.0, r->safe_rect.w, r->safe_rect.h}
              : (ui_rect){0.0, 0.0, 0.0, 0.0};
     return out;
 }
 
 ui_rect *ui_surface_rect(ui_renderer *r) {
-    ui_rect *out = (ui_rect *)ns_malloc(sizeof(ui_rect));
-    if (!out) return NULL;
+    ui_rect *out = ui_result_rect();
     if (!r) {
         *out = (ui_rect){0.0, 0.0, 0.0, 0.0};
         return out;
@@ -3065,8 +3074,9 @@ ui_rect *ui_surface_rect(ui_renderer *r) {
 // Insets currently applied: the device values, an application override, or
 // zeroes while the safe area is switched off.
 ui_insets *ui_safe_area(ui_renderer *r) {
-    ui_insets *out = (ui_insets *)ns_malloc(sizeof(ui_insets));
-    if (!out) return NULL;
+    static _Thread_local ui_insets ring[UI_RESULT_RING];
+    static _Thread_local u32 next;
+    ui_insets *out = &ring[next++ % UI_RESULT_RING];
     if (!r) {
         *out = (ui_insets){0.0, 0.0, 0.0, 0.0};
         return out;
@@ -3131,8 +3141,7 @@ void ui_fill_surface(ui_renderer *r, u32 rgba) {
 }
 
 ui_rect *ui_layout(f64 x, f64 y, f64 w, f64 h, f64 child_w, f64 child_h, i32 align) {
-    ui_rect *rect = (ui_rect *)ns_malloc(sizeof(ui_rect));
-    if (!rect) return NULL;
+    ui_rect *rect = ui_result_rect();
     rect->x = x;
     rect->y = y;
     rect->w = child_w;

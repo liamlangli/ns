@@ -351,13 +351,31 @@ fn clamp_i(v: i32, lo: i32, hi: i32) i32 {
 
 // Place the caret at document line `li`, column `col` (both clamped). With
 // `sel` true the move extends the selection from the current anchor.
+// Document indices stay byte offsets, but edits and navigation must never
+// split a UTF-8 scalar committed by the system input method.
+fn editor_utf8_floor(offset: i32) i32 {
+    let i = clamp_i(offset, 0, doc_len())
+    loop i > 0 && i < doc_len() && (dc(i) & 192) == 128 { i = i - 1 }
+    return i
+}
+
+fn editor_utf8_prev(offset: i32) i32 {
+    return editor_utf8_floor(clamp_i(offset - 1, 0, doc_len()))
+}
+
+fn editor_utf8_next(offset: i32) i32 {
+    let i = clamp_i(offset + 1, 0, doc_len())
+    loop i < doc_len() && (dc(i) & 192) == 128 { i = i + 1 }
+    return i
+}
+
 fn place_cursor(li: i32, col: i32, sel: bool) {
     begin_sel(sel)
     let total = line_count()
     let l = clamp_i(li, 0, total - 1)
     let s = line_start(l)
     let m = line_len(s)
-    g_cur = s + clamp_i(col, 0, m)
+    g_cur = editor_utf8_floor(s + clamp_i(col, 0, m))
 }
 
 // The text of visible line `li`, without its trailing newline.
@@ -487,7 +505,7 @@ fn select_word_at(li: i32, col: i32) {
     if a == b {
         if b < n {
             if dc(b) != 10 {
-                b = b + 1
+                b = editor_utf8_next(b)
             }
         }
     }
@@ -616,9 +634,10 @@ fn delete_back() {
             }
             history_prepare(HG_BACKSPACE(), coalesce)
             let rest = doc_len() - g_cur
-            g_doc = substr(g_doc, 0, g_cur - 1) + substr(g_doc, g_cur, rest)
+            let previous = editor_utf8_prev(g_cur)
+            g_doc = substr(g_doc, 0, previous) + substr(g_doc, g_cur, rest)
             rebuild_line_index()
-            g_cur = g_cur - 1
+            g_cur = previous
             history_commit(HG_BACKSPACE(), coalesce)
         }
     }
@@ -636,8 +655,9 @@ fn delete_forward() {
                 coalesce = true
             }
             history_prepare(HG_DELETE(), coalesce)
-            let rest = (doc_len() - g_cur) - 1
-            g_doc = substr(g_doc, 0, g_cur) + substr(g_doc, g_cur + 1, rest)
+            let next = editor_utf8_next(g_cur)
+            let rest = doc_len() - next
+            g_doc = substr(g_doc, 0, g_cur) + substr(g_doc, next, rest)
             rebuild_line_index()
             history_commit(HG_DELETE(), coalesce)
         }
@@ -649,14 +669,14 @@ fn delete_forward() {
 fn move_left(sel: bool) {
     begin_sel(sel)
     if g_cur > 0 {
-        g_cur = g_cur - 1
+        g_cur = editor_utf8_prev(g_cur)
     }
 }
 
 fn move_right(sel: bool) {
     begin_sel(sel)
     if g_cur < doc_len() {
-        g_cur = g_cur + 1
+        g_cur = editor_utf8_next(g_cur)
     }
 }
 
@@ -671,7 +691,7 @@ fn move_up(sel: bool) {
         if col > pl {
             col = pl
         }
-        g_cur = ps + col
+        g_cur = editor_utf8_floor(ps + col)
     }
 }
 
@@ -687,7 +707,7 @@ fn move_down(sel: bool) {
         if col > nl {
             col = nl
         }
-        g_cur = ns + col
+        g_cur = editor_utf8_floor(ns + col)
     }
 }
 

@@ -502,7 +502,7 @@ install: all
 	$(Q)cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
 		lib/net.ns lib/secure.ns lib/compress.ns lib/storage.ns lib/audio.ns lib/camera.ns lib/sono.ns \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
-	$(Q)cp lib/src/io.c lib/src/secure.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m lib/src/os.motion.apple.m \
+	$(Q)cp lib/src/io.c lib/src/secure.c lib/src/net.c lib/src/os.c lib/src/os.git.c lib/src/os.ssh.c lib/src/os.git.build.sh lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m lib/src/os.motion.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/view.gamepad.apple.m \
 		lib/src/gpu.c lib/src/gpu.metal.m lib/src/NSApp.swift lib/src/view.hands.vision.swift \
 		lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c lib/src/storage.apple.m lib/src/compress.c \

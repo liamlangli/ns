@@ -1,0 +1,103 @@
+// Multi-finger touch on the map. The view's single mouse position follows
+// whichever finger moved last, so with two fingers down it jumps between them
+// on every event; a pinch read through it pans back and forth and zooms around
+// the wrong point. While several fingers are down the pointer becomes their
+// centroid instead, and the extra contacts never click.
+use view
+use ui
+
+lit LENS_TOUCH_MAX = 10
+let g_lens_touch_id = [i32](LENS_TOUCH_MAX)
+let g_lens_touch_x = [f64](LENS_TOUCH_MAX)
+let g_lens_touch_y = [f64](LENS_TOUCH_MAX)
+let g_lens_touch_count: i32 = 0
+// Set once a second finger lands, until every finger has lifted.
+let g_lens_touch_multi = false
+// The finger set changed this frame: drags restart from the new pointer
+// rather than jumping to it.
+let g_lens_touch_rebase = false
+
+fn lens_touch_find(id: i32) i32 {
+    for i in 0 to g_lens_touch_count {
+        if g_lens_touch_id[i] == id { return i }
+    }
+    return -1
+}
+
+// Applies one pointer event to the set of held fingers. Returns true when the
+// set gained or lost a finger.
+fn lens_touch_apply(phase: i32, id: i32, x: f64, y: f64) bool {
+    let at = lens_touch_find(id)
+    if phase == VIEW_INPUT_PHASE_BEGAN || phase == VIEW_INPUT_PHASE_MOVED {
+        if at < 0 {
+            if g_lens_touch_count >= LENS_TOUCH_MAX { return false }
+            at = g_lens_touch_count
+            g_lens_touch_count = g_lens_touch_count + 1
+            g_lens_touch_id[at] = id
+            g_lens_touch_x[at] = x
+            g_lens_touch_y[at] = y
+            return true
+        }
+        g_lens_touch_x[at] = x
+        g_lens_touch_y[at] = y
+        return false
+    }
+    if (phase == VIEW_INPUT_PHASE_ENDED || phase == VIEW_INPUT_PHASE_CANCELLED) && at >= 0 {
+        let last = g_lens_touch_count - 1
+        g_lens_touch_id[at] = g_lens_touch_id[last]
+        g_lens_touch_x[at] = g_lens_touch_x[last]
+        g_lens_touch_y[at] = g_lens_touch_y[last]
+        g_lens_touch_count = last
+        return true
+    }
+    return false
+}
+
+fn lens_touch_center_x() f64 {
+    let sum: f64 = 0.0
+    for i in 0 to g_lens_touch_count { sum = sum + g_lens_touch_x[i] }
+    return sum / (clamp_i(g_lens_touch_count, 1, LENS_TOUCH_MAX) as f64)
+}
+
+fn lens_touch_center_y() f64 {
+    let sum: f64 = 0.0
+    for i in 0 to g_lens_touch_count { sum = sum + g_lens_touch_y[i] }
+    return sum / (clamp_i(g_lens_touch_count, 1, LENS_TOUCH_MAX) as f64)
+}
+
+// Runs before any input handling each frame, with g_mouse_x/y already in
+// content coordinates.
+fn lens_touch_update(r: ref ui_renderer, v: ref view) {
+    g_lens_touch_rebase = false
+    let n = view_input_count(v)
+    for i in 0 to n {
+        let e = view_input_at(v, i)
+        if e.device == VIEW_INPUT_DEVICE_TOUCH {
+            if lens_touch_apply(e.phase, e.pointer_id, ui_content_x(r, e.x), ui_content_y(r, e.y)) {
+                g_lens_touch_rebase = true
+            }
+        }
+    }
+    if v.mouse_down == false {
+        // The view saw every finger lift; nothing can still be held.
+        g_lens_touch_count = 0
+    }
+    if g_lens_touch_count >= 2 && g_lens_touch_multi == false {
+        g_lens_touch_multi = true
+        // A label pressed by the first finger is not clicked by this gesture.
+        g_lens_label_press = -1
+    }
+    if g_lens_touch_multi {
+        // Only the first finger's press counts; the rest of the gesture
+        // neither presses nor clicks anything.
+        v.mouse_pressed = false
+        if v.mouse_down { v.mouse_released = false }
+        if g_lens_touch_count > 0 {
+            g_mouse_x = lens_touch_center_x()
+            g_mouse_y = lens_touch_center_y()
+        }
+    }
+    if v.mouse_down == false {
+        g_lens_touch_multi = false
+    }
+}

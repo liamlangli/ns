@@ -348,6 +348,83 @@ There is no 100-column truncation.
 
 Lens keeps the previous frame while idle. Foreground file/terminal polling runs
 at 100 ms, with a maintenance redraw at most once a second; input, resizing and
-ongoing work redraw sooner. A focused terminal animates its caret at 20 Hz. Inactive, minimized or occluded windows skip UI
+ongoing work redraw sooner. Animations - progress bars, the indeterminate activity sweep and a focused terminal's caret fade - draw at the display rate, and a progress bar eases between the coarse values Git reports. Inactive, minimized or occluded windows skip UI
 updates and rendering and poll file/terminal changes once a second. Returning
 to the foreground refreshes the view, including changes received in background.
+
+## iOS editor
+
+The manifest remains `target = "exec"`. Generate the Apple project with
+`bin/ns project nscode/ns_lens`, select **ns-lens iOS**, and set your signing
+team in Xcode. The first iOS build requires CMake, curl and network access;
+it builds checksum-pinned libgit2 1.9.1, libssh2 1.11.1 and OpenSSL 3.5.4
+under the generated project's `Dependencies/Git`. Subsequent builds reuse them.
+Device and simulator builds are arm64. Git licenses are bundled with the app.
+Other applications only acquire these dependencies when their linked source
+explicitly calls `os_git_embedded()`.
+
+Repository and SSH identity actions are in the **Repo** menu next to Edit.
+Repo > Generate SSH Key creates an unencrypted ed25519 key in OpenSSH format,
+stores it in Keychain and copies its public key for your Git host or a
+machine's `authorized_keys`; it refuses to replace an existing key. Repo >
+Copy Public Key copies it again (OpenSSH-format keys only). Repo > Import SSH
+Key selects an OpenSSH/PEM private key from Files, then asks for its
+passphrase. The file is read into memory without a copied key file; the
+identity is saved as a single device-only, when-unlocked Keychain record. An
+encrypted OpenSSH passphrase is checked when connecting. Repo > Remove SSH Key
+removes the stored identity. One identity is active at a time, and the private
+key never leaves Keychain.
+First connections show the SSH host's SHA-256 fingerprint in OpenSSH Base64 notation; verify it
+with the server before trusting it. A changed fingerprint is refused rather
+than replacing the trusted key. HTTPS certificate validation remains enabled;
+HTTPS cloning currently supports public repositories, not token entry.
+
+Repo > Clone Repository accepts an SSH/HTTPS URL and a local folder name.
+Cloned repositories and imported folders live in the app's Documents folder,
+so the Files app shows every file under On My iPhone > ns-lens; they reopen
+through Open Recent, which the empty screen lists under Open Folder. Clones and
+imports an older build kept in Application Support move there on launch.
+File > Open imports a folder as a copy; changes do not automatically write
+back to the original Files location. Repo > Commit Identity sets the author name and email once for every
+repository, in the app's global Git config (`Library/Application Support/Git`);
+it also clears an identity an older clone stored in the open repository.
+
+The existing editor, syntax highlighting, outline, project search, Git diffs,
+history and commit/push panels are shared with desktop. The Edit dropdown
+exposes save, undo/redo, selection, clipboard, tab insertion and keyboard
+visibility to touch users. System input methods commit UTF-8 text; cursor
+movement and deletion preserve UTF-8 scalar boundaries. Dialogs adapt to the
+phone's content width and keyboard. This does not yet implement grapheme-cluster
+selection for multi-scalar emoji or a native text-selection handle overlay.
+
+The mobile Git adapter covers the commands these panels issue. Pull currently
+fetches and fast-forwards; divergent histories are refused without discarding
+local commits. Resolve a divergent rebase on a desktop. Git hooks, submodule
+recursion, Git LFS and arbitrary Git command execution are not provided.
+
+iOS has no local shell, so View > Terminal opens a shell on a development
+machine over SSH. Tap **host** in the terminal's title bar to enter the host
+(or `user@host`), port, user and an optional remote start folder (`~/` is the
+remote home); the setting is kept app-wide and is independent of the
+repository's Git remote. It signs in with the imported SSH key and uses the
+same first-use fingerprint confirmation and pins as Git. **connect** reconnects;
+a dropped session is never resumed or replayed automatically. The key row
+under the terminal sends esc, tab, arrows and ^C, latches ctrl for the next
+typed key, and pastes. Commands run on the remote machine, not on the phone's
+copy of the repository: push from Lens and pull on the machine to move edits.
+Remote file synchronization and optional offline commands are described in
+[the terminal implementation plan](../../doc/lens-ios-terminal.md).
+
+Validation:
+
+```sh
+bin/ns test nscode/ns_lens
+sh scripts/test_embedded_git.sh
+```
+
+The latter builds the same embedded backend on an arm64 Mac and runs it with
+AddressSanitizer and UndefinedBehaviorSanitizer against temporary repositories
+and a throwaway loopback sshd.
+A real-device acceptance pass should import a throwaway encrypted key, verify
+and trust a test host, clone/edit/save/commit/push a test repository, restart the
+app, and check Chinese input and keyboard/rotation behavior on iPhone and iPad.

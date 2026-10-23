@@ -187,7 +187,8 @@ The common commands are:
 - `ns --help`: show compiler targets and all current flags.
 
 The manifest schema is `ns.mod/v2`. Important fields are `name`, `version`,
-`type`, optional `target`, `target_os`, `target_arch`, `source`, `entry` (or
+`type`, optional `display_name` (the label under a generated app's icon, which
+may contain spaces; `name` still sets identifiers and paths), `target`, `target_os`, `target_arch`, `source`, `entry` (or
 `entries`), `exclude`, `assets`, `orientation`, and `patch` / `patch_version`
 (where an eval or emu target's over-the-air patches are published). `target` is how the program
 runs:

@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+static char *view_text;
+static size_t view_text_len;
+
 static ns_bool view_keys[VIEW_KEY_MENU + 1];
 // Stored as modifiers + 1 so zero remains the no-event sentinel.
 static i32 view_key_presses[VIEW_KEY_MENU + 1];
@@ -205,7 +208,7 @@ view_gesture_state *view_gesture(view *v) {
 
 ns_bool view_input_pending(view *v) {
     if (!v) return false;
-    if (view_event_count > 0 || v->scroll_x != 0.0 || v->scroll_y != 0.0 ||
+    if (view_text_len > 0 || view_event_count > 0 || v->scroll_x != 0.0 || v->scroll_y != 0.0 ||
         v->mouse_pressed || v->mouse_released ||
         v->mouse_right_pressed || v->mouse_right_released ||
         v->mouse_middle_pressed || v->mouse_middle_released ||
@@ -235,6 +238,8 @@ void view_input_reset(view *v) {
     v->scroll_y = 0.0;
     view_event_count = 0;
     view_gestures = (view_gesture_state){.zoom_factor = 1.0};
+    view_text_len = 0;
+    if (view_text) view_text[0] = 0;
     view_clear_key_presses(v);
     memset(view_gamepad_button_presses, 0, sizeof(view_gamepad_button_presses));
 }
@@ -503,3 +508,29 @@ f64 view_hand_joint_position(i32 hand, i32 joint, i32 axis) {
     (void)hand; (void)joint; (void)axis; return 0.0;
 }
 #endif
+
+ns_bool view_on_text_input(view *v, const char *text) {
+    if (!v || !text) return false;
+    size_t n = strlen(text);
+    if (n > 16777216 || view_text_len > 16777216 - n) return false;
+    char *grown = realloc(view_text, view_text_len + n + 1);
+    if (!grown) return false;
+    view_text = grown;
+    memcpy(view_text + view_text_len, text, n + 1); view_text_len += n;
+    view_request_frame(v, 1); return true;
+}
+const char *view_take_text(view *v) {
+    if (!v || !view_text_len) return "";
+    view_text_len = 0; return view_text;
+}
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+void view_set_text_input(view *v, ns_bool enabled) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    extern void view_ios_text_input(view *, ns_bool);
+    view_ios_text_input(v, enabled);
+#else
+    (void)v; (void)enabled;
+#endif
+}

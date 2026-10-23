@@ -26,6 +26,15 @@ for byte in 0 to binary.len {
     assert(binary_read[byte]==binary[byte])
 }
 
+// One level of names, each ending in a newline; missing directories are empty.
+os_make_dirs("bin/os_dir_list_test/inner")
+assert(os_write_file_atomic("bin/os_dir_list_test/a.txt", "a") == 1)
+let listing = os_dir_list("bin/os_dir_list_test")
+assert(listing.len == 12)
+assert(listing == "a.txt\ninner\n" || listing == "inner\na.txt\n")
+assert(os_dir_list("bin/os_dir_list_test/inner") == "")
+assert(os_dir_list("bin/does-not-exist") == "")
+
 // Invalid vibration requests are always safe no-ops, including on devices
 // which actually support haptics. These calls also verify the native symbol.
 os_vibrate(0.0, 1.0)

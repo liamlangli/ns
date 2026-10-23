@@ -354,7 +354,7 @@ fn lens_remote_filter() {
     }
     g_lens_remote_hit_count = count
     g_lens_remote_selected = clamp_i(g_lens_remote_selected, 0, clamp_i(count - 1, 0, LENS_BRANCH_MAX))
-    g_lens_remote_scroll = clamp_i(g_lens_remote_scroll, 0, clamp_i(count - LENS_SEARCH_ROWS, 0, LENS_BRANCH_MAX))
+    g_lens_remote_scroll = clamp_i(g_lens_remote_scroll, 0, clamp_i(count - lens_search_rows(), 0, LENS_BRANCH_MAX))
 }
 
 fn lens_remote_go(hit: i32) {
@@ -488,14 +488,14 @@ fn lens_branch_button_at(mx: f64, my: f64) bool {
     return mx >= g_lens_branch_x - 4.0 && mx < g_lens_branch_x - 4.0 + g_lens_branch_w
 }
 
-fn lens_branch_create_x(w: f64) f64 { return (w - LENS_BRANCH_CREATE_W) * 0.5 }
+fn lens_branch_create_x(w: f64) f64 { return (w - lens_branch_create_width()) * 0.5 }
 
 fn lens_branch_create_y(h: f64) f64 {
     return clamp((h - LENS_BRANCH_CREATE_H) * 0.5, LENS_TOP_BAR_H + 4.0, 100000.0)
 }
 
 fn lens_remote_shown_rows() i32 {
-    return clamp_i(g_lens_remote_hit_count - g_lens_remote_scroll, 0, LENS_SEARCH_ROWS)
+    return clamp_i(g_lens_remote_hit_count - g_lens_remote_scroll, 0, lens_search_rows())
 }
 
 fn lens_remote_panel_h() f64 {
@@ -534,8 +534,8 @@ fn lens_remote_keys(v: ref view) {
     if g_lens_remote_selected < g_lens_remote_scroll {
         g_lens_remote_scroll = g_lens_remote_selected
     }
-    if g_lens_remote_selected >= g_lens_remote_scroll + LENS_SEARCH_ROWS {
-        g_lens_remote_scroll = g_lens_remote_selected - LENS_SEARCH_ROWS + 1
+    if g_lens_remote_selected >= g_lens_remote_scroll + lens_search_rows() {
+        g_lens_remote_scroll = g_lens_remote_selected - lens_search_rows() + 1
     }
     g_lens_remote_query = lens_field_edit(v, g_lens_remote_query)
     lens_remote_filter()
@@ -573,7 +573,7 @@ fn lens_branch_pointer(v: ref view, w: f64, h: f64) {
     if g_lens_remote_open {
         lens_remote_filter()
     }
-    g_lens_remote_block = g_lens_remote_open && raw_hit(v, lens_search_x(w), lens_search_y(), LENS_SEARCH_W, lens_remote_panel_h())
+    g_lens_remote_block = g_lens_remote_open && raw_hit(v, lens_search_x(w), lens_search_y(), lens_search_width(), lens_remote_panel_h())
     if v.scroll_y == 0.0 {
         return
     }
@@ -581,7 +581,7 @@ fn lens_branch_pointer(v: ref view, w: f64, h: f64) {
         g_lens_branch_scroll = clamp_i(g_lens_branch_scroll + lens_wheel_step(v), 0, lens_branch_scroll_max(h))
         v.scroll_y = 0.0
     } else if g_lens_remote_block {
-        g_lens_remote_scroll = clamp_i(g_lens_remote_scroll + lens_wheel_step(v), 0, clamp_i(g_lens_remote_hit_count - LENS_SEARCH_ROWS, 0, LENS_BRANCH_MAX))
+        g_lens_remote_scroll = clamp_i(g_lens_remote_scroll + lens_wheel_step(v), 0, clamp_i(g_lens_remote_hit_count - lens_search_rows(), 0, LENS_BRANCH_MAX))
         v.scroll_y = 0.0
     }
 }
@@ -591,9 +591,9 @@ fn lens_branch_create_click(v: ref view, w: f64, h: f64) {
     let x = lens_branch_create_x(w)
     let y = lens_branch_create_y(h)
     let button_y = y + LENS_BRANCH_CREATE_H - 42.0
-    if raw_hit(v, x + LENS_BRANCH_CREATE_W - 196.0, button_y, 84.0, 26.0) {
+    if raw_hit(v, x + lens_branch_create_width() - 196.0, button_y, 84.0, 26.0) {
         g_lens_branch_create_open = false
-    } else if raw_hit(v, x + LENS_BRANCH_CREATE_W - 104.0, button_y, 88.0, 26.0) {
+    } else if raw_hit(v, x + lens_branch_create_width() - 104.0, button_y, 88.0, 26.0) {
         lens_branch_create_submit()
     }
 }
@@ -786,18 +786,18 @@ fn lens_draw_branch_create(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     }
     let x = lens_branch_create_x(w)
     let y = lens_branch_create_y(h)
-    ui_fill_round_rect(r, x, y, LENS_BRANCH_CREATE_W, LENS_BRANCH_CREATE_H, 4.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, x, y, LENS_BRANCH_CREATE_W, LENS_BRANCH_CREATE_H, 4.0, 1.0, col_muted(), 0.0)
+    ui_fill_round_rect(r, x, y, lens_branch_create_width(), LENS_BRANCH_CREATE_H, 4.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, lens_branch_create_width(), LENS_BRANCH_CREATE_H, 4.0, 1.0, col_muted(), 0.0)
     let title = "Create branch"
     if lens_branch_label() != "" {
         title = title + " from " + lens_branch_label()
     }
-    draw_text_clipped(r, x + 16.0, y + 14.0, LENS_BRANCH_CREATE_W - 32.0, 20.0, title, small_px(), col_text())
-    lens_draw_field(r, x + 16.0, y + 42.0, LENS_BRANCH_CREATE_W - 32.0, 30.0, g_lens_branch_create_name, "Branch name")
-    draw_text_clipped(r, x + 16.0, y + 80.0, LENS_BRANCH_CREATE_W - 32.0, 20.0, "enter  create      esc  cancel", small_px(), col_muted())
+    draw_text_clipped(r, x + 16.0, y + 14.0, lens_branch_create_width() - 32.0, 20.0, title, small_px(), col_text())
+    lens_draw_field(r, x + 16.0, y + 42.0, lens_branch_create_width() - 32.0, 30.0, g_lens_branch_create_name, "Branch name")
+    draw_text_clipped(r, x + 16.0, y + 80.0, lens_branch_create_width() - 32.0, 20.0, "enter  create      esc  cancel", small_px(), col_muted())
     let button_y = y + LENS_BRANCH_CREATE_H - 42.0
-    lens_draw_button(r, v, x + LENS_BRANCH_CREATE_W - 196.0, button_y, 84.0, 26.0, "Cancel", false)
-    lens_draw_button(r, v, x + LENS_BRANCH_CREATE_W - 104.0, button_y, 88.0, 26.0, "Create", true)
+    lens_draw_button(r, v, x + lens_branch_create_width() - 196.0, button_y, 84.0, 26.0, "Cancel", false)
+    lens_draw_button(r, v, x + lens_branch_create_width() - 104.0, button_y, 88.0, 26.0, "Create", true)
 }
 
 // Laid out as the Cmd+P search. A result whose branch is already local says
@@ -810,15 +810,15 @@ fn lens_draw_remote(r: ref ui_renderer, v: ref view, w: f64) {
     let x = lens_search_x(w)
     let y = lens_search_y()
     let panel_h = lens_remote_panel_h()
-    ui_fill_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, 1.0, col_muted(), 0.0)
-    lens_draw_field(r, x, y, LENS_SEARCH_W, LENS_SEARCH_INPUT_H, g_lens_remote_query, "Search remote branches")
+    ui_fill_round_rect(r, x, y, lens_search_width(), panel_h, 3.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, lens_search_width(), panel_h, 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_field(r, x, y, lens_search_width(), LENS_SEARCH_INPUT_H, g_lens_remote_query, "Search remote branches")
     let rows = lens_remote_shown_rows()
     for n in 0 to rows {
         let hit = g_lens_remote_scroll + n
         let ry = y + LENS_SEARCH_INPUT_H + (n as f64) * LENS_SEARCH_ROW_H
-        if hit == g_lens_remote_selected || raw_hit(v, x, ry, LENS_SEARCH_W, LENS_SEARCH_ROW_H) {
-            ui_fill_rect(r, x + 1.0, ry, LENS_SEARCH_W - 2.0, LENS_SEARCH_ROW_H, col_popup_hi(), 0.0)
+        if hit == g_lens_remote_selected || raw_hit(v, x, ry, lens_search_width(), LENS_SEARCH_ROW_H) {
+            ui_fill_rect(r, x + 1.0, ry, lens_search_width() - 2.0, LENS_SEARCH_ROW_H, col_popup_hi(), 0.0)
         }
         let ty = ui_text_v_center_y(r, ry, LENS_SEARCH_ROW_H, small_px(), FONT_MONO())
         let remote = g_lens_branch_remotes[g_lens_remote_hits[hit]]
@@ -829,7 +829,7 @@ fn lens_draw_remote(r: ref ui_renderer, v: ref view, w: f64) {
         } else if lens_branch_has(name) {
             state = "local"
         }
-        let right = x + LENS_SEARCH_W - 10.0
+        let right = x + lens_search_width() - 10.0
         if state != "" {
             let sw = ui_text_width(r, state, small_px(), FONT_MONO())
             right = right - sw
@@ -849,7 +849,7 @@ fn lens_draw_remote(r: ref ui_renderer, v: ref view, w: f64) {
         }
     }
     let ty = ui_text_v_center_y(r, fy, LENS_SEARCH_ROW_H, small_px(), FONT_MONO())
-    draw_text_clipped(r, x + 10.0, ty, LENS_SEARCH_W - 20.0, LENS_SEARCH_ROW_H, note, small_px(), col_muted())
+    draw_text_clipped(r, x + 10.0, ty, lens_search_width() - 20.0, LENS_SEARCH_ROW_H, note, small_px(), col_muted())
 }
 
 fn lens_draw_branch_popups(r: ref ui_renderer, v: ref view, w: f64, h: f64) {

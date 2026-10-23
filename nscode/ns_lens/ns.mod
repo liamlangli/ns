@@ -1,5 +1,6 @@
 schema = "ns.mod/v2"
 name = "ns_lens"
+display_name = "ns lens"
 version = "0.1.0"
 type = "app"
 icon = "icon.png"

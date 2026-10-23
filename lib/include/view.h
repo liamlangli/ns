@@ -408,3 +408,11 @@ i32 view_hands_snapshot(void);
 ns_bool view_hand_tracked(i32 hand);
 ns_bool view_hand_joint_tracked(i32 hand, i32 joint);
 f64 view_hand_joint_position(i32 hand, i32 joint, i32 axis);
+
+// Committed UTF-8 input from a system input method. Consumers use this instead
+// of translating printable key codes on mobile. take_text consumes this frame's
+// text; reset clears anything unconsumed. Native backends feed on_text_input.
+ns_bool view_on_text_input(view *v, const char *text);
+const char *view_take_text(view *v);
+// Show/hide the system software keyboard. Desktop backends ignore this.
+void view_set_text_input(view *v, ns_bool enabled);

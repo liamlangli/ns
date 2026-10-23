@@ -1,0 +1,54 @@
+// The iOS terminal's SSH host settings and touch keys, without a network:
+// the session itself is covered by scripts/test_embedded_git.sh.
+use std
+use os
+use view
+
+fn main() {
+    g_terminal_ssh_persist = false
+    assert terminal_ssh_port("") == 22
+    assert terminal_ssh_port("2222") == 2222
+    assert terminal_ssh_port("0") == 0
+    assert terminal_ssh_port("65536") == 0
+    assert terminal_ssh_port("22a") == 0
+    assert terminal_ssh_port("-1") == 0
+    assert terminal_ssh_token("dev.example.test")
+    assert terminal_ssh_token("::1")
+    assert !terminal_ssh_token("")
+    assert !terminal_ssh_token("-oProxyCommand=x")
+    assert !terminal_ssh_token("two words")
+    assert !terminal_ssh_token("a@b")
+
+    // user@host splits when the user field is empty; the port defaults to 22.
+    assert terminal_ssh_configure("demi@mac.local", "", "", "~/src/ns")
+    assert g_terminal_ssh_user == "demi"
+    assert g_terminal_ssh_host == "mac.local"
+    assert g_terminal_ssh_port == 22
+    assert g_terminal_ssh_folder == "~/src/ns"
+    assert terminal_ssh_target() == "demi@mac.local"
+    assert terminal_ssh_configure("10.0.0.2", "2200", "build", "")
+    assert terminal_ssh_target() == "build@10.0.0.2:2200"
+    assert g_terminal_ssh_folder == ""
+    // A rejected entry keeps the previous host.
+    assert !terminal_ssh_configure("host", "22", "", "")
+    assert !terminal_ssh_configure("host", "99999", "user", "")
+    assert !terminal_ssh_configure("host", "22", "user", "a\nrm -rf ~")
+    assert terminal_ssh_target() == "build@10.0.0.2:2200"
+
+    // The latched Ctrl modifies the first typed byte once.
+    assert terminal_latched_text("c") == "c"
+    g_terminal_ctrl_latch = true
+    assert terminal_latched_text("c") == terminal_cp_str(3)
+    assert g_terminal_ctrl_latch == false
+    g_terminal_ctrl_latch = true
+    assert terminal_latched_text("Dx") == terminal_cp_str(4) + "x"
+    g_terminal_ctrl_latch = true
+    assert terminal_latched_text("中") == "中"
+    assert g_terminal_ctrl_latch == false
+    assert terminal_key_label(0) == "esc"
+    assert terminal_key_label(TERM_KEYS - 1) == "paste"
+
+    // Desktop keeps the local pty backend.
+    assert terminal_session_kind() == TERM_SESSION_LOCAL || lens_mobile()
+    print("terminal_ssh_test: passed\n")
+}

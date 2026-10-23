@@ -78,6 +78,8 @@ i32 os_write_file_atomic(const char *path, const char *text);
 i64 os_read_file_bytes(const char *path, u8 *data, i32 capacity);
 i32 os_write_file_bytes_atomic(const char *path, const u8 *data, i32 size);
 const char *os_app_data_dir(const char *app_name);
+const char *os_documents_dir(const char *app_name);
+const char *os_dir_list(const char *path);
 i32 os_dir_scan(const char *path);
 const char *os_entry_name(i32 index);
 const char *os_entry_path(i32 index);
@@ -128,3 +130,24 @@ i32 os_process_stop(i32 pid);
 i32 os_launch_self(const char *arg);
 
 i32 os_share_file(const char *path);
+
+ns_bool os_git_embedded(void);
+ns_bool os_git_identity_import(const char *key, const char *passphrase);
+ns_bool os_git_identity_delete(void);
+ns_bool os_git_identity_exists(void);
+ns_bool os_git_identity_generate(const char *comment);
+const char *os_git_identity_public(void);
+i32 os_dialog_file_begin(const char *title, i32 kind);
+i32 os_dialog_prompt_begin(const char *title, const char *fields, i32 secret_mask);
+i32 os_dialog_poll(void);
+const char *os_dialog_value(i32 index);
+
+void os_dialog_clear(void);
+
+i32 os_ssh_open(const char *host, i32 port, const char *user, const char *folder, i32 cols, i32 rows);
+i32 os_ssh_state(i32 handle);
+const char *os_ssh_error(i32 handle);
+const char *os_ssh_read(i32 handle, i32 capacity);
+i32 os_ssh_write(i32 handle, const char *data);
+i32 os_ssh_resize(i32 handle, i32 cols, i32 rows);
+void os_ssh_close(i32 handle);

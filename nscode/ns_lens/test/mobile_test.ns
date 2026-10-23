@@ -1,0 +1,65 @@
+use std
+use os
+use view
+
+fn main() {
+    assert lens_mobile_folder("my_repo-1.2")
+    assert !lens_mobile_folder("../repo")
+    assert !lens_mobile_folder("..")
+    assert !lens_mobile_folder("a/b")
+    assert !lens_mobile_folder("a\nb")
+    assert !lens_mobile_line("user\n--config")
+    assert lens_mobile_line("ssh://git@example.test:2222/team/repo.git")
+    assert lens_mobile_after("/a/Documents/x/Documents/repo", "/Documents/") == "repo"
+    assert lens_mobile_after("/a/b", "/Documents/") == ""
+    assert lens_mobile_relocate("/elsewhere/project") == "/elsewhere/project"
+    // The activity bar glides toward a coarse value instead of jumping.
+    g_lens_activity_shown = 0.0
+    g_lens_activity_time = 10.0
+    let first = lens_activity_ease(1.0, 10.05)
+    assert first > 0.45 && first < 0.55
+    let second = lens_activity_ease(1.0, 10.5)
+    assert second == 1.0
+    // Repository and SSH key actions live in Repo, not File.
+    assert lens_file_items() == LENS_FILE_ITEMS
+    assert lens_repo_label(0) == "Clone Repository..."
+    assert lens_repo_label(2) == "Generate SSH Key"
+    assert lens_repo_label(LENS_REPO_ITEMS - 1) == "Remove SSH Key"
+    assert lens_repo_menu_end() == LENS_EDIT_X + LENS_EDIT_W || lens_mobile()
+
+    load_str("A中文🙂B")
+    place_cursor(0, 2, false)
+    assert g_cur == 1
+    move_right(false)
+    assert g_cur == 4
+    move_right(false)
+    assert g_cur == 7
+    move_right(false)
+    assert g_cur == 11
+    delete_back()
+    assert g_doc == "A中文B"
+    undo()
+    assert g_doc == "A中文🙂B"
+    move_left(false)
+    assert g_cur == 7
+    delete_forward()
+    assert g_doc == "A中文B"
+    undo()
+    assert g_doc == "A中文🙂B"
+    place_cursor(0, 5, false)
+    assert g_cur == 4
+    select_word_at(0, 4)
+    assert selected_text() == "文"
+
+    let v = view_create("committed text input test", 320, 240)
+    assert view_on_text_input(v, "中文")
+    assert view_on_text_input(v, "🙂")
+    assert view_input_pending(v)
+    assert view_take_text(v) == "中文🙂"
+    assert view_take_text(v) == ""
+    assert view_on_text_input(v, "unconsumed")
+    view_input_reset(v)
+    assert view_take_text(v) == ""
+    view_close(v)
+    print("mobile_test: passed\n")
+}

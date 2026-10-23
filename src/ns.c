@@ -5205,6 +5205,7 @@ void ns_exec_project(ns_str path) {
         .source_dir = source_dir,
         .name = name,
         .safe_name = safe_name,
+        .display_name = ns_build_manifest_value(root, "display_name"),
         .version = version,
         .icon = icon,
         .linked_source = linked,

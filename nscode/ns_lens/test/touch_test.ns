@@ -1,0 +1,28 @@
+// Two fingers on the map act as one pointer at their centroid, and a finger
+// landing or lifting is reported so a drag restarts instead of jumping.
+use std
+use view
+
+fn main() {
+    assert lens_touch_apply(VIEW_INPUT_PHASE_BEGAN, 7, 100.0, 200.0)
+    assert g_lens_touch_count == 1
+    assert lens_touch_center_x() == 100.0
+    assert !lens_touch_apply(VIEW_INPUT_PHASE_MOVED, 7, 110.0, 200.0)
+    assert lens_touch_apply(VIEW_INPUT_PHASE_BEGAN, 9, 210.0, 300.0)
+    assert g_lens_touch_count == 2
+    assert lens_touch_center_x() == 160.0
+    assert lens_touch_center_y() == 250.0
+    // A slow, symmetric pinch keeps the centroid still.
+    assert !lens_touch_apply(VIEW_INPUT_PHASE_MOVED, 7, 105.0, 195.0)
+    assert !lens_touch_apply(VIEW_INPUT_PHASE_MOVED, 9, 215.0, 305.0)
+    assert lens_touch_center_x() == 160.0
+    assert lens_touch_center_y() == 250.0
+    // Lifting one finger hands the pointer to the other.
+    assert lens_touch_apply(VIEW_INPUT_PHASE_ENDED, 7, 105.0, 195.0)
+    assert g_lens_touch_count == 1
+    assert lens_touch_center_x() == 215.0
+    assert !lens_touch_apply(VIEW_INPUT_PHASE_ENDED, 7, 0.0, 0.0)
+    assert lens_touch_apply(VIEW_INPUT_PHASE_CANCELLED, 9, 215.0, 305.0)
+    assert g_lens_touch_count == 0
+    print("touch_test: passed\n")
+}

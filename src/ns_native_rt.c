@@ -301,7 +301,9 @@ static void ns_rt_commit(uint32_t from, uint32_t to) {
         abort();
     }
 #endif
-    memset(ns_rt_mem + from, 0, (size_t)(to - from));
+    // Only never-committed pages arrive here, and both systems hand those out
+    // zero-filled on first touch. Clearing them would make the whole doubled
+    // capacity resident at once, even the part the program has not reached.
 }
 
 static void ns_rt_grow(uint64_t need) {
@@ -1722,6 +1724,7 @@ typedef struct ns_rt_task {
     pthread_cond_t cv;
 #endif
     int started;
+    int32_t slot;
 } ns_rt_task;
 
 #ifdef _WIN32
@@ -1737,6 +1740,7 @@ typedef struct ns_rt_task {
 #endif
 
 static __thread ns_rt_task *ns_rt_task_self = NULL;
+static void ns_rt_task_put(ns_rt_task *t);
 
 static int64_t ns_rt_task_invoke(ns_rt_task *t) {
     if (t->cancel) return 0;
@@ -1822,6 +1826,7 @@ static DWORD WINAPI ns_rt_task_thread(LPVOID arg) {
     ns_rt_task_release(t);
     ns_rt_task_finish(t, r, t->cancel);
     ns_rt_task_self = NULL;
+    ns_rt_task_put(t);
     return 0;
 }
 #else
@@ -1833,20 +1838,117 @@ static void *ns_rt_task_thread(void *arg) {
     ns_rt_task_release(t);
     ns_rt_task_finish(t, r, t->cancel);
     ns_rt_task_self = NULL;
+    ns_rt_task_put(t);
     return NULL;
 }
 #endif
 
-static ns_rt_task *ns_rt_task_obj(int64_t handle) {
+// A handle names an entry in this table. The running thread holds a reference
+// to the task record, and so does every call working on the handle for its
+// duration; when the last one lets go, the record (its lock, condition
+// variable and arguments) is freed and only the final state and result stay
+// in the entry, so await, done and cancelled still answer exactly at any
+// later time. Before, every task leaked its whole record.
+typedef struct {
+    ns_rt_task *task;
+    int64_t result;
+    int32_t refs;
+    int32_t state;
+} ns_rt_task_entry;
+static ns_rt_task_entry *ns_rt_task_table = NULL;
+static int32_t ns_rt_task_table_n = 0;
+static int32_t ns_rt_task_table_cap = 0;
+#ifdef _WIN32
+static CRITICAL_SECTION ns_rt_task_table_mu;
+static INIT_ONCE ns_rt_task_table_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK ns_rt_task_table_once_init(PINIT_ONCE once, PVOID param, PVOID *ctx) {
+    (void)once;
+    (void)param;
+    (void)ctx;
+    InitializeCriticalSection(&ns_rt_task_table_mu);
+    return TRUE;
+}
+static void ns_rt_task_table_lock(void) {
+    InitOnceExecuteOnce(&ns_rt_task_table_once, ns_rt_task_table_once_init, NULL, NULL);
+    EnterCriticalSection(&ns_rt_task_table_mu);
+}
+static void ns_rt_task_table_unlock(void) { LeaveCriticalSection(&ns_rt_task_table_mu); }
+#else
+static pthread_mutex_t ns_rt_task_table_mu = PTHREAD_MUTEX_INITIALIZER;
+static void ns_rt_task_table_lock(void) { pthread_mutex_lock(&ns_rt_task_table_mu); }
+static void ns_rt_task_table_unlock(void) { pthread_mutex_unlock(&ns_rt_task_table_mu); }
+#endif
+
+// Records `t`, referenced by the code about to run it; returns its handle value.
+static int64_t ns_rt_task_register(ns_rt_task *t) {
+    ns_rt_task_table_lock();
+    if (ns_rt_task_table_n == ns_rt_task_table_cap) {
+        int32_t cap = ns_rt_task_table_cap ? ns_rt_task_table_cap * 2 : 64;
+        ns_rt_task_entry *table = (ns_rt_task_entry *)realloc(ns_rt_task_table, (size_t)cap * sizeof(*table));
+        if (!table) abort();
+        ns_rt_task_table = table;
+        ns_rt_task_table_cap = cap;
+    }
+    int32_t slot = ns_rt_task_table_n++;
+    ns_rt_task_table[slot] = (ns_rt_task_entry){.task = t, .refs = 1};
+    t->slot = slot;
+    ns_rt_task_table_unlock();
+    return (int64_t)slot + 1;
+}
+
+static void ns_rt_task_destroy(ns_rt_task *t) {
+#ifdef _WIN32
+    DeleteCriticalSection(&t->mu);
+#else
+    pthread_mutex_destroy(&t->mu);
+    pthread_cond_destroy(&t->cv);
+#endif
+    free(t);
+}
+
+// Drops one reference; the last one keeps the outcome and frees the record.
+static void ns_rt_task_put(ns_rt_task *t) {
+    if (!t) return;
+    ns_rt_task *dead = NULL;
+    ns_rt_task_table_lock();
+    ns_rt_task_entry *e = &ns_rt_task_table[t->slot];
+    if (--e->refs <= 0) {
+        dead = e->task;
+        e->state = dead->state;
+        e->result = dead->result;
+        e->task = NULL;
+    }
+    ns_rt_task_table_unlock();
+    if (dead) ns_rt_task_destroy(dead);
+}
+
+// The task a handle names, with a reference the caller puts back, or NULL
+// once its record is gone; then *state and *result hold how it ended.
+static ns_rt_task *ns_rt_task_get(int64_t handle, int32_t *state, int64_t *result) {
+    *state = -1;
+    *result = 0;
     if (handle <= 0) return NULL;
+    int64_t value = 0;
+    memcpy(&value, ns_rt_ptr(handle), sizeof(value));
     ns_rt_task *t = NULL;
-    memcpy(&t, ns_rt_ptr(handle), sizeof(t));
+    ns_rt_task_table_lock();
+    if (value >= 1 && value <= ns_rt_task_table_n) {
+        ns_rt_task_entry *e = &ns_rt_task_table[value - 1];
+        if (e->task) {
+            t = e->task;
+            e->refs++;
+        } else {
+            *state = e->state;
+            *result = e->result;
+        }
+    }
+    ns_rt_task_table_unlock();
     return t;
 }
 
-static int64_t ns_rt_task_box(ns_rt_task *t) {
+static int64_t ns_rt_task_box(int64_t value) {
     int64_t box = ns_rt_alloc(8);
-    memcpy(ns_rt_ptr(box), &t, sizeof(t));
+    memcpy(ns_rt_ptr(box), &value, sizeof(value));
     return box;
 }
 
@@ -1872,7 +1974,7 @@ static int64_t ns_rt_task_start(int64_t fn, int64_t env, int64_t nargs,
     pthread_mutex_init(&t->mu, NULL);
     pthread_cond_init(&t->cv, NULL);
 #endif
-    int64_t handle = ns_rt_task_box(t);
+    int64_t handle = ns_rt_task_box(ns_rt_task_register(t));
     if (queue == 0) {
         ns_rt_task *prev = ns_rt_task_self;
         ns_rt_task_self = t;
@@ -1880,6 +1982,7 @@ static int64_t ns_rt_task_start(int64_t fn, int64_t env, int64_t nargs,
         int64_t r = ns_rt_task_invoke(t);
         ns_rt_task_finish(t, r, t->cancel);
         ns_rt_task_self = prev;
+        ns_rt_task_put(t);
         return handle;
     }
     // The compiler does not pin what a task is handed (ns_ssa.c): the hold
@@ -1912,6 +2015,7 @@ static int64_t ns_rt_task_start(int64_t fn, int64_t env, int64_t nargs,
         }
         ns_rt_heap_unlock();
         ns_rt_task_finish(t, 0, 1);
+        ns_rt_task_put(t);
     }
     return handle;
 }
@@ -1936,31 +2040,51 @@ static void ns_rt_task_join_state(ns_rt_task *t) {
 }
 
 int64_t ns_rt_task_await(int64_t handle) {
-    ns_rt_task *t = ns_rt_task_obj(handle);
-    if (!t) return 0;
+    int32_t state;
+    int64_t result;
+    ns_rt_task *t = ns_rt_task_get(handle, &state, &result);
+    if (!t) return state == 2 ? result : 0;
     ns_rt_task_join_state(t);
-    return t->state == 3 ? 0 : t->result;
+    result = t->state == 3 ? 0 : t->result;
+    ns_rt_task_put(t);
+    return result;
 }
 
 void ns_rt_task_wait(int64_t handle) {
-    ns_rt_task *t = ns_rt_task_obj(handle);
+    int32_t state;
+    int64_t result;
+    ns_rt_task *t = ns_rt_task_get(handle, &state, &result);
     ns_rt_task_join_state(t);
+    ns_rt_task_put(t);
 }
 
 void ns_rt_task_cancel(int64_t handle) {
-    ns_rt_task *t = ns_rt_task_obj(handle);
+    int32_t state;
+    int64_t result;
+    ns_rt_task *t = ns_rt_task_get(handle, &state, &result);
     if (!t) return;
     t->cancel = 1;
+    ns_rt_task_put(t);
 }
 
 int64_t ns_rt_task_done(int64_t handle) {
-    ns_rt_task *t = ns_rt_task_obj(handle);
-    return t && t->state >= 2 ? 1 : 0;
+    int32_t state;
+    int64_t result;
+    ns_rt_task *t = ns_rt_task_get(handle, &state, &result);
+    if (!t) return state >= 2 ? 1 : 0;
+    int64_t done = t->state >= 2 ? 1 : 0;
+    ns_rt_task_put(t);
+    return done;
 }
 
 int64_t ns_rt_task_cancelled(int64_t handle) {
-    ns_rt_task *t = ns_rt_task_obj(handle);
-    return t && t->state == 3 ? 1 : 0;
+    int32_t state;
+    int64_t result;
+    ns_rt_task *t = ns_rt_task_get(handle, &state, &result);
+    if (!t) return state == 3 ? 1 : 0;
+    int64_t cancelled = t->state == 3 ? 1 : 0;
+    ns_rt_task_put(t);
+    return cancelled;
 }
 
 void ns_rt_task_sleep(int64_t ms) {

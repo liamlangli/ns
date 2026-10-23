@@ -1,0 +1,92 @@
+// Every editor operation has a pointer/touch entry point as well as a shortcut.
+use view
+use ui
+
+lit LENS_EDIT_X = LENS_VIEW_X + LENS_VIEW_W + 8.0
+lit LENS_EDIT_W = 64.0
+lit LENS_EDIT_MENU_W = 180.0
+lit LENS_EDIT_ITEMS = 11
+let g_lens_edit_menu_open = false
+let g_lens_edit_menu_block = false
+
+fn lens_edit_label(index: i32) str {
+    if index == 0 { return "Edit selected file" }
+    if index == 1 { return "Save" }
+    if index == 2 { return "Undo" }
+    if index == 3 { return "Redo" }
+    if index == 4 { return "Select All" }
+    if index == 5 { return "Copy" }
+    if index == 6 { return "Cut" }
+    if index == 7 { return "Paste" }
+    if index == 8 { return "Insert Tab" }
+    if index == 9 { return "Select Word" }
+    return "Show / Hide Keyboard"
+}
+
+fn lens_edit_action(v: ref view, index: i32) {
+    g_lens_edit_menu_open = false
+    if index == 0 {
+        lens_open(g_lens_selected)
+        return
+    }
+    if g_lens_editing == false { return }
+    if index == 1 { workspace_save_active() }
+    if index == 2 { undo() }
+    if index == 3 { redo() }
+    if index == 4 { select_all() }
+    if index == 5 && has_selection() { view_set_clipboard(v, selected_text()) }
+    if index == 6 && has_selection() {
+        view_set_clipboard(v, selected_text())
+        delete_selection()
+    }
+    if index == 7 { paste_str(view_get_clipboard(v)) }
+    if index == 8 { insert_tab() }
+    if index == 9 { select_word_at(cur_line(), cur_col()) }
+    if index == 10 { g_mobile_keyboard_hidden = !g_mobile_keyboard_hidden }
+    g_caret_follow = true
+    g_lens_input_dirty = true
+}
+
+fn lens_edit_menu_mouse(v: ref view) bool {
+    let y = lens_mode_popup_y()
+    g_lens_edit_menu_block = g_lens_edit_menu_open && raw_hit(v, LENS_EDIT_X, y, LENS_EDIT_MENU_W, LENS_MODE_ITEM * (LENS_EDIT_ITEMS as f64))
+    if v.mouse_pressed == false { return false }
+    if raw_hit(v, LENS_EDIT_X, lens_mode_y(), LENS_EDIT_W, LENS_MODE_H) {
+        g_lens_edit_menu_open = !g_lens_edit_menu_open
+        g_lens_repo_menu_open = false
+        g_lens_file_open = false
+        g_lens_view_open = false
+        g_lens_mode_open = false
+        g_lens_branch_open = false
+        v.mouse_pressed = false
+        return true
+    }
+    if g_lens_edit_menu_open {
+        if g_lens_edit_menu_block {
+            lens_edit_action(v, clamp_i(((g_mouse_y - y) / LENS_MODE_ITEM) as i32, 0, LENS_EDIT_ITEMS - 1))
+            v.mouse_pressed = false
+            return true
+        }
+        g_lens_edit_menu_open = false
+    }
+    return false
+}
+
+fn lens_draw_edit_menu(r: ref ui_renderer, v: ref view) {
+    let y = lens_mode_y()
+    let border = col_muted()
+    if g_lens_edit_menu_open { border = col_accent() }
+    ui_fill_round_rect(r, LENS_EDIT_X, y, LENS_EDIT_W, LENS_MODE_H, 3.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, LENS_EDIT_X, y, LENS_EDIT_W, LENS_MODE_H, 3.0, 1.0, border, 0.0)
+    draw_centered_text(r, LENS_EDIT_X, y, LENS_EDIT_W, LENS_MODE_H, "Edit v", small_px(), col_text())
+    if g_lens_edit_menu_open == false { return }
+    let top = lens_mode_popup_y()
+    ui_fill_round_rect(r, LENS_EDIT_X, top, LENS_EDIT_MENU_W, LENS_MODE_ITEM * (LENS_EDIT_ITEMS as f64), 3.0, col_popup_bg(), 0.0)
+    for index in 0 to LENS_EDIT_ITEMS {
+        let row = top + (index as f64) * LENS_MODE_ITEM
+        if raw_hit(v, LENS_EDIT_X, row, LENS_EDIT_MENU_W, LENS_MODE_ITEM) {
+            ui_fill_rect(r, LENS_EDIT_X, row, LENS_EDIT_MENU_W, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+        }
+        draw_text_clipped(r, LENS_EDIT_X + 8.0, ui_text_v_center_y(r, row, LENS_MODE_ITEM, small_px(), FONT_MONO()), LENS_EDIT_MENU_W - 16.0, LENS_MODE_ITEM, lens_edit_label(index), small_px(), col_text())
+    }
+}

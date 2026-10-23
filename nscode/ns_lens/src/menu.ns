@@ -47,7 +47,7 @@ lit LENS_SEARCH_ROWS = 12
 lit LENS_SEARCH_ROW_H = 22.0
 lit LENS_COMMIT_W = 560.0
 // The changed files sit under the message field, one tick box per row; past
-// LENS_COMMIT_ROWS the wheel scrolls them.
+// lens_commit_rows() the wheel scrolls them.
 lit LENS_COMMIT_LIST_Y = 84.0
 lit LENS_COMMIT_ROW_H = 22.0
 lit LENS_COMMIT_ROWS = 12
@@ -87,8 +87,13 @@ let g_lens_commit_scroll: i32 = 0
 let g_lens_commit_mode: i32 = 0
 let g_lens_commit_menu_open = false
 
+fn lens_file_items() i32 {
+    return LENS_FILE_ITEMS
+}
+
 fn lens_file_item_label(i: i32) str {
     if i == LENS_FILE_NEW_WINDOW {
+        if lens_mobile() { return "Close Project" }
         return "New Window"
     }
     if i == LENS_FILE_OPEN {
@@ -127,7 +132,10 @@ fn lens_file_item_keys(i: i32) str {
     return ""
 }
 
-fn lens_recent_x() f64 { return LENS_FILE_X + LENS_FILE_MENU_W }
+fn lens_recent_x() f64 {
+    if lens_mobile() { return clamp(g_lens_view_w - lens_recent_width() - 12.0, 12.0, 100000.0) }
+    return LENS_FILE_X + LENS_FILE_MENU_W
+}
 
 fn lens_recent_y() f64 {
     return lens_mode_popup_y() + LENS_MODE_ITEM * (LENS_FILE_RECENT as f64)
@@ -174,6 +182,10 @@ fn lens_view_item_on(i: i32) bool {
 
 fn lens_view_action(i: i32) {
     g_lens_view_open = false
+    if g_workspace_root == "" {
+        g_lens_message = "Open or clone a repository first"
+        return
+    }
     if i == 0 {
         outline_toggle()
     } else {
@@ -215,7 +227,7 @@ fn lens_typing() bool {
 // Pointer input the map must not also take this frame. Floating panels block
 // their own rectangles with their hit tests, so only popups belong here.
 fn lens_menu_blocks() bool {
-    return g_lens_ignore_open || g_lens_commit_open || g_lens_branch_create_open || g_lens_file_block || g_lens_recent_block || g_lens_view_open || g_lens_view_block || g_lens_search_block || g_lens_branch_block || g_lens_remote_block
+    return g_lens_edit_menu_open || g_lens_repo_menu_open || g_lens_ignore_open || g_lens_commit_open || g_lens_branch_create_open || g_lens_file_block || g_lens_recent_block || g_lens_view_open || g_lens_view_block || g_lens_search_block || g_lens_branch_block || g_lens_remote_block
 }
 
 fn cmd_down(v: ref view) bool {
@@ -356,6 +368,10 @@ fn lens_file_action(i: i32) {
         return
     }
     g_lens_file_open = false
+    if g_workspace_root == "" && i >= LENS_FILE_SEARCH && i <= LENS_FILE_IGNORE {
+        g_lens_message = "Open or clone a repository first"
+        return
+    }
     if i == LENS_FILE_NEW_WINDOW {
         lens_new_window()
     } else if i == LENS_FILE_OPEN {
@@ -374,6 +390,19 @@ fn lens_file_action(i: i32) {
 // Start another Lens with no project open. Each window is its own process
 // with its own workspace, panels and terminal.
 fn lens_new_window() {
+    if lens_mobile() {
+        if lens_open_blocked() { return }
+        panel_state_save()
+        g_lens_editing = false
+        g_lens_reading = false
+        g_lens_selected = -1
+        g_lens_selected_path = ""
+        outline_reset()
+        lens_close_root()
+        g_lens_message = ""
+        g_lens_input_dirty = true
+        return
+    }
     if os_launch_self(RECENT_NEW_WINDOW) == 0 {
         g_lens_message = "New Window is not available on this platform"
     }
@@ -476,6 +505,7 @@ fn lens_recent_clear() {
 // Cmd+V. The caret stays at the end.
 fn lens_field_edit(v: ref view, text: str) str {
     let value = text
+    if lens_mobile() { value = value + lens_one_line(view_take_text(v)) }
     if key_edge(v, 259) && value.len > 0 {
         let cut = value.len - 1
         loop cut > 0 && (lens_byte(value, cut) & 192) == 128 {
@@ -500,6 +530,13 @@ fn lens_field_edit(v: ref view, text: str) str {
 // Runs before the editor, so neither the editor nor the map sees keys meant
 // for the shortcuts, the search box or the commit dialog.
 fn lens_menu_keys(v: ref view) {
+    if g_lens_edit_menu_open || g_lens_repo_menu_open {
+        if key_edge(v, 256) {
+            g_lens_edit_menu_open = false
+            lens_repo_menu_close()
+        }
+        return
+    }
     if g_lens_ignore_open {
         lens_ignore_keys(v)
         return
@@ -551,8 +588,8 @@ fn lens_menu_keys(v: ref view) {
         if g_lens_search_selected < g_lens_search_scroll {
             g_lens_search_scroll = g_lens_search_selected
         }
-        if g_lens_search_selected >= g_lens_search_scroll + LENS_SEARCH_ROWS {
-            g_lens_search_scroll = g_lens_search_selected - LENS_SEARCH_ROWS + 1
+        if g_lens_search_selected >= g_lens_search_scroll + lens_search_rows() {
+            g_lens_search_scroll = g_lens_search_selected - lens_search_rows() + 1
         }
         lens_search_set_query(lens_field_edit(v, g_lens_search_query))
         return
@@ -594,29 +631,29 @@ fn lens_menu_keys(v: ref view) {
 }
 
 fn lens_search_x(w: f64) f64 {
-    return clamp((w - LENS_SEARCH_W) * 0.5, 8.0, 100000.0)
+    return clamp((w - lens_search_width()) * 0.5, 8.0, 100000.0)
 }
 
 fn lens_search_y() f64 { return lens_mode_y() + LENS_MODE_H + 8.0 }
 
 fn lens_search_shown_rows() i32 {
-    return clamp_i(g_lens_hit_count - g_lens_search_scroll, 0, LENS_SEARCH_ROWS)
+    return clamp_i(g_lens_hit_count - g_lens_search_scroll, 0, lens_search_rows())
 }
 
 fn lens_search_panel_h() f64 {
     return LENS_SEARCH_INPUT_H + (lens_search_shown_rows() as f64) * LENS_SEARCH_ROW_H + LENS_SEARCH_ROW_H
 }
 
-fn lens_commit_x(w: f64) f64 { return (w - LENS_COMMIT_W) * 0.5 }
+fn lens_commit_x(w: f64) f64 { return (w - lens_commit_width()) * 0.5 }
 
-// One row per listed file up to LENS_COMMIT_ROWS, and one for the note while
+// One row per listed file up to lens_commit_rows(), and one for the note while
 // the list is empty.
 fn lens_commit_shown_rows() i32 {
-    return clamp_i(g_lens_commit_changes, 1, LENS_COMMIT_ROWS)
+    return clamp_i(g_lens_commit_changes, 1, lens_commit_rows())
 }
 
 fn lens_commit_scroll_max() i32 {
-    return clamp_i(g_lens_commit_changes - LENS_COMMIT_ROWS, 0, LENS_COMMIT_FILES)
+    return clamp_i(g_lens_commit_changes - lens_commit_rows(), 0, LENS_COMMIT_FILES)
 }
 
 fn lens_commit_list_h() f64 {
@@ -639,7 +676,7 @@ fn lens_commit_button_y(h: f64) f64 {
 }
 
 fn lens_commit_button_x(w: f64) f64 {
-    return lens_commit_x(w) + LENS_COMMIT_W - 16.0 - LENS_COMMIT_ARROW_W - LENS_COMMIT_BUTTON_W
+    return lens_commit_x(w) + lens_commit_width() - 16.0 - LENS_COMMIT_ARROW_W - LENS_COMMIT_BUTTON_W
 }
 
 fn lens_commit_arrow_x(w: f64) f64 {
@@ -671,26 +708,28 @@ fn lens_commit_menu_y(h: f64) f64 {
 // Pointer input for the File menu, the search box, the commit dialog and the
 // branch menu, ahead of the map. A click outside an open popup closes it.
 fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
+    if lens_edit_menu_mouse(v) { return }
+    if lens_repo_menu_mouse(v) { return }
     let pop_y = lens_mode_popup_y()
-    let pop_h = LENS_MODE_ITEM * (LENS_FILE_ITEMS as f64)
+    let pop_h = LENS_MODE_ITEM * (lens_file_items() as f64)
     g_lens_file_block = g_lens_file_open && raw_hit(v, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h)
-    g_lens_recent_block = g_lens_file_open && g_lens_recent_open && raw_hit(v, lens_recent_x(), lens_recent_y(), LENS_RECENT_W, lens_recent_h())
+    g_lens_recent_block = g_lens_file_open && g_lens_recent_open && raw_hit(v, lens_recent_x(), lens_recent_y(), lens_recent_width(), lens_recent_h())
     // Pointing at a File row shows Open Recent's submenu for its own row and
     // hides it for the others; leaving the popup keeps it as it is.
     if g_lens_file_block {
-        g_lens_recent_open = clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, LENS_FILE_ITEMS - 1) == LENS_FILE_RECENT
+        g_lens_recent_open = clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, lens_file_items() - 1) == LENS_FILE_RECENT
     }
     let view_pop_h = LENS_MODE_ITEM * (LENS_VIEW_ITEMS as f64)
     g_lens_view_block = g_lens_view_open && raw_hit(v, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, view_pop_h)
     let sx = lens_search_x(w)
     let sy = lens_search_y()
-    g_lens_search_block = g_lens_search_open && raw_hit(v, sx, sy, LENS_SEARCH_W, lens_search_panel_h())
+    g_lens_search_block = g_lens_search_open && raw_hit(v, sx, sy, lens_search_width(), lens_search_panel_h())
     if g_lens_search_block && v.scroll_y != 0.0 {
         let step: i32 = 1
         if v.scroll_y > 0.0 {
             step = -1
         }
-        g_lens_search_scroll = clamp_i(g_lens_search_scroll + step, 0, clamp_i(g_lens_hit_count - LENS_SEARCH_ROWS, 0, LENS_HIT_MAX))
+        g_lens_search_scroll = clamp_i(g_lens_search_scroll + step, 0, clamp_i(g_lens_hit_count - lens_search_rows(), 0, LENS_HIT_MAX))
         v.scroll_y = 0.0
     }
     lens_branch_pointer(v, w, h)
@@ -698,7 +737,7 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
         lens_ignore_mouse(v, w, h)
         return
     }
-    if g_lens_commit_open && v.scroll_y != 0.0 && raw_hit(v, lens_commit_x(w), lens_commit_y(h), LENS_COMMIT_W, lens_commit_h()) {
+    if g_lens_commit_open && v.scroll_y != 0.0 && raw_hit(v, lens_commit_x(w), lens_commit_y(h), lens_commit_width(), lens_commit_h()) {
         let step: i32 = 1
         if v.scroll_y > 0.0 {
             step = -1
@@ -734,7 +773,7 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
             lens_commit_submit()
         } else if g_lens_commit_changes > 0 && raw_hit(v, x + 8.0, y + 10.0, 30.0, 28.0) {
             lens_commit_tick_all()
-        } else if g_lens_commit_changes > 0 && raw_hit(v, x + 8.0, list_y, LENS_COMMIT_W - 16.0, lens_commit_list_h()) {
+        } else if g_lens_commit_changes > 0 && raw_hit(v, x + 8.0, list_y, lens_commit_width() - 16.0, lens_commit_list_h()) {
             // A click anywhere on a file's row ticks or unticks it.
             lens_commit_toggle(g_lens_commit_scroll + ((g_mouse_y - list_y) / LENS_COMMIT_ROW_H) as i32)
         }
@@ -788,7 +827,7 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
             return
         }
         if g_lens_file_block {
-            lens_file_action(clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, LENS_FILE_ITEMS - 1))
+            lens_file_action(clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, lens_file_items() - 1))
             return
         }
         g_lens_file_open = false
@@ -850,10 +889,10 @@ fn lens_draw_file_menu(r: ref ui_renderer, v: ref view) {
         return
     }
     let pop_y = lens_mode_popup_y()
-    let pop_h = LENS_MODE_ITEM * (LENS_FILE_ITEMS as f64)
+    let pop_h = LENS_MODE_ITEM * (lens_file_items() as f64)
     ui_fill_round_rect(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h, 3.0, col_popup_bg(), 0.0)
     ui_stroke_round_rect(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
-    for i in 0 to LENS_FILE_ITEMS {
+    for i in 0 to lens_file_items() {
         let iy = pop_y + (i as f64) * LENS_MODE_ITEM
         let parent = i == LENS_FILE_RECENT && g_lens_recent_open
         if parent || raw_hit(v, LENS_FILE_X, iy, LENS_FILE_MENU_W, LENS_MODE_ITEM) {
@@ -876,38 +915,38 @@ fn lens_draw_file_menu(r: ref ui_renderer, v: ref view) {
 fn lens_draw_recent_menu(r: ref ui_renderer, v: ref view) {
     let x = lens_recent_x()
     let y = lens_recent_y()
-    ui_fill_round_rect(r, x, y, LENS_RECENT_W, lens_recent_h(), 3.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, x, y, LENS_RECENT_W, lens_recent_h(), 3.0, 1.0, col_muted(), 0.0)
+    ui_fill_round_rect(r, x, y, lens_recent_width(), lens_recent_h(), 3.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, lens_recent_width(), lens_recent_h(), 3.0, 1.0, col_muted(), 0.0)
     let clear_y = lens_recent_clear_y()
-    ui_fill_rect(r, x + 8.0, clear_y - LENS_RECENT_SEPARATOR_H * 0.5 - 0.5, LENS_RECENT_W - 16.0, 1.0, col_muted(), 0.0)
+    ui_fill_rect(r, x + 8.0, clear_y - LENS_RECENT_SEPARATOR_H * 0.5 - 0.5, lens_recent_width() - 16.0, 1.0, col_muted(), 0.0)
     let clear_color = col_muted()
     if g_recent_count > 0 {
         clear_color = col_text()
-        if raw_hit(v, x, clear_y, LENS_RECENT_W, LENS_MODE_ITEM) {
-            ui_fill_rect(r, x + 1.0, clear_y, LENS_RECENT_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+        if raw_hit(v, x, clear_y, lens_recent_width(), LENS_MODE_ITEM) {
+            ui_fill_rect(r, x + 1.0, clear_y, lens_recent_width() - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
         }
     }
     let clear_ty = ui_text_v_center_y(r, clear_y, LENS_MODE_ITEM, small_px(), FONT_MONO())
-    draw_text_clipped(r, x + 10.0, clear_ty, LENS_RECENT_W - 20.0, LENS_MODE_ITEM, "Clear Recent", small_px(), clear_color)
+    draw_text_clipped(r, x + 10.0, clear_ty, lens_recent_width() - 20.0, LENS_MODE_ITEM, "Clear Recent", small_px(), clear_color)
     let count = g_recent_count
     if count == 0 {
         let ty = ui_text_v_center_y(r, y, LENS_MODE_ITEM, small_px(), FONT_MONO())
-        draw_text_clipped(r, x + 10.0, ty, LENS_RECENT_W - 20.0, LENS_MODE_ITEM, "No recent projects", small_px(), col_muted())
+        draw_text_clipped(r, x + 10.0, ty, lens_recent_width() - 20.0, LENS_MODE_ITEM, "No recent projects", small_px(), col_muted())
         return
     }
     let open = recent_normalize(g_workspace_root)
     for i in 0 to count {
         let iy = y + (i as f64) * LENS_MODE_ITEM
-        if raw_hit(v, x, iy, LENS_RECENT_W, LENS_MODE_ITEM) {
-            ui_fill_rect(r, x + 1.0, iy, LENS_RECENT_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+        if raw_hit(v, x, iy, lens_recent_width(), LENS_MODE_ITEM) {
+            ui_fill_rect(r, x + 1.0, iy, lens_recent_width() - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
         }
         let path = g_recent[i]
         let name = recent_name(path)
         let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
-        let nw = clamp(ui_text_width(r, name, small_px(), FONT_MONO()), 0.0, LENS_RECENT_W - 20.0)
+        let nw = clamp(ui_text_width(r, name, small_px(), FONT_MONO()), 0.0, lens_recent_width() - 20.0)
         draw_text_clipped(r, x + 10.0, row_ty, nw, LENS_MODE_ITEM, name, small_px(), col_text())
         let px = x + 10.0 + nw + 16.0
-        let right = x + LENS_RECENT_W - 10.0
+        let right = x + lens_recent_width() - 10.0
         if path == open {
             let state = "open"
             let sw = ui_text_width(r, state, small_px(), FONT_MONO())
@@ -981,15 +1020,15 @@ fn lens_draw_search(r: ref ui_renderer, v: ref view, w: f64) {
     let x = lens_search_x(w)
     let y = lens_search_y()
     let panel_h = lens_search_panel_h()
-    ui_fill_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, 1.0, col_muted(), 0.0)
-    lens_draw_field(r, x, y, LENS_SEARCH_W, LENS_SEARCH_INPUT_H, g_lens_search_query, "Search file names and contents")
+    ui_fill_round_rect(r, x, y, lens_search_width(), panel_h, 3.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, lens_search_width(), panel_h, 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_field(r, x, y, lens_search_width(), LENS_SEARCH_INPUT_H, g_lens_search_query, "Search file names and contents")
     let rows = lens_search_shown_rows()
     for n in 0 to rows {
         let hit = g_lens_search_scroll + n
         let ry = y + LENS_SEARCH_INPUT_H + (n as f64) * LENS_SEARCH_ROW_H
-        if hit == g_lens_search_selected || raw_hit(v, x, ry, LENS_SEARCH_W, LENS_SEARCH_ROW_H) {
-            ui_fill_rect(r, x + 1.0, ry, LENS_SEARCH_W - 2.0, LENS_SEARCH_ROW_H, col_popup_hi(), 0.0)
+        if hit == g_lens_search_selected || raw_hit(v, x, ry, lens_search_width(), LENS_SEARCH_ROW_H) {
+            ui_fill_rect(r, x + 1.0, ry, lens_search_width() - 2.0, LENS_SEARCH_ROW_H, col_popup_hi(), 0.0)
         }
         let ty = ui_text_v_center_y(r, ry, LENS_SEARCH_ROW_H, small_px(), FONT_MONO())
         let place = lens_relative_path(os_entry_path(g_lens_hit_file[hit]))
@@ -997,10 +1036,10 @@ fn lens_draw_search(r: ref ui_renderer, v: ref view, w: f64) {
             place = place + ":" + itos(g_lens_hit_line[hit] + 1)
         }
         let pw = ui_text_width(r, place, small_px(), FONT_MONO())
-        draw_text_clipped(r, x + 10.0, ty, LENS_SEARCH_W - 20.0, LENS_SEARCH_ROW_H, place, small_px(), col_text())
+        draw_text_clipped(r, x + 10.0, ty, lens_search_width() - 20.0, LENS_SEARCH_ROW_H, place, small_px(), col_text())
         if g_lens_hit_text[hit] != "" {
             let sx = x + 10.0 + pw + 16.0
-            draw_text_clipped(r, sx, ty, x + LENS_SEARCH_W - 10.0 - sx, LENS_SEARCH_ROW_H, g_lens_hit_text[hit], small_px(), col_muted())
+            draw_text_clipped(r, sx, ty, x + lens_search_width() - 10.0 - sx, LENS_SEARCH_ROW_H, g_lens_hit_text[hit], small_px(), col_muted())
         }
     }
     let fy = y + LENS_SEARCH_INPUT_H + (rows as f64) * LENS_SEARCH_ROW_H
@@ -1014,7 +1053,7 @@ fn lens_draw_search(r: ref ui_renderer, v: ref view, w: f64) {
         }
     }
     let ty = ui_text_v_center_y(r, fy, LENS_SEARCH_ROW_H, small_px(), FONT_MONO())
-    draw_text_clipped(r, x + 10.0, ty, LENS_SEARCH_W - 20.0, LENS_SEARCH_ROW_H, note, small_px(), col_muted())
+    draw_text_clipped(r, x + 10.0, ty, lens_search_width() - 20.0, LENS_SEARCH_ROW_H, note, small_px(), col_muted())
 }
 
 fn lens_draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, label: str, strong: bool) {
@@ -1057,7 +1096,7 @@ fn lens_commit_title() str {
 // One listed file: its tick box, its path in its Git state's color, dimmed
 // while unticked, and the state's letter at the end of the row.
 fn lens_draw_commit_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, i: i32) {
-    let row_w = LENS_COMMIT_W - 16.0
+    let row_w = lens_commit_width() - 16.0
     if raw_hit(v, x + 8.0, y, row_w, LENS_COMMIT_ROW_H) {
         ui_fill_rect(r, x + 8.0, y, row_w, LENS_COMMIT_ROW_H, col_popup_hi(), 0.0)
     }
@@ -1072,7 +1111,7 @@ fn lens_draw_commit_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, i: i32)
     let ty = ui_text_v_center_y(r, y, LENS_COMMIT_ROW_H, small_px(), FONT_MONO())
     let letter = lens_git_letter(kind)
     let lw = ui_text_width(r, letter, small_px(), FONT_MONO())
-    let right = x + LENS_COMMIT_W - 24.0
+    let right = x + lens_commit_width() - 24.0
     draw_text_clipped(r, x + 40.0, ty, right - lw - 12.0 - (x + 40.0), LENS_COMMIT_ROW_H, g_lens_commit_path[i], small_px(), color)
     draw_text_clipped(r, right - lw, ty, lw, LENS_COMMIT_ROW_H, letter, small_px(), color)
 }
@@ -1085,7 +1124,7 @@ fn lens_draw_commit_list(r: ref ui_renderer, v: ref view, x: f64, y: f64) {
             note = "Listing changed files..."
         }
         let ty = ui_text_v_center_y(r, y, LENS_COMMIT_ROW_H, small_px(), FONT_MONO())
-        draw_text_clipped(r, x + 16.0, ty, LENS_COMMIT_W - 32.0, LENS_COMMIT_ROW_H, note, small_px(), col_muted())
+        draw_text_clipped(r, x + 16.0, ty, lens_commit_width() - 32.0, LENS_COMMIT_ROW_H, note, small_px(), col_muted())
         return
     }
     g_lens_commit_scroll = clamp_i(g_lens_commit_scroll, 0, lens_commit_scroll_max())
@@ -1098,9 +1137,9 @@ fn lens_draw_commit_list(r: ref ui_renderer, v: ref view, x: f64, y: f64) {
     let max = lens_commit_scroll_max()
     if max > 0 {
         let list_h = lens_commit_list_h()
-        let thumb_h = clamp(list_h * (LENS_COMMIT_ROWS as f64) / (count as f64), 18.0, list_h)
+        let thumb_h = clamp(list_h * (lens_commit_rows() as f64) / (count as f64), 18.0, list_h)
         let fraction = (g_lens_commit_scroll as f64) / (max as f64)
-        let bar_x = x + LENS_COMMIT_W - 12.0
+        let bar_x = x + lens_commit_width() - 12.0
         ui_fill_rect(r, bar_x, y, 2.0, list_h, col_editor_sel(), 0.0)
         ui_fill_rect(r, bar_x, y + (list_h - thumb_h) * fraction, 2.0, thumb_h, col_muted(), 0.0)
     }
@@ -1115,24 +1154,24 @@ fn lens_draw_commit(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let x = lens_commit_x(w)
     let y = lens_commit_y(h)
     let dialog_h = lens_commit_h()
-    ui_fill_round_rect(r, x, y, LENS_COMMIT_W, dialog_h, 4.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, x, y, LENS_COMMIT_W, dialog_h, 4.0, 1.0, col_muted(), 0.0)
+    ui_fill_round_rect(r, x, y, lens_commit_width(), dialog_h, 4.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, lens_commit_width(), dialog_h, 4.0, 1.0, col_muted(), 0.0)
     let title_x = x + 16.0
     if g_lens_commit_changes > 0 {
         let ticked = lens_commit_ticked()
         lens_draw_check(r, x + 16.0, y + 17.0, ticked == g_lens_commit_changes, ticked > 0, col_text())
         title_x = x + 40.0
     }
-    draw_text_clipped(r, title_x, y + 14.0, x + LENS_COMMIT_W - 16.0 - title_x, 20.0, lens_commit_title(), small_px(), col_text())
+    draw_text_clipped(r, title_x, y + 14.0, x + lens_commit_width() - 16.0 - title_x, 20.0, lens_commit_title(), small_px(), col_text())
     let placeholder = "Commit message"
     if g_lens_commit_mode == LENS_COMMIT_APPEND {
         placeholder = "Commit message, or empty to keep the last one"
     }
-    lens_draw_field(r, x + 16.0, y + 42.0, LENS_COMMIT_W - 32.0, 30.0, g_lens_commit_message, placeholder)
+    lens_draw_field(r, x + 16.0, y + 42.0, lens_commit_width() - 32.0, 30.0, g_lens_commit_message, placeholder)
     let list_y = y + LENS_COMMIT_LIST_Y
     lens_draw_commit_list(r, v, x, list_y)
     let hint = "enter  " + lens_commit_mode_verb(g_lens_commit_mode) + "      esc  cancel      click  tick a file"
-    draw_text_clipped(r, x + 16.0, list_y + lens_commit_list_h() + 8.0, LENS_COMMIT_W - 32.0, 20.0, hint, small_px(), col_muted())
+    draw_text_clipped(r, x + 16.0, list_y + lens_commit_list_h() + 8.0, lens_commit_width() - 32.0, 20.0, hint, small_px(), col_muted())
     let button_y = lens_commit_button_y(h)
     lens_draw_button(r, v, lens_commit_cancel_x(w), button_y, 84.0, LENS_COMMIT_BUTTON_H, "Cancel", false)
     lens_draw_commit_button(r, v, lens_commit_button_x(w), button_y)
@@ -1198,36 +1237,78 @@ fn lens_draw_hints(r: ref ui_renderer, bottom: f64) {
 // The running search, commit, push, pull or branch job with its progress,
 // then the message.
 // Work of unknown length shows a block sliding along the bar.
-fn lens_draw_activity(r: ref ui_renderer, y: f64, w: f64) {
-    let label = ""
-    let fraction: f64 = -1.0
-    if lens_job_visible() {
-        label = lens_job_label(g_lens_job_kind)
-        fraction = lens_job_fraction()
-    } else if g_lens_search_running {
-        label = "search"
-        fraction = lens_search_fraction()
+// The activity bar eases toward the reported fraction, which arrives in
+// coarse steps (whole percents, object counts), so it glides rather than jumps.
+let g_lens_activity_label = ""
+let g_lens_activity_shown: f64 = 0.0
+let g_lens_activity_time: f64 = 0.0
+
+fn lens_activity_label() str {
+    if g_mobile_git_running {
+        if g_mobile_git_kind == LENS_MOBILE_GIT_IDENTITY { return "identity" }
+        return "clone"
     }
+    if lens_job_visible() { return lens_job_label(g_lens_job_kind) }
+    if g_lens_search_running { return "search" }
+    return ""
+}
+
+// -1 while the work has no measurable progress.
+fn lens_activity_fraction() f64 {
+    if g_mobile_git_running {
+        let progress = os_git_progress()
+        if progress >= 0 { return clamp(progress as f64 / 100.0, 0.0, 1.0) }
+        return -1.0
+    }
+    if lens_job_visible() { return lens_job_fraction() }
+    if g_lens_search_running { return lens_search_fraction() }
+    return -1.0
+}
+
+// Moves the shown fraction toward `target` for the time since the last frame.
+fn lens_activity_ease(target: f64, now: f64) f64 {
+    let dt = clamp(now - g_lens_activity_time, 0.0, 0.1)
+    g_lens_activity_time = now
+    let step = clamp(dt * 10.0, 0.0, 1.0)
+    let shown = g_lens_activity_shown + (target - g_lens_activity_shown) * step
+    if target - shown < 0.002 && shown - target < 0.002 { shown = target }
+    g_lens_activity_shown = shown
+    return shown
+}
+
+// Progress bars and the indeterminate sweep are animations: while one shows,
+// frames follow the display instead of the idle poll.
+fn lens_animating() bool {
+    return lens_activity_label() != "" || terminal_needs_frames()
+}
+
+fn lens_draw_activity(r: ref ui_renderer, y: f64, w: f64) {
+    let label = lens_activity_label()
+    let fraction = lens_activity_fraction()
+    let now = os_time()
+    if label != g_lens_activity_label || fraction < 0.0 || fraction < g_lens_activity_shown - 0.25 {
+        // A new operation, or one whose count restarted, starts from its value.
+        g_lens_activity_shown = clamp(fraction, 0.0, 1.0)
+        g_lens_activity_time = now
+    }
+    g_lens_activity_label = label
     let ty = ui_text_v_center_y(r, y, LENS_ACTIVITY_H, small_px(), FONT_MONO())
     let x: f64 = 12.0
     if label != "" {
         lit bar_w = 140.0
         draw_text_clipped(r, x, ty, 60.0, LENS_ACTIVITY_H, label, small_px(), col_text())
         let bar_x = x + 64.0
-        let bar_y = y + LENS_ACTIVITY_H * 0.5 - 3.0
-        ui_fill_rect(r, bar_x, bar_y, bar_w, 6.0, col_editor_sel(), 0.0)
+        // The same rounded, outlined meter as the status bar's FPS and RAM.
+        let bar_y = y + (LENS_ACTIVITY_H - STATUS_METER_H) * 0.5
         if fraction >= 0.0 {
-            ui_fill_rect(r, bar_x, bar_y, bar_w * clamp(fraction, 0.0, 1.0), 6.0, col_text(), 0.0)
-            let percent = itos((clamp(fraction, 0.0, 1.0) * 100.0) as i32) + "%"
+            let shown = lens_activity_ease(fraction, now)
+            draw_status_meter(r, bar_x, bar_y, bar_w, shown)
+            let percent = itos((shown * 100.0 + 0.5) as i32) + "%"
             draw_text_clipped(r, bar_x + bar_w + 8.0, ty, 40.0, LENS_ACTIVITY_H, percent, small_px(), col_muted())
         } else {
-            let phase = os_time() * 0.8
-            let t = phase - ((phase as i64) as f64)
-            let swing = clamp(1.0 - 2.0 * t, -1.0, 1.0)
-            if swing < 0.0 {
-                swing = -swing
-            }
-            ui_fill_rect(r, bar_x + (bar_w - 36.0) * swing, bar_y, 36.0, 6.0, col_text(), 0.0)
+            // A segment sweeping back and forth, easing at both ends.
+            let swing = 0.5 - 0.5 * cos(now * 2.4)
+            draw_status_meter_segment(r, bar_x, bar_y, bar_w, swing, 0.26)
         }
         x = bar_x + bar_w + 52.0
     }
@@ -1247,8 +1328,28 @@ fn lens_draw_overlay(r: ref ui_renderer, w: f64, h: f64) {
 fn lens_draw_menus(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_draw_file_menu(r, v)
     lens_draw_view_menu(r, v)
+    lens_draw_edit_menu(r, v)
+    lens_draw_repo_menu(r, v)
     lens_draw_search(r, v, w)
     lens_draw_commit(r, v, w, h)
     lens_draw_branch_popups(r, v, w, h)
     lens_draw_ignore(r, v, w, h)
+}
+
+// The shared dialogs also fit an iPhone with the software keyboard visible.
+fn lens_dialog_width(preferred: f64) f64 {
+    if lens_mobile() { return clamp(g_lens_view_w - 24.0, 200.0, preferred) }
+    return preferred
+}
+fn lens_search_width() f64 { return lens_dialog_width(LENS_SEARCH_W) }
+fn lens_commit_width() f64 { return lens_dialog_width(LENS_COMMIT_W) }
+fn lens_recent_width() f64 { return lens_dialog_width(LENS_RECENT_W) }
+fn lens_branch_create_width() f64 { return lens_dialog_width(LENS_BRANCH_CREATE_W) }
+fn lens_search_rows() i32 {
+    if lens_mobile() { return clamp_i(((g_lens_canvas_h - 125.0) / LENS_SEARCH_ROW_H) as i32, 1, LENS_SEARCH_ROWS) }
+    return LENS_SEARCH_ROWS
+}
+fn lens_commit_rows() i32 {
+    if lens_mobile() { return clamp_i(((g_lens_canvas_h - 224.0) / LENS_COMMIT_ROW_H) as i32, 1, LENS_COMMIT_ROWS) }
+    return LENS_COMMIT_ROWS
 }

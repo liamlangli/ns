@@ -1,0 +1,40 @@
+use std
+use task
+
+async fn double(n: i32) i32 {
+    return n * 2
+}
+
+// A finished task frees its record; its outcome must stay readable through
+// the handle however much later it is asked for.
+fn main() {
+    let first = dispatch(queue_worker) { in return 11 }
+    wait(first)
+    let spawned = double(21)
+    let total: i32 = 0
+    for i in 0 to 300 {
+        let d = dispatch(queue_worker) { in return 1 }
+        total = total + (await d)
+    }
+    assert total == 300
+    assert done(first)
+    assert !cancelled(first)
+    assert (await first) == 11
+    assert (await first) == 11
+    assert (await spawned) == 42
+    let late = dispatch(queue_idle) { in
+        sleep(200)
+        return 5
+    }
+    cancel(late)
+    wait(late)
+    for i in 0 to 50 {
+        let d = dispatch(queue_main) { in return i }
+        assert (await d) == i
+    }
+    assert done(late)
+    assert cancelled(late)
+    cancel(first)
+    assert !cancelled(first)
+    print("task records ok\n")
+}

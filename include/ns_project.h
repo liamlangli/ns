@@ -42,6 +42,9 @@ typedef struct ns_project_spec {
     ns_str source_dir;
     ns_str name;
     ns_str safe_name;
+    // The manifest `display_name`: the name shown under the app icon. Empty
+    // keeps `safe_name`; it never changes identifiers, targets or paths.
+    ns_str display_name;
     ns_str version;
     // Absolute path to the manifest icon, or null when the app has no icon.
     ns_str icon;

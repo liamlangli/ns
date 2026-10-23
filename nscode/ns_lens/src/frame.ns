@@ -52,6 +52,7 @@ fn lens_poll_due(now: f64, active: bool) bool {
 
 fn lens_frame(r: ref ui_renderer, v: ref view) {
     let now = os_time()
+    lens_mobile_tick(v)
     let active = view_is_active(v)
     let input = view_input_pending(v)
     if active == false {

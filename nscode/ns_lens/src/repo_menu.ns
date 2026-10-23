@@ -1,0 +1,96 @@
+// iOS repository and SSH identity actions. Desktop uses its installed Git and
+// ~/.ssh, so the menu only appears on mobile.
+use view
+use ui
+
+lit LENS_REPO_X = LENS_EDIT_X + LENS_EDIT_W + 8.0
+lit LENS_REPO_W = 64.0
+lit LENS_REPO_MENU_W = 200.0
+lit LENS_REPO_ITEMS = 6
+let g_lens_repo_menu_open = false
+let g_lens_repo_menu_block = false
+
+fn lens_repo_menu_shown() bool { return lens_mobile() }
+
+// The map mode menu follows the Repo button where there is one.
+fn lens_repo_menu_end() f64 {
+    if lens_repo_menu_shown() { return LENS_REPO_X + LENS_REPO_W }
+    return LENS_EDIT_X + LENS_EDIT_W
+}
+
+fn lens_repo_label(index: i32) str {
+    if index == 0 { return "Clone Repository..." }
+    if index == 1 { return "Commit Identity..." }
+    if index == 2 { return "Generate SSH Key" }
+    if index == 3 { return "Copy Public Key" }
+    if index == 4 { return "Import SSH Key..." }
+    return "Remove SSH Key"
+}
+
+fn lens_repo_action(v: ref view, index: i32) {
+    g_lens_repo_menu_open = false
+    if index == 0 { lens_mobile_clone() }
+    if index == 1 {
+        if g_workspace_root == "" {
+            g_lens_message = "Open or clone a repository first"
+        } else { lens_mobile_author() }
+    }
+    if index == 2 { lens_mobile_generate_key(v) }
+    if index == 3 { lens_mobile_copy_key(v) }
+    if index == 4 { lens_mobile_import_key() }
+    if index == 5 { lens_mobile_forget_key() }
+    g_lens_input_dirty = true
+}
+
+fn lens_repo_menu_close() {
+    g_lens_repo_menu_open = false
+    g_lens_repo_menu_block = false
+}
+
+fn lens_repo_menu_mouse(v: ref view) bool {
+    if lens_repo_menu_shown() == false { return false }
+    let y = lens_mode_popup_y()
+    g_lens_repo_menu_block = g_lens_repo_menu_open && raw_hit(v, LENS_REPO_X, y, LENS_REPO_MENU_W, LENS_MODE_ITEM * (LENS_REPO_ITEMS as f64))
+    if v.mouse_pressed == false { return false }
+    if raw_hit(v, LENS_REPO_X, lens_mode_y(), LENS_REPO_W, LENS_MODE_H) {
+        g_lens_repo_menu_open = !g_lens_repo_menu_open
+        g_lens_edit_menu_open = false
+        g_lens_file_open = false
+        g_lens_view_open = false
+        g_lens_mode_open = false
+        g_lens_branch_open = false
+        v.mouse_pressed = false
+        return true
+    }
+    if g_lens_repo_menu_open {
+        if g_lens_repo_menu_block {
+            lens_repo_action(v, clamp_i(((g_mouse_y - y) / LENS_MODE_ITEM) as i32, 0, LENS_REPO_ITEMS - 1))
+            v.mouse_pressed = false
+            return true
+        }
+        g_lens_repo_menu_open = false
+    }
+    return false
+}
+
+fn lens_draw_repo_menu(r: ref ui_renderer, v: ref view) {
+    if lens_repo_menu_shown() == false { return }
+    let y = lens_mode_y()
+    let border = col_muted()
+    if g_lens_repo_menu_open { border = col_accent() }
+    ui_fill_round_rect(r, LENS_REPO_X, y, LENS_REPO_W, LENS_MODE_H, 3.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, LENS_REPO_X, y, LENS_REPO_W, LENS_MODE_H, 3.0, 1.0, border, 0.0)
+    draw_centered_text(r, LENS_REPO_X, y, LENS_REPO_W, LENS_MODE_H, "Repo v", small_px(), col_text())
+    if g_lens_repo_menu_open == false { return }
+    let top = lens_mode_popup_y()
+    let pop_h = LENS_MODE_ITEM * (LENS_REPO_ITEMS as f64)
+    ui_fill_round_rect(r, LENS_REPO_X, top, LENS_REPO_MENU_W, pop_h, 3.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, LENS_REPO_X, top, LENS_REPO_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
+    for index in 0 to LENS_REPO_ITEMS {
+        let row = top + (index as f64) * LENS_MODE_ITEM
+        if raw_hit(v, LENS_REPO_X, row, LENS_REPO_MENU_W, LENS_MODE_ITEM) {
+            ui_fill_rect(r, LENS_REPO_X + 1.0, row, LENS_REPO_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+        }
+        draw_text_clipped(r, LENS_REPO_X + 10.0, ui_text_v_center_y(r, row, LENS_MODE_ITEM, small_px(), FONT_MONO()), LENS_REPO_MENU_W - 20.0, LENS_MODE_ITEM, lens_repo_label(index), small_px(), col_text())
+    }
+}

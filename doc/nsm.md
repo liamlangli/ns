@@ -93,6 +93,20 @@ interprets it on any host, and `ns build` builds for the named platform.
 `ns build` of an `emu` target writes
 `bin/<name>.nsc`, and `ns test` runs an `emu` project's tests on ns_cpu.
 
+### Display name
+
+`name` also names the bundle identifier, the Xcode targets and the output
+directories, so it stays an identifier. `display_name` is the name people see
+under the app icon and in the app switcher, and may contain spaces:
+
+```toml
+name = "ns_lens"
+display_name = "ns lens"
+```
+
+`ns project` writes it as the generated apps' `CFBundleDisplayName`; without it
+the label is the identifier form of `name` (`ns-lens`).
+
 ### Mobile orientation
 
 A mobile application usually supports one way of holding the device. The

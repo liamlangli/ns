@@ -370,7 +370,7 @@ int main(void) {
               "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && !text_has(xgenerated, "ZSTD") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 21") &&
+                  text_has(pbx, "NSProjectGeneratorVersion = 23") &&
                   text_has(pbx, "XROS_DEPLOYMENT_TARGET = 26.0"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(pbx, "Cook Textures") && text_has(pbx, "--platform") &&
@@ -411,7 +411,7 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 21;", "NSProjectGeneratorVersion = 21;",
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 23;", "NSProjectGeneratorVersion = 23;",
                                      "NSProjectGeneratorVersion = 18;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");
@@ -475,6 +475,36 @@ int main(void) {
     ns_expect(text_has(linked_pbx, "ns_program.o") && text_has(linked_pbx, "ns_strtab.o") &&
                   !text_has(linked_xc, "ns_program.o"),
               "Xcode link-native app links the compiled program object once, on the target, not via xcconfig inheritance.");
+
+    linked_app.linked_source = ns_str_cstr((i8*)"use os\nfn main() { os_git_embedded() }\n");
+    ns_expect(ns_project_generate_xcode(&linked_app), "Xcode embedded Git app refresh succeeds.");
+    ns_expect(text_has(linked_pbx, "os.git.c in Sources") && text_has(linked_pbx, "os.ssh.c in Sources") &&
+                  text_has(linked_pbx, "os.git.build.sh") &&
+                  text_has(linked_pbx, "iphoneos|iphonesimulator") &&
+                  text_has(linked_xc, "NS_GIT_EMBEDDED=1") && text_has(linked_xc, "libns_git.a"),
+              "Git opt-in builds and statically links the sandboxed mobile backend.");
+    linked_app.linked_source = ns_str_cstr((i8*)"use os\nfn main() {}\n");
+    ns_expect(ns_project_generate_xcode(&linked_app) && !text_has(linked_xc, "NS_GIT_EMBEDDED=1"),
+              "apps without the explicit Git opt-in do not acquire third-party dependencies.");
+    char linked_ios_plist[PATH_MAX], linked_mac_plist[PATH_MAX];
+    path(linked_ios_plist, link_root, "bin/demo-app.nsproject/Info/iOS-Info.plist");
+    path(linked_mac_plist, link_root, "bin/demo-app.nsproject/Info/macOS-Info.plist");
+    ns_expect(text_has(linked_ios_plist, "<key>CFBundleDisplayName</key><string>demo-app</string>"),
+              "without display_name the app is labelled with its identifier.");
+    linked_app.display_name = ns_str_cstr((i8*)"Demo & App");
+    ns_expect(ns_project_generate_xcode(&linked_app) &&
+                  text_has(linked_ios_plist, "<key>CFBundleDisplayName</key><string>Demo &amp; App</string>") &&
+                  text_has(linked_mac_plist, "<key>CFBundleDisplayName</key><string>Demo &amp; App</string>") &&
+                  text_has(linked_ios_plist, "$(PRODUCT_BUNDLE_IDENTIFIER)"),
+              "display_name labels the app, escaped, without changing its identifier.");
+    linked_app.display_name = ns_str_null;
+    ns_expect(!text_has(linked_ios_plist, "UIFileSharingEnabled"),
+              "apps that keep no documents do not appear in the Files app.");
+    linked_app.linked_source = ns_str_cstr((i8*)"use os\nfn main() { os_documents_dir(\"demo\") }\n");
+    ns_expect(ns_project_generate_xcode(&linked_app) && text_has(linked_ios_plist, "UIFileSharingEnabled") &&
+                  text_has(linked_ios_plist, "LSSupportsOpeningDocumentsInPlace") &&
+                  !text_has(linked_mac_plist, "UIFileSharingEnabled"),
+              "os_documents_dir publishes the iOS Documents folder to the Files app.");
 
     char emu_root[] = "/tmp/ns-project-link-emu-XXXXXX";
     ns_expect(mkdtemp(emu_root) != ns_null, "project test creates emu app fixture directory.");

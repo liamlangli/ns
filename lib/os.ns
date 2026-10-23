@@ -64,7 +64,8 @@ ref fn os_time_ms() u64
 ref fn os_time_us() u64
 ref fn os_time_ns() u64
 
-// Current local date/time, including sub-second fields and UTC offset.
+// Current local date/time, including sub-second fields and UTC offset. The
+// record is reused after 15 more calls on the same thread; copy what you keep.
 ref fn os_date_now() ref os_date
 
 // Local formatted strings.
@@ -132,7 +133,8 @@ ref fn os_git_change_kinds(path: str) str
 // a missing credential fails rather than waiting on a prompt. Takes up to
 // 8192 arguments. Returns stdout and stderr together, keeping the last 64 KiB;
 // os_git_status() is the exit status, -1 when Git could not run. Blocking:
-// call it from a worker task.
+// call it from a worker task. Embedded iOS Git implements the Lens command
+// subset in-process; first-use SSH host trust can show a native confirmation.
 ref fn os_git_run(folder: str, args: str) str
 // The last percentage the running os_git_run printed (pass `--progress` for
 // push/fetch), or -1 before any. Readable from any thread.
@@ -147,6 +149,11 @@ ref fn os_read_file_bytes(path: str, data: [u8], capacity: i32) i64
 ref fn os_write_file_bytes_atomic(path: str, data: [u8], size: i32) i32
 // Writable per-user application-support directory; it is created on demand.
 ref fn os_app_data_dir(app_name: str) str
+// Writable user-visible documents directory, created on demand: the app's own
+// Documents folder on iOS/visionOS (app_name is unused there), otherwise
+// ~/Documents/<app_name>. Calling it makes `ns project` publish that folder
+// to the Files app, so the user can browse and edit what the app keeps there.
+ref fn os_documents_dir(app_name: str) str
 
 // Recursively snapshot a directory in stable, directories-first name order.
 // Root .gitignore matches and .git metadata are omitted. Entry accessors are
@@ -160,6 +167,9 @@ ref fn os_entry_path(index: i32) str
 ref fn os_entry_depth(index: i32) i32
 ref fn os_entry_parent(index: i32) i32
 ref fn os_entry_is_dir(index: i32) i32
+// The names directly inside one directory, one per line, unordered and
+// without "." or ".."; "" when it is empty, missing or unreadable.
+ref fn os_dir_list(path: str) str
 
 // Recursively watch one workspace root. poll is non-blocking and returns 1
 // after the operating system reports any file-tree change.
@@ -212,6 +222,32 @@ ref fn os_pty_resize(handle: i32, cols: i32, rows: i32) i32
 ref fn os_pty_running(handle: i32) i32
 ref fn os_pty_close(handle: i32)
 
+// Interactive shell on a remote host over SSH, for platforms without a local
+// shell (iOS apps that opt in with os_git_embedded()). It uses the identity
+// os_git_identity_import stored and the same first-use host pins as Git, so a
+// first connection can show a native fingerprint confirmation. os_ssh_open
+// starts connecting in the background and returns a handle above zero, or 0
+// when unavailable or given an invalid host/user. A non-empty `folder` is the
+// remote start directory (`~/` is the remote home). os_ssh_state is one of
+// the OS_SSH_* values below; os_ssh_error explains a failure or the exit.
+// Read, write and resize never block: input typed while connecting is sent
+// once the shell starts, and input still queued when the session ends is
+// dropped, never replayed. Output can be read after the shell exits until it
+// is drained. NUL output bytes are dropped. os_ssh_close disconnects and
+// releases the handle.
+lit OS_SSH_FAILED = -1
+lit OS_SSH_CLOSED = 0
+lit OS_SSH_CONNECTING = 1
+lit OS_SSH_VERIFYING = 2
+lit OS_SSH_OPEN = 3
+ref fn os_ssh_open(host: str, port: i32, user: str, folder: str, cols: i32, rows: i32) i32
+ref fn os_ssh_state(handle: i32) i32
+ref fn os_ssh_error(handle: i32) str
+ref fn os_ssh_read(handle: i32, capacity: i32) str
+ref fn os_ssh_write(handle: i32, data: str) i32
+ref fn os_ssh_resize(handle: i32, cols: i32, rows: i32) i32
+ref fn os_ssh_close(handle: i32)
+
 // Live profiling: start `<exe> profile --live-port <port> [entry]` with
 // `folder` as the child working directory, so a viewer that owns the TCP
 // listener can run, restart, and stop the program it measures. `exe` is the
@@ -228,3 +264,34 @@ ref fn os_process_stop(pid: i32) i32
 // through os_env("NS_ARG0"). Returns 1 when it was started, 0 where a program
 // cannot start itself (iOS, the browser).
 ref fn os_launch_self(arg: str) i32
+
+// Opt in to in-process Git in generated iOS projects. ns project detects this
+// call and builds pinned libgit2/libssh2/OpenSSL static dependencies. Desktop
+// returns false and continues to use its installed Git command.
+ref fn os_git_embedded() bool
+// Apple mobile Keychain only. Stores an OpenSSH/PEM key and its passphrase;
+// false on invalid input or unavailable secure storage. Never writes key files.
+ref fn os_git_identity_import(key: str, passphrase: str) bool
+ref fn os_git_identity_delete() bool
+// Whether a stored identity exists. Generate creates an unencrypted ed25519
+// key in OpenSSH format and stores it like an imported one; it refuses to
+// replace an existing identity. Public returns the stored key's
+// authorized_keys line ("" for a PEM key or none), for the user to add to
+// their Git host or development machine. The private key never leaves Keychain.
+ref fn os_git_identity_exists() bool
+ref fn os_git_identity_generate(comment: str) bool
+ref fn os_git_identity_public() str
+// Nonblocking native dialogs (iOS). One active dialog per process; begin
+// returns 1 if scheduled, 0 if busy/unavailable. Poll: 0 pending, 1 accepted,
+// -1 cancelled/unavailable. Values persist until the next begin. File picker
+// kind 0/1 copies a file/folder into private application support and returns
+// its path. Kind 2 reads a secret file (max 64 KiB) directly into memory;
+// value 0 is its content, with no copy made on disk.
+// A prompt has one field label per line (up to 4); bit i masks field i.
+ref fn os_dialog_file_begin(title: str, kind: i32) i32
+ref fn os_dialog_prompt_begin(title: str, fields: str, secret_mask: i32) i32
+ref fn os_dialog_poll() i32
+ref fn os_dialog_value(index: i32) str
+
+// Wipe completed dialog values, including temporary secret text.
+ref fn os_dialog_clear()

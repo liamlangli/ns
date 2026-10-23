@@ -296,3 +296,9 @@ ref fn view_hand_joint_tracked(hand: i32, joint: i32) bool
 // +Y up, +Z back. Invalid/untracked hands, joints or axes return zero.
 // Samples older than 0.20 seconds are untracked; zero alone is not validity.
 ref fn view_hand_joint_position(hand: i32, joint: i32, axis: i32) f64
+
+// Committed UTF-8 text, including system IME composition, once per frame.
+// On iOS use this for insertion and key events only for shortcuts/navigation.
+ref fn view_on_text_input(v: ref view, text: str) bool
+ref fn view_take_text(v: ref view) str
+ref fn view_set_text_input(v: ref view, enabled: bool)

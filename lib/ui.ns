@@ -318,6 +318,8 @@ ref fn ui_surface_height(r: ref ui_renderer) i32
 // The same two rectangles for layout that takes a rect, in drawing
 // coordinates. ui_safe_rect starts at the origin; ui_surface_rect starts at
 // negative coordinates by exactly the insets, so filling it covers the screen.
+// The returned rect is reused after 15 more such calls on the thread (the
+// same for ui_safe_area and ui_layout); copy fields out to keep them.
 ref fn ui_safe_rect(r: ref ui_renderer) ref ui_rect
 ref fn ui_surface_rect(r: ref ui_renderer) ref ui_rect
 

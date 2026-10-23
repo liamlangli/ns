@@ -112,11 +112,11 @@ static ns_bool ns_xcode_file_exists(const char *path) {
 // `expects_assets` is the project-attribute line the packaged paths of this
 // manifest produce, so a project generated for a different set of them, or for
 // none, is regenerated rather than left carrying the wrong resources.
-#define NS_XCODE_GENERATOR_VERSION "21"
+#define NS_XCODE_GENERATOR_VERSION "23"
 
 static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const char *expects_assets,
                                                         ns_bool expects_app_icon, ns_bool expects_link_native,
-                                                        ns_bool expects_link_emu) {
+                                                        ns_bool expects_link_emu, ns_bool expects_git) {
     FILE *file = fopen(path, "rb");
     if (!file) return false;
     if (fseek(file, 0, SEEK_END) != 0) {
@@ -170,9 +170,11 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const 
          (!expects_link_native && strstr(text, "Compile NS Program")) ||
          (expects_link_emu && !strstr(text, "Build NS Image")) ||
          (!expects_link_emu && strstr(text, "Build NS Image")));
+    ns_bool generated_git_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = " NS_XCODE_GENERATOR_VERSION ";") &&
+        (expects_git != (strstr(text, "Native/src/os.git.build.sh") != NULL));
     free(text);
     return generated_legacy || generated_native_old || generated_native_assets_mismatch ||
-           generated_native_icon_mismatch || generated_native_link_mismatch;
+           generated_native_icon_mismatch || generated_native_link_mismatch || generated_git_mismatch;
 }
 
 // `target = "exec"` compiles the program into the portable Apple targets and
@@ -659,6 +661,8 @@ static const char *const ns_xcode_feature_sources[] = {
     "net.c",
     "secure.c",
     "os.c",
+    "os.git.c",
+    "os.ssh.c",
     "os.osx.m",
     "os.ios.m",
     "os.haptic.apple.m",
@@ -1194,11 +1198,11 @@ static ns_bool ns_xcode_append_orientations(ns_xcode_buffer *plist, const char *
     return ns_xcode_buffer_append(plist, "  </array>\n");
 }
 
-static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platform, const char *safe_name, const char *version,
-                                    u32 orientations) {
+static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platform, const char *display_name, const char *version,
+                                    u32 orientations, ns_bool share_files) {
     ns_xcode_buffer plist = {0};
     ns_bool mobile = strcmp(platform, "macOS") != 0;
-    char *escaped_name = ns_xcode_xml_escape(safe_name);
+    char *escaped_name = ns_xcode_xml_escape(display_name);
     char *escaped_version = ns_xcode_xml_escape(version && version[0] ? version : "1.0");
     if (!escaped_name || !escaped_version || !ns_xcode_buffer_appendf(
             &plist,
@@ -1235,6 +1239,14 @@ static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platfo
             "  <key>NSLocalNetworkUsageDescription</key><string>Connect to devices and services on the local network.</string>\n"
             // The service a Debug build advertises for `ns profiler --device`.
             "  <key>NSBonjourServices</key><array><string>_nsprofile._tcp</string></array>\n")) {
+        free(escaped_name); free(escaped_version); ns_xcode_buffer_free(&plist); return false;
+    }
+    // A program that keeps its documents in os_documents_dir() publishes that
+    // folder to the Files app (On My iPhone > the app), editable in place.
+    if (mobile && share_files &&
+        !ns_xcode_buffer_append(&plist,
+                                "  <key>UIFileSharingEnabled</key><true/>\n"
+                                "  <key>LSSupportsOpeningDocumentsInPlace</key><true/>\n")) {
         free(escaped_name); free(escaped_version); ns_xcode_buffer_free(&plist); return false;
     }
     if (mobile && !ns_xcode_buffer_append(&plist, "  <key>UILaunchScreen</key><dict/>\n")) {
@@ -1323,6 +1335,24 @@ static ns_bool ns_xcode_write_config(const ns_project_spec *spec, const char *ma
                                          "#include? \"NS.Local.xcconfig\"\n",
                                          quoted_root, quoted_executable, safe_name, safe_name, safe_name, safe_name) &&
                  ns_xcode_write(generated, contents.data, contents.len, true);
+    if (ok && spec->linked_source.data && strstr((const char *)spec->linked_source.data, "os_git_embedded(")) {
+        ns_xcode_buffer git_config = {0};
+        ok = ns_xcode_buffer_appendf(&git_config,
+            "\n// In-process Git on iOS; dependencies are built before Compile Sources.\n"
+            "NS_GIT_ROOT = $(SRCROOT)/%s.nsproject/Dependencies/Git/$(PLATFORM_NAME)-arm64\n"
+            "GCC_PREPROCESSOR_DEFINITIONS[sdk=iphone*] = $(inherited) NS_XCLIB=1 NS_DARWIN=1 $(NS_PROFILE_DEFINES) NS_GIT_EMBEDDED=1\n"
+            "HEADER_SEARCH_PATHS[sdk=iphone*] = $(inherited) \"$(NS_GIT_ROOT)/include\"\n"
+            "OTHER_LDFLAGS[sdk=iphone*] = $(inherited) \"$(NS_GIT_ROOT)/libns_git.a\" -framework CoreFoundation\n"
+            "ARCHS[sdk=iphone*] = arm64\n"
+            "#include? \"NS.Local.xcconfig\"\n", safe_name);
+        if (ok) {
+            // Remove the earlier include; user settings must have final say.
+            char *include = strstr(contents.data, "#include? \"NS.Local.xcconfig\"");
+            if (include) { contents.len = (size_t)(include - contents.data); contents.data[contents.len] = 0; }
+            ok = ns_xcode_buffer_append(&contents, git_config.data) && ns_xcode_write(generated, contents.data, contents.len, true);
+        }
+        ns_xcode_buffer_free(&git_config);
+    }
     static const char local_contents[] =
         "// User overrides for the generated NS Xcode project.\n"
         "// This file is created once and is never overwritten by `ns project`.\n";
@@ -1341,6 +1371,7 @@ static ns_bool ns_xcode_refresh_app(const ns_project_spec *spec, const char *man
                                     const char *linked_source, const char *safe_name, const char *version) {
     if (!ns_xcode_validate_modules(linked_source)) return false;
     if (!ns_xcode_write_app_sources(spec, managed_root, runtime_root)) return false;
+    if (!ns_xcode_copy_feature(runtime_root, managed_root, "src", "Native/src", "os.git.build.sh")) return false;
     if (!ns_xcode_write_app_icon(spec, managed_root)) return false;
     for (size_t i = 0; i < ns_xcode_runtime_source_count; ++i) {
         if (!ns_xcode_copy_relative(runtime_root, managed_root, "src", "Runtime/src", ns_xcode_runtime_sources[i])) return false;
@@ -1362,10 +1393,14 @@ static ns_bool ns_xcode_refresh_app(const ns_project_spec *spec, const char *man
     }
     char *generated = ns_xcode_path_join(managed_root, "Generated");
     char *linked = generated ? ns_xcode_path_join(generated, "LinkedProject.ns") : NULL;
+    ns_bool share_files = strstr(linked_source, "os_documents_dir(") != NULL;
+    char *display_name = spec->display_name.data && spec->display_name.len > 0 ? ns_xcode_str_dup(spec->display_name) : NULL;
+    const char *shown = display_name ? display_name : safe_name;
     ns_bool ok = linked && ns_xcode_write(linked, linked_source, strlen(linked_source), true) &&
-                 ns_xcode_write_plist(managed_root, "macOS", safe_name, version, spec->orientations) &&
-                 ns_xcode_write_plist(managed_root, "iOS", safe_name, version, spec->orientations) &&
-                 ns_xcode_write_plist(managed_root, "visionOS", safe_name, version, spec->orientations);
+                 ns_xcode_write_plist(managed_root, "macOS", shown, version, spec->orientations, share_files) &&
+                 ns_xcode_write_plist(managed_root, "iOS", shown, version, spec->orientations, share_files) &&
+                 ns_xcode_write_plist(managed_root, "visionOS", shown, version, spec->orientations, share_files);
+    free(display_name);
     // An eval app with a shipped patch runs those bytes. The file is absent
     // when no patch was written, and generation still succeeds.
     if (ok && !spec->link_native && !spec->link_emu && spec->patch_base_version > 0 && generated) {
@@ -1467,7 +1502,7 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
                       : ns_xcode_buffer_append(&ldflags,
                                                ", \"-framework\", AVFAudio, \"-framework\", Security, \"-framework\", AVFoundation, \"-framework\", CoreMedia, \"-framework\", CoreVideo, \"-framework\", CoreHaptics, \"-framework\", CoreMotion, \"-framework\", Foundation, \"-framework\", GameController, "
                                                "\"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, "
-                                               "\"-framework\", UIKit, \"-lsqlite3\", \"-lz\")");
+                                               "\"-framework\", UIKit, \"-framework\", UniformTypeIdentifiers, \"-lsqlite3\", \"-lz\")");
     }
     ns_xcode_buffer plist_path = {0};
     ns_xcode_buffer bridge_path = {0};
@@ -1779,7 +1814,8 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
     }
     ns_bool has_app_icon = spec->icon.data && spec->icon.len > 0;
     ns_bool overwrite_project = ns_xcode_generated_project_needs_upgrade(project_file, assets_marker.data, has_app_icon,
-                                                                         spec->link_native, spec->link_emu);
+                                                                         spec->link_native, spec->link_emu,
+                                                                         spec->linked_source.data && strstr((const char *)spec->linked_source.data, "os_git_embedded("));
     if (ns_xcode_file_exists(project_file) && !overwrite_project) {
         ns_xcode_buffer_free(&assets_marker);
         ns_xcode_assets_free(&assets);
@@ -1799,6 +1835,14 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         !source_root ||
         !ns_xcode_buffer_append(&script, "set -e\n\"$NS_EXECUTABLE\" project \"$NS_PROJECT_ROOT\"\n")) {
         goto fail;
+    }
+    if (spec->linked_source.data && strstr((const char *)spec->linked_source.data, "os_git_embedded(")) {
+        if (!ns_xcode_buffer_appendf(&script,
+            "case \"$PLATFORM_NAME\" in iphoneos|iphonesimulator)\n"
+            "  sh \"$SRCROOT/%s.nsproject/Native/src/os.git.build.sh\" \"$PLATFORM_NAME\" \"$SRCROOT/%s.nsproject/Dependencies/Git\" arm64\n"
+            "  mkdir -p \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Git-Licenses\"\n"
+            "  cp \"$SRCROOT/%s.nsproject/Dependencies/Git/$PLATFORM_NAME-arm64/licenses/\"* \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Git-Licenses/\"\n"
+            ";; esac\n", safe_name, safe_name, safe_name)) goto fail;
     }
     escaped_script = ns_xcode_escape(script.data);
     if (!escaped_script) goto fail;

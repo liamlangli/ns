@@ -207,6 +207,7 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     ui_resize(r)
     g_mouse_x = ui_content_x(r, v.mouse_x)
     g_mouse_y = ui_content_y(r, v.mouse_y)
+    lens_touch_update(r, v)
     let w = (ui_canvas_width(r) & 1048575) as f64
     let h = (ui_canvas_height(r) & 1048575) as f64
     render_lens(r, v, w, h)
@@ -214,8 +215,17 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
 
 lit STATUS_BAR_H = 28.0
 
+// The top bar reaches up under the status bar, notch or camera housing, and
+// sideways under landscape insets, so no strip of another colour shows.
+fn lens_draw_top_bar(r: ref ui_renderer, top: f64) {
+    let s = ui_surface_rect(r)
+    ui_fill_rect(r, s.x, s.y, s.w, top + LENS_TOP_BAR_H - s.y, col_bar(), 0.0)
+}
+
 fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, detail: lens_detail) {
-    ui_fill_rect(r, x, y, w, STATUS_BAR_H, col_bar(), 0.0)
+    // Down to the bottom of the screen, under the home indicator.
+    let s = ui_surface_rect(r)
+    ui_fill_rect(r, s.x, y, s.w, s.y + s.h - y, col_bar(), 0.0)
     ui_push_clip(r, x, y, w, STATUS_BAR_H)
     let right = x + w - 12.0
     let bar_y = y + 14.0 - STATUS_METER_H * 0.5
@@ -291,6 +301,17 @@ fn draw_status_meter(r: ref ui_renderer, x: f64, y: f64, w: f64, fraction: f64) 
     if fill > 0.0 {
         ui_fill_round_rect(r, x + STATUS_METER_INSET, y + STATUS_METER_INSET, fill, STATUS_METER_H - STATUS_METER_INSET * 2.0, LENS_CORNER_RADIUS - 1.0, col_muted(), 0.0)
     }
+    ui_stroke_round_rect(r, x + 0.5, y + 0.5, w - 1.0, STATUS_METER_H - 1.0, LENS_CORNER_RADIUS, 1.0, col_muted(), 0.0)
+}
+
+// A status meter whose fill is a `share`-wide segment placed at `position`
+// (0 at the left end, 1 at the right), for progress that has no measure.
+fn draw_status_meter_segment(r: ref ui_renderer, x: f64, y: f64, w: f64, position: f64, share: f64) {
+    ui_fill_round_rect(r, x, y, w, STATUS_METER_H, LENS_CORNER_RADIUS, col_editor_bg(), 0.0)
+    let inner = w - STATUS_METER_INSET * 2.0
+    let seg = inner * clamp(share, 0.0, 1.0)
+    let sx = x + STATUS_METER_INSET + (inner - seg) * clamp(position, 0.0, 1.0)
+    ui_fill_round_rect(r, sx, y + STATUS_METER_INSET, seg, STATUS_METER_H - STATUS_METER_INSET * 2.0, LENS_CORNER_RADIUS - 1.0, col_muted(), 0.0)
     ui_stroke_round_rect(r, x + 0.5, y + 0.5, w - 1.0, STATUS_METER_H - 1.0, LENS_CORNER_RADIUS, 1.0, col_muted(), 0.0)
 }
 
@@ -719,6 +740,11 @@ fn shift_down(v: ref view) bool {
 }
 
 fn process_code_keys(v: ref view) {
+    if lens_mobile() {
+        let text = view_take_text(v)
+        if text != "" { paste_str(text)
+            g_caret_follow = true }
+    }
     set_shift(shift_down(v))
 
     // Structural and navigation keys: enter(257), backspace(259), delete(261),

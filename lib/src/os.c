@@ -390,8 +390,10 @@ os_date *os_date_now(void) {
     struct tm local;
     os_localtime(seconds, &local);
 
-    os_date *date = (os_date *)ns_malloc(sizeof(os_date));
-    if (date == NULL) return NULL;
+    // Per-thread ring, not an allocation nobody frees; see ui_result_rect.
+    static _Thread_local os_date ring[16];
+    static _Thread_local u32 next;
+    os_date *date = &ring[next++ % 16];
     date->year = local.tm_year + 1900;
     date->month = local.tm_mon + 1;
     date->day = local.tm_mday;
@@ -540,6 +542,26 @@ const char *os_app_data_dir(const char *app_name) {
     const char *root = getenv("XDG_DATA_HOME");
     if (root && root[0]) snprintf(path, sizeof(path), "%s/%s", root, name);
     else snprintf(path, sizeof(path), "%s/.local/share/%s", getenv("HOME") ? getenv("HOME") : ".", name);
+#endif
+    os_make_dirs(path);
+    return path;
+}
+
+const char *os_documents_dir(const char *app_name) {
+    static char path[OS_MAX_PATH];
+    const char *name = app_name && app_name[0] ? app_name : "ns";
+#ifdef NS_WIN
+    const char *root = getenv("USERPROFILE");
+    snprintf(path, sizeof(path), "%s\\Documents\\%s", root ? root : ".", name);
+#elif defined(__APPLE__) && (TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION))
+    // The sandbox Documents folder is already the app's own, and is what the
+    // Files app shows for it.
+    ns_unused(name);
+    const char *root = getenv("HOME");
+    snprintf(path, sizeof(path), "%s/Documents", root ? root : ".");
+#else
+    const char *root = getenv("HOME");
+    snprintf(path, sizeof(path), "%s/Documents/%s", root ? root : ".", name);
 #endif
     os_make_dirs(path);
     return path;
@@ -873,6 +895,53 @@ i32 os_dir_scan(const char *path) {
 #endif
     os_dir_scan_recursive(path, 0, -1);
     return os_entry_count;
+}
+
+// Child names of one directory, one per line, in no particular order; "" for
+// an empty, missing or unreadable directory. Valid until the next call.
+const char *os_dir_list(const char *path) {
+    static char *text = NULL;
+    size_t used = 0, cap = 0;
+    free(text);
+    text = NULL;
+    if (!path || !path[0]) return "";
+#ifdef NS_WIN
+    char pattern[OS_MAX_PATH];
+    snprintf(pattern, sizeof(pattern), "%s\\*", path);
+    WIN32_FIND_DATAA found;
+    HANDLE handle = FindFirstFileA(pattern, &found);
+    if (handle == INVALID_HANDLE_VALUE) return "";
+    do {
+        const char *name = found.cFileName;
+#else
+    DIR *dir = opendir(path);
+    if (!dir) return "";
+    struct dirent *item;
+    while ((item = readdir(dir)) != NULL) {
+        const char *name = item->d_name;
+#endif
+        if (!strcmp(name, ".") || !strcmp(name, "..") || strchr(name, '\n')) continue;
+        size_t n = strlen(name);
+        if (used + n + 2 > cap) {
+            size_t grown_cap = cap ? cap * 2 : 1024;
+            while (grown_cap < used + n + 2) grown_cap *= 2;
+            char *grown = realloc(text, grown_cap);
+            if (!grown) break;
+            text = grown;
+            cap = grown_cap;
+        }
+        memcpy(text + used, name, n);
+        used += n;
+        text[used++] = '\n';
+        text[used] = 0;
+#ifdef NS_WIN
+    } while (FindNextFileA(handle, &found));
+    FindClose(handle);
+#else
+    }
+    closedir(dir);
+#endif
+    return text ? text : "";
 }
 
 static os_file_entry *os_entry_at(i32 index) {
@@ -1537,12 +1606,23 @@ static _Thread_local char *os_git_output;
 static _Thread_local size_t os_git_output_len;
 static _Thread_local i32 os_git_last_status = -1;
 i32 os_git_status(void) { return os_git_last_status; }
+// A thread's last Git result lives until its next call. Lens calls Git from
+// worker tasks, each on a thread of its own, so a result left in thread-local
+// storage leaked when the thread ended; these keys free it at thread exit.
+static pthread_key_t os_git_keys[3];
+static pthread_once_t os_git_keys_once = PTHREAD_ONCE_INIT;
+static void os_git_keys_init(void) { for (int i = 0; i < 3; ++i) pthread_key_create(&os_git_keys[i], free); }
+static char *os_git_keep(int which, char *text) {
+    pthread_once(&os_git_keys_once, os_git_keys_init);
+    pthread_setspecific(os_git_keys[which], text);
+    return text;
+}
 
 // Git is launched with an argv vector, never through a shell. Reject truncated
 // output instead of letting an incomplete patch masquerade as the entire diff.
 static const char *os_git_capture(char *const argv[], i32 limit, int *exit_status) {
     free(os_git_output);
-    os_git_output = NULL;
+    os_git_output = os_git_keep(0, NULL);
     os_git_output_len = 0;
     *exit_status = -1;
     os_git_last_status = -1;
@@ -1563,7 +1643,7 @@ static const char *os_git_capture(char *const argv[], i32 limit, int *exit_statu
     posix_spawn_file_actions_destroy(&actions);
     close(pipes[1]);
     if (error) { close(pipes[0]); return ""; }
-    os_git_output = malloc((size_t)limit + 1);
+    os_git_output = os_git_keep(0, malloc((size_t)limit + 1));
     size_t used = 0;
     ns_bool failed = os_git_output == NULL;
     char chunk[8192];
@@ -1579,7 +1659,7 @@ static const char *os_git_capture(char *const argv[], i32 limit, int *exit_statu
     close(pipes[0]);
     int status = 0;
     while (waitpid(pid, &status, 0) < 0) { if (errno != EINTR) { failed = true; break; } }
-    if (failed) { free(os_git_output); os_git_output = NULL; return ""; }
+    if (failed) { free(os_git_output); os_git_output = os_git_keep(0, NULL); return ""; }
     os_git_output[used] = 0;
     os_git_output_len = used;
     if (WIFEXITED(status)) *exit_status = WEXITSTATUS(status);
@@ -1622,7 +1702,7 @@ static ns_bool os_git_changes_line(char *out, size_t *used, size_t cap, const ch
 
 static const char *os_git_changes_list(const char *path, ns_bool kinds) {
     free(os_git_changes_text);
-    os_git_changes_text = NULL;
+    os_git_changes_text = os_git_keep(1, NULL);
     if (!path || !path[0]) { os_git_last_status = -1; return ""; }
     int status = 0;
     char *repo[] = {"git", "-C", (char *)path, "rev-parse", "--is-inside-work-tree", NULL};
@@ -1680,7 +1760,7 @@ static const char *os_git_changes_list(const char *path, ns_bool kinds) {
             room = os_git_changes_line(out, &used, cap - 1, raw, from_start, from_end, prefix, prefix_len, 'D');
     }
     out[used] = 0;
-    os_git_changes_text = out;
+    os_git_changes_text = os_git_keep(1, out);
     os_git_last_status = 0;
     return out;
 }
@@ -1803,7 +1883,7 @@ static void os_git_run_scan(const char *data, size_t n, i32 *number, i32 *digits
 
 const char *os_git_run(const char *folder, const char *args) {
     free(os_git_run_text);
-    os_git_run_text = NULL;
+    os_git_run_text = os_git_keep(2, NULL);
     os_git_last_status = -1;
     __atomic_store_n(&os_git_progress_value, -1, __ATOMIC_RELAXED);
     if (!folder || !folder[0] || !args) return "";
@@ -1877,11 +1957,11 @@ const char *os_git_run(const char *folder, const char *args) {
     while (waitpid(pid, &status, 0) < 0) { if (errno != EINTR) { status = -1; break; } }
     if (!text) return "";
     text[used] = 0;
-    os_git_run_text = text;
+    os_git_run_text = os_git_keep(2, text);
     os_git_last_status = status >= 0 && WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     return os_git_run_text;
 }
-#else
+#elif !defined(NS_GIT_EMBEDDED)
 i32 os_git_status(void) { return -1; }
 i32 os_git_progress(void) { return -1; }
 const char *os_git_run(const char *folder, const char *args) { ns_unused(folder); ns_unused(args); return ""; }
@@ -1892,4 +1972,29 @@ const char *os_git_diff_text(const char *before, const char *after, i32 max_byte
 }
 const char *os_git_changes(const char *path) { ns_unused(path); return ""; }
 const char *os_git_change_kinds(const char *path) { ns_unused(path); return ""; }
+#endif
+
+#ifndef NS_GIT_EMBEDDED
+ns_bool os_git_embedded(void) { return false; }
+ns_bool os_git_identity_import(const char *key, const char *passphrase) { ns_unused(key); ns_unused(passphrase); return false; }
+ns_bool os_git_identity_delete(void) { return false; }
+ns_bool os_git_identity_exists(void) { return false; }
+ns_bool os_git_identity_generate(const char *comment) { ns_unused(comment); return false; }
+const char *os_git_identity_public(void) { return ""; }
+i32 os_ssh_open(const char *host, i32 port, const char *user, const char *folder, i32 cols, i32 rows) {
+    ns_unused(host); ns_unused(port); ns_unused(user); ns_unused(folder); ns_unused(cols); ns_unused(rows); return 0;
+}
+i32 os_ssh_state(i32 handle) { ns_unused(handle); return -1; }
+const char *os_ssh_error(i32 handle) { ns_unused(handle); return "SSH terminals are not available in this build"; }
+const char *os_ssh_read(i32 handle, i32 capacity) { ns_unused(handle); ns_unused(capacity); return ""; }
+i32 os_ssh_write(i32 handle, const char *data) { ns_unused(handle); ns_unused(data); return -1; }
+i32 os_ssh_resize(i32 handle, i32 cols, i32 rows) { ns_unused(handle); ns_unused(cols); ns_unused(rows); return 0; }
+void os_ssh_close(i32 handle) { ns_unused(handle); }
+#endif
+#if !(defined(__APPLE__) && TARGET_OS_IOS)
+i32 os_dialog_file_begin(const char *title, i32 kind) { ns_unused(title); ns_unused(kind); return 0; }
+i32 os_dialog_prompt_begin(const char *title, const char *fields, i32 secret_mask) { ns_unused(title); ns_unused(fields); ns_unused(secret_mask); return 0; }
+void os_dialog_clear(void) {}
+i32 os_dialog_poll(void) { return -1; }
+const char *os_dialog_value(i32 index) { ns_unused(index); return ""; }
 #endif

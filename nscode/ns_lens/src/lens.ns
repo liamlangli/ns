@@ -80,6 +80,14 @@ let g_lens_built_r0 = [i32](49)
 let g_lens_built_r1 = [i32](49)
 let g_lens_render_serial: i32 = 0
 lit LENS_GLYPH_VERTEX_BUDGET = 2000000
+// Each retained vertex costs a CPU copy and a GPU copy. A phone shows far
+// fewer glyphs at once and has a much lower memory ceiling.
+lit LENS_GLYPH_VERTEX_BUDGET_MOBILE = 750000
+
+fn lens_glyph_vertex_budget() i32 {
+    if lens_mobile() { return LENS_GLYPH_VERTEX_BUDGET_MOBILE }
+    return LENS_GLYPH_VERTEX_BUDGET
+}
 // Display rows of each file: its lines plus their wrapped continuations.
 let g_lens_source_rows = [i32](4096)
 // Bytes per display row: most lines fit, longer ones wrap onto more rows.
@@ -738,6 +746,7 @@ fn lens_open(index: i32) bool {
         g_workspace_originals[index] = text
         g_workspace_opened[index] = 1
     }
+    g_mobile_keyboard_hidden = false
     g_lens_editing = workspace_open(index)
     g_lens_message = ""
     g_code_scroll = 0.0
@@ -745,7 +754,7 @@ fn lens_open(index: i32) bool {
 }
 
 // The map menu sits just right of View.
-fn lens_mode_x() f64 { return LENS_VIEW_X + LENS_VIEW_W + 8.0 }
+fn lens_mode_x() f64 { return lens_repo_menu_end() + 8.0 }
 
 // Apply the panel state just loaded for a project: the outline follows its
 // saved open flag, and the shell is restarted in the new workspace root. A
@@ -776,6 +785,10 @@ fn lens_open_blocked() bool {
 // File > Open (Cmd+O): pick a folder and map it.
 fn lens_open_project() {
     if lens_open_blocked() {
+        return
+    }
+    if lens_mobile() {
+        lens_mobile_open()
         return
     }
     let root = os_open_folder_dialog("Open code project")
@@ -1034,8 +1047,11 @@ let g_lens_empty_recent_poll: f64 = 0.0
 // recent projects listed below it; the button and Cmd+O pick a folder, a row
 // maps that project. A folder that failed to open says so below the button.
 fn lens_render_empty(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    g_lens_view_w = w
+    g_lens_canvas_h = h
+    lens_menu_mouse(v, w, h)
     let top = main_menu_h()
-    ui_fill_rect(r, 0.0, top, w, h - top, col_editor_bg(), 0.0)
+    ui_fill_surface(r, col_editor_bg())
     view_set_cursor(v, VIEW_CURSOR_ARROW)
     let now = os_time()
     if now >= g_lens_empty_recent_poll {
@@ -1059,17 +1075,18 @@ fn lens_render_empty(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     if rows > 0 {
         list_h = 24.0 + LENS_EMPTY_RECENT_ROW * ((rows + 1) as f64)
     }
-    let block_h = LENS_EMPTY_BUTTON_H + message_h + list_h
+    let extra_h: f64 = 0.0
+    let block_h = LENS_EMPTY_BUTTON_H + extra_h + message_h + list_h
     let bx = (w - LENS_EMPTY_BUTTON_W) * 0.5
     let by = top + (h - top - block_h) * 0.5
     lens_draw_button(r, v, bx, by, LENS_EMPTY_BUTTON_W, LENS_EMPTY_BUTTON_H, "Open Folder...", false)
     if g_lens_message != "" {
-        draw_centered_text(r, 0.0, by + LENS_EMPTY_BUTTON_H + 12.0, w, 20.0, g_lens_message, small_px(), col_muted())
+        draw_centered_text(r, 0.0, by + LENS_EMPTY_BUTTON_H + extra_h + 12.0, w, 20.0, g_lens_message, small_px(), col_muted())
     }
     let pressed = v.mouse_pressed && raw_hit(v, bx, by, LENS_EMPTY_BUTTON_W, LENS_EMPTY_BUTTON_H)
     let open_row = -1
     if rows > 0 {
-        let hy = by + LENS_EMPTY_BUTTON_H + message_h + 24.0
+        let hy = by + LENS_EMPTY_BUTTON_H + extra_h + message_h + 24.0
         let head_ty = ui_text_v_center_y(r, hy, LENS_EMPTY_RECENT_ROW, small_px(), FONT_MONO())
         draw_text_clipped(r, list_x + 10.0, head_ty, list_w - 20.0, LENS_EMPTY_RECENT_ROW, "Recent", small_px(), col_muted())
         ui_fill_rect(r, list_x, hy + LENS_EMPTY_RECENT_ROW - 1.0, list_w, 1.0, col_editor_panel_hi(), 0.0)
@@ -1101,7 +1118,14 @@ fn lens_render_empty(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     } else if open_row >= 0 {
         lens_open_root(g_recent[open_row])
     }
-    if g_workspace_root != "" {
+    lens_draw_file_menu(r, v)
+    lens_draw_view_menu(r, v)
+    lens_draw_edit_menu(r, v)
+    lens_draw_repo_menu(r, v)
+    if g_mobile_git_running { lens_draw_activity(r, h - STATUS_BAR_H - LENS_ACTIVITY_H, w) }
+    if lens_animating() {
+        g_lens_frame_delay = 0
+    } else if g_workspace_root != "" {
         g_lens_frame_delay = 1
     } else {
         g_lens_frame_delay = LENS_IDLE_POLL_MS
@@ -1196,7 +1220,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let map_w = w
     g_lens_view_w = w
     g_lens_body_h = body_h
-    ui_fill_rect(r, 0.0, top, w, body_h, col_editor_bg(), 0.0)
+    // The surface, not the safe rect: the notch, home indicator and rounded
+    // corners show the map's background rather than the clear colour.
+    ui_fill_surface(r, col_editor_bg())
     lens_menu_keys(v)
     lens_menu_mouse(v, w, h)
     lens_mode_handle(v, w)
@@ -1476,7 +1502,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     ui_end_plane(r)
     g_mouse_x = screen_x
     g_mouse_y = screen_y
-    ui_fill_rect(r, 0.0, top, w, LENS_TOP_BAR_H, col_bar(), 0.0)
+    lens_draw_top_bar(r, top)
     if lens_history_active() {
         lens_history_note(r, w, top, body_h)
     } else if lens_file_count() == 0 {
@@ -1525,19 +1551,17 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_draw_menus(r, v, w, h)
 
     lens_warm_cache(moving)
-    if moving {
-        // The display paces a moving camera. A timer started after the frame
-        // would add its delay to the frame's own cost.
+    if moving || lens_animating() {
+        // The display paces a moving camera and every animation (progress
+        // bars, the caret fade). A timer started after the frame would add
+        // its delay to the frame's own cost.
         g_lens_frame_delay = 0
     } else if g_lens_input_dirty {
         // A panel action or terminal chunk changed what this frame should show.
         g_lens_input_dirty = false
         g_lens_frame_delay = 1
-    } else if read_budget == 0 || g_lens_io_running || g_lens_change_running || lens_history_busy() || g_lens_close_view || lens_job_visible() || g_lens_search_running {
+    } else if read_budget == 0 || g_lens_io_running || g_lens_change_running || lens_history_busy() || g_lens_close_view {
         g_lens_frame_delay = 16
-    } else if terminal_needs_frames() {
-        // A fading caret needs only 20 Hz; typing still wakes immediately.
-        g_lens_frame_delay = 50
     } else {
         // Idle polling keeps file watching alive without drawing 60 empty frames.
         g_lens_frame_delay = LENS_IDLE_POLL_MS
@@ -2374,7 +2398,7 @@ fn lens_trim_glyphs(r: ref ui_renderer) {
     for s in 0 to LENS_CACHE_SLOTS + 1 {
         vertices = vertices + ui_rect_batch_vertex_count(r, g_lens_glyph_batch[s])
     }
-    loop vertices > LENS_GLYPH_VERTEX_BUDGET {
+    loop vertices > lens_glyph_vertex_budget() {
         let victim: i32 = -1
         let oldest: f64 = os_time() + 1.0
         for s in 0 to LENS_CACHE_SLOTS + 1 {
@@ -2410,7 +2434,8 @@ fn lens_pan_input(v: ref view, over_map: bool) {
         g_lens_panning = over_map
     }
     if g_lens_view_mode == LENS_MODE_REF && g_lens_ref_drag >= 0 { g_lens_panning = false }
-    if g_lens_panning && v.mouse_down && !v.mouse_pressed {
+    // A finger landing or lifting moves the centroid; the drag restarts there.
+    if g_lens_panning && v.mouse_down && !v.mouse_pressed && !g_lens_touch_rebase {
         g_lens_target_x = g_lens_target_x - (g_mouse_x - g_lens_drag_x) * g_lens_distance / 800.0
         g_lens_target_y = g_lens_target_y - (g_mouse_y - g_lens_drag_y) * g_lens_distance / 800.0
     }

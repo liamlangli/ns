@@ -24,6 +24,7 @@ static i32 view_ios_active_touch_count;
 // committed in the background, and the vsync link and snapshot resizes keep
 // asking for frames through the transition, so no frame runs while inactive.
 static BOOL view_ios_inactive;
+static CGFloat view_ios_keyboard_inset;
 
 static UIWindow *view_ios_key_window(void);
 static void view_ios_sync_metrics(MTKView *metal_view);
@@ -82,7 +83,7 @@ static void view_ios_sync_metrics(MTKView *metal_view) {
         UIWindow *window = view_ios_key_window();
         if (window) insets = window.safeAreaInsets;
     }
-    view_set_safe_area(&view_ios_state, insets.top, insets.right, insets.bottom, insets.left);
+    view_set_safe_area(&view_ios_state, insets.top, insets.right, MAX(insets.bottom, view_ios_keyboard_inset), insets.left);
 }
 
 static UIWindow *view_ios_key_window(void) {
@@ -131,6 +132,92 @@ static void view_ios_touch(UITouch *touch, i32 phase) {
     view_ios_state.mouse_down = view_ios_active_touch_count > 0;
 }
 
+// A system text view owns marked text until the IME commits it. The actual
+// document, selection and undo history remain in the shared ns editor.
+static void view_ios_pulse(i32 key, UIKeyModifierFlags modifiers) {
+    i32 mods[] = {VIEW_KEY_LEFT_SHIFT, VIEW_KEY_LEFT_CONTROL, VIEW_KEY_LEFT_ALT, VIEW_KEY_LEFT_SUPER};
+    UIKeyModifierFlags flags[] = {UIKeyModifierShift, UIKeyModifierControl, UIKeyModifierAlternate, UIKeyModifierCommand};
+    for (int i = 0; i < 4; ++i) if (modifiers & flags[i]) view_on_key_action(&view_ios_state, mods[i], VIEW_BUTTON_ACTION_PRESS);
+    view_on_key_action(&view_ios_state, key, VIEW_BUTTON_ACTION_PRESS);
+    view_on_key_action(&view_ios_state, key, VIEW_BUTTON_ACTION_RELEASE);
+    for (int i = 0; i < 4; ++i) if (modifiers & flags[i]) view_on_key_action(&view_ios_state, mods[i], VIEW_BUTTON_ACTION_RELEASE);
+    view_request_frame(&view_ios_state, 1);
+}
+@interface NSIOSTextInput : UITextView <UITextViewDelegate>
+@end
+static NSIOSTextInput *view_ios_text_view;
+@implementation NSIOSTextInput
+- (void)resetProxy {
+    self.text = @"\u200b";
+    self.selectedRange = NSMakeRange(1, 0);
+}
+- (BOOL)textView:(UITextView *)textView shouldChangeTextInRange:(NSRange)range replacementText:(NSString *)text {
+    if (!textView.markedTextRange && [text isEqualToString:@"\n"]) { view_ios_pulse(VIEW_KEY_ENTER, 0); return NO; }
+    if (!textView.markedTextRange && !text.length && range.location == 0) { view_ios_pulse(VIEW_KEY_BACKSPACE, 0); return NO; }
+    return YES;
+}
+- (void)textViewDidChange:(UITextView *)textView {
+    if (textView.markedTextRange) return;
+    NSString *text = textView.text;
+    if ([text hasPrefix:@"\u200b"]) text = [text substringFromIndex:1];
+    if (text.length && !view_on_text_input(&view_ios_state, text.UTF8String)) return;
+    [self resetProxy];
+}
+- (void)copy:(id)sender { (void)sender; view_ios_pulse(VIEW_KEY_C, UIKeyModifierCommand); }
+- (void)cut:(id)sender { (void)sender; view_ios_pulse(VIEW_KEY_X, UIKeyModifierCommand); }
+- (void)paste:(id)sender { (void)sender; view_ios_pulse(VIEW_KEY_V, UIKeyModifierCommand); }
+- (void)selectAll:(id)sender { (void)sender; view_ios_pulse(VIEW_KEY_A, UIKeyModifierCommand); }
+- (NSArray<UIKeyCommand *> *)keyCommands {
+    NSMutableArray *keys = [NSMutableArray array];
+    NSArray *inputs = @[UIKeyInputLeftArrow, UIKeyInputRightArrow, UIKeyInputUpArrow, UIKeyInputDownArrow, UIKeyInputEscape, @"\t"];
+    for (NSString *input in inputs) for (NSNumber *mask in @[@0, @(UIKeyModifierShift)]) {
+        UIKeyCommand *key = [UIKeyCommand keyCommandWithInput:input modifierFlags:mask.unsignedIntegerValue action:@selector(inputKey:)];
+        key.wantsPriorityOverSystemBehavior = YES; [keys addObject:key];
+    }
+    for (NSString *input in @[@"a", @"c", @"x", @"v", @"z", @"y", @"s", @"w", @"o", @"p", @"n", @"\r"]) {
+        for (NSNumber *mask in @[@(UIKeyModifierCommand), @(UIKeyModifierCommand | UIKeyModifierShift)]) {
+            UIKeyCommand *key = [UIKeyCommand keyCommandWithInput:input modifierFlags:mask.unsignedIntegerValue action:@selector(inputKey:)];
+            key.wantsPriorityOverSystemBehavior = YES; [keys addObject:key];
+        }
+    }
+    return keys;
+}
+- (void)inputKey:(UIKeyCommand *)command {
+    NSString *input = command.input;
+    i32 key = 0;
+    if ([input isEqual:UIKeyInputLeftArrow]) key = VIEW_KEY_LEFT;
+    else if ([input isEqual:UIKeyInputRightArrow]) key = VIEW_KEY_RIGHT;
+    else if ([input isEqual:UIKeyInputUpArrow]) key = VIEW_KEY_UP;
+    else if ([input isEqual:UIKeyInputDownArrow]) key = VIEW_KEY_DOWN;
+    else if ([input isEqual:UIKeyInputEscape]) key = VIEW_KEY_ESCAPE;
+    else if ([input isEqual:@"\t"]) key = VIEW_KEY_TAB;
+    else if ([input isEqual:@"\r"]) key = VIEW_KEY_ENTER;
+    else if (input.length == 1) key = [input.uppercaseString characterAtIndex:0];
+    if (key) view_ios_pulse(key, command.modifierFlags);
+}
+@end
+void view_ios_text_input(view *value, ns_bool enabled) {
+    if (!value) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!view_ios_text_view) {
+            view_ios_text_view = [[NSIOSTextInput alloc] initWithFrame:CGRectMake(-2, -2, 1, 1)];
+            view_ios_text_view.delegate = view_ios_text_view;
+            view_ios_text_view.autocorrectionType = UITextAutocorrectionTypeNo;
+            view_ios_text_view.autocapitalizationType = UITextAutocapitalizationTypeNone;
+            view_ios_text_view.smartQuotesType = UITextSmartQuotesTypeNo;
+            view_ios_text_view.smartDashesType = UITextSmartDashesTypeNo;
+            view_ios_text_view.smartInsertDeleteType = UITextSmartInsertDeleteTypeNo;
+            [view_ios_text_view resetProxy];
+            [view_ios_metal_view addSubview:view_ios_text_view];
+        }
+        if (enabled) {
+            if (!view_ios_text_view.isFirstResponder) [view_ios_text_view becomeFirstResponder];
+        } else {
+            [view_ios_text_view resignFirstResponder];
+            [view_ios_metal_view becomeFirstResponder];
+        }
+    });
+}
 @interface NSIOSMetalView : MTKView
 @end
 
@@ -138,6 +225,9 @@ static void view_ios_touch(UITouch *touch, i32 phase) {
 @end
 
 @implementation NSIOSMetalView
+- (BOOL)canBecomeFirstResponder { return YES; }
+- (NSArray<UIKeyCommand *> *)keyCommands { return view_ios_text_view.keyCommands; }
+- (void)inputKey:(UIKeyCommand *)command { [view_ios_text_view inputKey:command]; }
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     (void)event;
     for (UITouch *touch in touches) view_ios_touch(touch, VIEW_INPUT_PHASE_BEGAN);
@@ -323,7 +413,16 @@ view *view_create(const char *title, i32 width, i32 height) {
         capture.numberOfTapsRequired = 1;
         view_ios_add_gesture(capture);
         [container addSubview:view_ios_metal_view];
+        [NSNotificationCenter.defaultCenter addObserverForName:UIKeyboardWillChangeFrameNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            CGRect end = [note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+            CGRect frame = [view_ios_metal_view convertRect:end fromView:nil];
+            CGRect overlap = CGRectIntersection(view_ios_metal_view.bounds, frame);
+            // A floating keyboard must not shrink the entire canvas.
+            view_ios_keyboard_inset = !CGRectIsNull(overlap) && CGRectGetMaxY(overlap) >= CGRectGetHeight(view_ios_metal_view.bounds) - 1 && CGRectGetWidth(overlap) >= CGRectGetWidth(view_ios_metal_view.bounds) * 0.8 ? CGRectGetHeight(overlap) : 0;
+            view_ios_sync_metrics(view_ios_metal_view); view_request_frame(&view_ios_state, 1);
+        }];
         view_ios_sync_metrics(view_ios_metal_view);
+        view_ios_text_input(&view_ios_state, false);
         view_ios_state.native_window = (__bridge void *)view_ios_metal_view;
         view_ios_state.gpu_device = (__bridge void *)view_ios_device;
         view_apple_gamepad_start(&view_ios_state);

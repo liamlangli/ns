@@ -1,0 +1,402 @@
+// iOS repository onboarding. Keys stay in Keychain; repositories and editor
+// state live in Application Support, never in the signed app resources.
+use os
+use task
+use view
+
+let g_mobile_dialog: i32 = 0
+let g_mobile_private_key = ""
+let g_mobile_git_running = false
+let g_mobile_git_path = ""
+let g_mobile_git_lock: ref os_lock = nil
+let g_mobile_git_lock_ready = false
+// One repository operation at a time: a clone or the commit identity.
+lit LENS_MOBILE_GIT_CLONE = 1
+lit LENS_MOBILE_GIT_IDENTITY = 2
+let g_mobile_git_kind: i32 = 0
+// done, status, and 1 when the clone found no commit identity yet.
+let g_mobile_git_state = [i32](3)
+let g_mobile_git_result = [str](1)
+let g_mobile_keyboard_hidden = false
+let g_mobile_keyboard_on = false
+
+fn lens_mobile() bool { return os_platform() == OS_PLATFORM_IOS }
+
+fn lens_mobile_start() {
+    if lens_mobile() == false { return }
+    // Calling this opts this generated app into the embedded Git build.
+    if os_git_embedded() == false { g_lens_message = "This iOS build needs embedded Git support" }
+    recent_load()
+    lens_mobile_relocate_recent()
+    lens_mobile_move_leftovers()
+    g_workspace_root = ""
+    if g_recent_count > 0 {
+        g_workspace_root = g_recent[0]
+        g_recent_restored = true
+    }
+}
+
+// The part of `path` after the last `marker`, "" when it has none.
+fn lens_mobile_after(path: str, marker: str) str {
+    let at: i32 = -1
+    let from: i32 = 0
+    loop from >= 0 {
+        let hit = lens_search_find(path, from, path.len, marker, false)
+        if hit >= 0 {
+            at = hit
+            from = hit + 1
+        } else { from = -1 }
+    }
+    if at < 0 { return "" }
+    return substr(path, at + marker.len, path.len - at - marker.len)
+}
+
+// Move `from` into Documents under `name`, or `name 2`, `name 3`... when the
+// name is taken. Returns the new path, "" when nothing moved.
+fn lens_mobile_move_to_documents(from: str, name: str) str {
+    let docs = os_documents_dir("ns_lens")
+    for n in 1 to 100 {
+        let target = docs + "/" + name
+        if n > 1 { target = target + " " + itos(n) }
+        if os_rename_path(from, target) != 0 { return target }
+    }
+    return ""
+}
+
+// Where a recent project lives now. Clones and imports used to stay in
+// private Application Support; they move into Documents, which the Files app
+// shows. iOS can also move the whole container on reinstall, so paths are
+// rebuilt from the current Documents and Application Support folders.
+fn lens_mobile_relocate(path: str) str {
+    let docs = lens_mobile_after(path, "/Documents/")
+    if docs != "" { return os_documents_dir("ns_lens") + "/" + docs }
+    let data = os_app_data_dir("ns_lens")
+    let repo = lens_mobile_after(path, "/Application Support/ns_lens/Repositories/")
+    if repo != "" {
+        let moved = lens_mobile_move_to_documents(data + "/Repositories/" + repo, repo)
+        if moved != "" { return moved }
+        return data + "/Repositories/" + repo
+    }
+    // Imports/<id>/<folder>
+    let import = lens_mobile_after(path, "/Application Support/ns_lens/Imports/")
+    let slash = lens_search_find(import, 0, import.len, "/", false)
+    if slash > 0 {
+        let name = substr(import, slash + 1, import.len - slash - 1)
+        let moved = lens_mobile_move_to_documents(data + "/Imports/" + import, name)
+        if moved != "" { return moved }
+        return data + "/Imports/" + import
+    }
+    return path
+}
+
+fn lens_mobile_relocate_recent() {
+    let changed = false
+    for i in 0 to g_recent_count {
+        let now = lens_mobile_relocate(g_recent[i])
+        if now != g_recent[i] {
+            g_recent[i] = now
+            changed = true
+        }
+    }
+    if changed { recent_save() }
+}
+
+// Clones and imports that Recent no longer lists move too, and are listed
+// again so they stay easy to open.
+fn lens_mobile_move_leftovers() {
+    let data = os_app_data_dir("ns_lens")
+    lens_mobile_move_children(data + "/Repositories")
+    let imports = data + "/Imports"
+    // Each listing replaces the last, so read every import id first.
+    let listing = os_dir_list(imports)
+    let ids = [str](64)
+    let count: i32 = 0
+    let start: i32 = 0
+    for i in 0 to listing.len {
+        if ((listing[i] as i32) & 255) == 10 {
+            if count < 64 {
+                ids[count] = substr(listing, start, i - start)
+                count = count + 1
+            }
+            start = i + 1
+        }
+    }
+    for i in 0 to count {
+        lens_mobile_move_children(imports + "/" + ids[i])
+    }
+}
+
+fn lens_mobile_move_children(folder: str) {
+    let names = os_dir_list(folder)
+    let start: i32 = 0
+    for i in 0 to names.len {
+        if ((names[i] as i32) & 255) == 10 {
+            let name = substr(names, start, i - start)
+            start = i + 1
+            if name != ".DS_Store" {
+                let moved = lens_mobile_move_to_documents(folder + "/" + name, name)
+                if moved != "" { recent_add(moved) }
+            }
+        }
+    }
+}
+
+fn lens_mobile_busy() bool {
+    if g_mobile_dialog != 0 || g_mobile_git_running || lens_job_visible() {
+        g_lens_message = "Wait for the current repository operation to finish"
+        return true
+    }
+    return false
+}
+
+fn lens_mobile_open() {
+    if lens_mobile_busy() || lens_open_blocked() { return }
+    if os_dialog_file_begin("Import project folder", 1) != 0 { g_mobile_dialog = 1 }
+}
+
+fn lens_mobile_clone() {
+    if lens_mobile_busy() || lens_open_blocked() { return }
+    if os_dialog_prompt_begin("Clone repository", "SSH or HTTPS URL\nLocal folder name", 0) != 0 {
+        g_mobile_dialog = 2
+    }
+}
+
+fn lens_mobile_import_key() {
+    if lens_mobile_busy() { return }
+    if os_dialog_file_begin("Import SSH private key", 2) != 0 { g_mobile_dialog = 3 }
+}
+
+fn lens_mobile_forget_key() {
+    if lens_mobile_busy() { return }
+    if os_git_identity_exists() == false {
+        g_lens_message = "No SSH key is stored"
+        return
+    }
+    if os_git_identity_delete() {
+        g_lens_message = "SSH identity removed from Keychain"
+    } else {
+        g_lens_message = "Could not remove SSH identity"
+    }
+}
+
+// A new key goes straight to Keychain; only its public half is ever shown,
+// and it is copied so it can be pasted into a Git host or authorized_keys.
+fn lens_mobile_generate_key(v: ref view) {
+    if lens_mobile_busy() { return }
+    if os_git_identity_exists() {
+        g_lens_message = "Remove the current SSH key before generating a new one"
+        return
+    }
+    if os_git_identity_generate("ns-lens") == false {
+        g_lens_message = "Could not generate an SSH key"
+        return
+    }
+    view_set_clipboard(v, os_git_identity_public())
+    g_lens_message = "SSH key generated; public key copied for your Git host or authorized_keys"
+}
+
+fn lens_mobile_copy_key(v: ref view) {
+    if os_git_identity_exists() == false {
+        g_lens_message = "No SSH key yet; generate or import one"
+        return
+    }
+    let line = os_git_identity_public()
+    if line == "" {
+        g_lens_message = "This key format has no readable public key; copy it from where it was made"
+        return
+    }
+    view_set_clipboard(v, line)
+    g_lens_message = "Public key copied"
+}
+
+// The author for commits in every repository, kept in the app's global Git
+// config rather than repeated per clone.
+fn lens_mobile_author() {
+    if lens_mobile_busy() { return }
+    if os_dialog_prompt_begin("Commit identity (all repositories)", "Author name\nAuthor email", 0) != 0 { g_mobile_dialog = 5 }
+}
+
+fn lens_mobile_author_begin(name: str, email: str) {
+    if lens_mobile_line(name) == false || lens_mobile_line(email) == false {
+        g_lens_message = "Enter both author name and email"
+        return
+    }
+    let folder = os_app_data_dir("ns_lens")
+    if os_make_dirs(folder) == 0 {
+        g_lens_message = "Cannot create the app data directory"
+        return
+    }
+    let count: i32 = 2
+    if g_workspace_root != "" { count = 4 }
+    let steps = [str](count)
+    let places = [str](count)
+    steps[0] = "config\n--global\nuser.name\n" + name
+    steps[1] = "config\n--global\nuser.email\n" + email
+    places[0] = folder
+    places[1] = folder
+    // An identity an earlier clone stored in the open repository would
+    // otherwise keep overriding the global one there.
+    if count == 4 {
+        steps[2] = "config\n--local\n--unset\nuser.name"
+        steps[3] = "config\n--local\n--unset\nuser.email"
+        places[2] = g_workspace_root
+        places[3] = g_workspace_root
+    }
+    lens_mobile_git_begin(LENS_MOBILE_GIT_IDENTITY, "", steps, places, count, "Saving commit identity...")
+}
+
+// Runs each Git step in its folder on a worker, stopping at the first
+// failure; lens_mobile_tick reports the result.
+fn lens_mobile_git_begin(kind: i32, path: str, steps: [str], places: [str], count: i32, message: str) {
+    if g_mobile_git_lock_ready == false {
+        g_mobile_git_lock = os_lock_create()
+        g_mobile_git_lock_ready = true
+    }
+    let lock = g_mobile_git_lock
+    let state = g_mobile_git_state
+    let output = g_mobile_git_result
+    state[0] = 0
+    state[2] = 0
+    g_mobile_git_kind = kind
+    g_mobile_git_path = path
+    g_mobile_git_running = true
+    g_lens_message = message
+    let pending = dispatch(queue_worker) { in
+        let text = ""
+        let status: i32 = 0
+        for i in 0 to count {
+            if status == 0 {
+                text = os_git_run(places[i], steps[i])
+                status = os_git_status()
+            }
+        }
+        let unnamed: i32 = 0
+        if status == 0 && kind == LENS_MOBILE_GIT_CLONE {
+            os_git_run(path, "config\n--global\n--get\nuser.email")
+            if os_git_status() != 0 { unnamed = 1 }
+        }
+        os_lock_acquire(lock)
+        output[0] = text
+        state[1] = status
+        state[2] = unnamed
+        state[0] = 1
+        os_lock_release(lock)
+    }
+}
+
+// The SSH terminal's host. Any repository work may continue meanwhile.
+fn lens_mobile_terminal_prompt() {
+    if g_mobile_dialog != 0 {
+        return
+    }
+    if os_dialog_prompt_begin("SSH terminal host", "Host or user@host\nPort (empty for 22)\nUser\nRemote folder (optional, ~/ for home)", 0) != 0 {
+        g_mobile_dialog = 6
+    }
+}
+
+fn lens_mobile_line(value: str) bool {
+    if value == "" { return false }
+    for c in value { if c == 10 || c == 13 || c == 0 { return false } }
+    return true
+}
+
+fn lens_mobile_folder(value: str) bool {
+    if value == "" || value == "." || value == ".." || value.len > 80 { return false }
+    for c in value {
+        if !((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 95 || c == 46) { return false }
+    }
+    return true
+}
+
+fn lens_mobile_clone_begin(url: str, name: str) {
+    if lens_mobile_line(url) == false || lens_mobile_folder(name) == false {
+        g_lens_message = "Enter a repository URL and a safe folder name"
+        return
+    }
+    // Do not allow option injection or an arbitrary local transport through a
+    // URL field. SSH host keys and HTTPS certificates are checked natively.
+    if !(lens_has_prefix(url, "ssh://") || lens_has_prefix(url, "https://") || lens_has_prefix(url, "git@")) {
+        g_lens_message = "Use ssh://, git@host:path or https:// for the repository URL"
+        return
+    }
+    // Documents, so the Files app shows every cloned file.
+    let parent = os_documents_dir("ns_lens")
+    if os_make_dirs(parent) == 0 { g_lens_message = "Cannot create the repository directory"
+        return }
+    let destination = parent + "/" + name
+    let steps = [str](1)
+    let places = [str](1)
+    steps[0] = "clone\n--progress\n--\n" + url + "\n" + destination
+    places[0] = parent
+    lens_mobile_git_begin(LENS_MOBILE_GIT_CLONE, destination, steps, places, 1, "Cloning repository...")
+}
+
+fn lens_mobile_tick(v: ref view) {
+    if lens_mobile() == false { return }
+    if g_mobile_dialog != 0 {
+        let status = os_dialog_poll()
+        if status != 0 {
+            let kind = g_mobile_dialog
+            g_mobile_dialog = 0
+            if status < 0 {
+                g_mobile_private_key = ""
+                os_dialog_clear()
+            } else if kind == 1 {
+                lens_open_root(os_dialog_value(0))
+            } else if kind == 2 {
+                lens_mobile_clone_begin(os_dialog_value(0), os_dialog_value(1))
+            } else if kind == 3 {
+                g_mobile_private_key = os_dialog_value(0)
+                if os_dialog_prompt_begin("SSH key passphrase", "Passphrase (empty for an unencrypted key)", 1) != 0 {
+                    g_mobile_dialog = 4
+                } else { g_mobile_private_key = "" }
+            } else if kind == 4 {
+                if os_git_identity_import(g_mobile_private_key, os_dialog_value(0)) {
+                    g_lens_message = "SSH identity stored in Keychain"
+                } else {
+                    g_lens_message = "Could not import SSH identity; check the key and passphrase"
+                }
+                g_mobile_private_key = ""
+                os_dialog_clear()
+            } else if kind == 5 {
+                lens_mobile_author_begin(os_dialog_value(0), os_dialog_value(1))
+            } else if kind == 6 {
+                if terminal_ssh_configure(os_dialog_value(0), os_dialog_value(1), os_dialog_value(2), os_dialog_value(3)) {
+                    terminal_restart()
+                }
+            }
+            g_lens_input_dirty = true
+        }
+    }
+    if g_mobile_git_running && os_lock_try_acquire(g_mobile_git_lock) {
+        let done = g_mobile_git_state[0] != 0
+        let status = g_mobile_git_state[1]
+        let unnamed = g_mobile_git_state[2] != 0
+        let error = g_mobile_git_result[0]
+        os_lock_release(g_mobile_git_lock)
+        if done {
+            g_mobile_git_running = false
+            if g_mobile_git_kind == LENS_MOBILE_GIT_IDENTITY {
+                if status == 0 {
+                    g_lens_message = "Commit identity saved for all repositories"
+                } else { g_lens_message = "Could not save the commit identity: " + lens_git_error(error) }
+            } else if status == 0 {
+                recent_add(g_mobile_git_path)
+                if lens_open_root(g_mobile_git_path) {
+                    g_lens_message = "Repository cloned"
+                    if unnamed { g_lens_message = "Repository cloned; set Repo > Commit Identity before committing" }
+                }
+            } else { g_lens_message = "Clone failed: " + lens_git_error(error) }
+            g_lens_input_dirty = true
+        }
+    }
+    let keyboard = (g_lens_editing || lens_typing()) && !g_mobile_keyboard_hidden && g_mobile_dialog == 0 && !g_lens_file_open && !g_lens_view_open && !g_lens_edit_menu_open && !g_lens_repo_menu_open
+    if keyboard != g_mobile_keyboard_on {
+        view_set_text_input(v, keyboard)
+        g_mobile_keyboard_on = keyboard
+    }
+}
+
+fn lens_has_prefix(value: str, prefix: str) bool {
+    return value.len >= prefix.len && substr(value, 0, prefix.len) == prefix
+}
