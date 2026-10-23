@@ -101,6 +101,7 @@ fn panel_state_save() {
     let view = panel_state_view_text()
     g_panel_view_saved = view
     let text = "outline.open=" + panel_state_flag(g_outline_open) + "\n"
+    text = text + "hints.open=" + panel_state_flag(lens_hints_shown()) + "\n"
     // Geometry is written only after a panel has actually been shown. A panel
     // that was never opened keeps its built-in placement, so a fresh project
     // with only the outline open does not pin the terminal to the outline's
@@ -138,7 +139,10 @@ fn panel_state_tick(moving: bool) {
 // opens in an older build.
 fn panel_state_apply(key: str, value: str) {
     let n = stof(value)
-    if key == "outline.open" {
+    if key == "hints.open" {
+        g_lens_hints_ready = true
+        g_lens_hints_open = n != 0.0
+    } else if key == "outline.open" {
         g_outline_open = n != 0.0
     } else if key == "outline.x" {
         g_outline_x = n

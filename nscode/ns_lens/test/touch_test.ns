@@ -24,5 +24,27 @@ fn main() {
     assert !lens_touch_apply(VIEW_INPUT_PHASE_ENDED, 7, 0.0, 0.0)
     assert lens_touch_apply(VIEW_INPUT_PHASE_CANCELLED, 9, 215.0, 305.0)
     assert g_lens_touch_count == 0
+    // A short, still tap counts; a drag, a slow press or a pinch does not.
+    lens_tap_begin(50.0, 60.0, 1.0)
+    assert !lens_tap_step(53.0, 62.0, 1.05, true, false)
+    assert lens_tap_step(54.0, 63.0, 1.1, false, false)
+    assert !lens_tap_step(54.0, 63.0, 1.2, false, false)
+    lens_tap_begin(50.0, 60.0, 2.0)
+    assert !lens_tap_step(80.0, 60.0, 2.05, true, false)
+    assert !lens_tap_step(50.0, 60.0, 2.1, false, false)
+    lens_tap_begin(50.0, 60.0, 3.0)
+    assert !lens_tap_step(50.0, 60.0, 3.8, false, false)
+    lens_tap_begin(50.0, 60.0, 4.0)
+    assert !lens_tap_step(50.0, 60.0, 4.05, true, true)
+    assert !lens_tap_step(50.0, 60.0, 4.1, false, false)
+    // Only a tap on the code brings the folded keyboard back.
+    g_mobile_keyboard_hidden = true
+    g_lens_touch_tap = false
+    lens_touch_tap_code()
+    assert g_mobile_keyboard_hidden
+    g_lens_touch_tap = true
+    lens_touch_tap_code()
+    assert !g_mobile_keyboard_hidden
+    g_lens_touch_tap = false
     print("touch_test: passed\n")
 }

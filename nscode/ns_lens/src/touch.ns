@@ -5,6 +5,7 @@
 // centroid instead, and the extra contacts never click.
 use view
 use ui
+use os
 
 lit LENS_TOUCH_MAX = 10
 let g_lens_touch_id = [i32](LENS_TOUCH_MAX)
@@ -16,6 +17,18 @@ let g_lens_touch_multi = false
 // The finger set changed this frame: drags restart from the new pointer
 // rather than jumping to it.
 let g_lens_touch_rebase = false
+// A one-finger tap: the finger lifted near where it landed, soon after.
+// Left drags pan the map, so on touch the tap does what a desktop right
+// click does there: focus a file or place the text cursor.
+lit LENS_TAP_SLOP = 10.0
+lit LENS_TAP_TIME = 0.5
+let g_lens_tap_down = false
+let g_lens_tap_x: f64 = 0.0
+let g_lens_tap_y: f64 = 0.0
+let g_lens_tap_time: f64 = 0.0
+let g_lens_tap_moved = false
+// Set on the frame a tap ends, with g_mouse_x/y at the release point.
+let g_lens_touch_tap = false
 
 fn lens_touch_find(id: i32) i32 {
     for i in 0 to g_lens_touch_count {
@@ -69,10 +82,14 @@ fn lens_touch_center_y() f64 {
 // content coordinates.
 fn lens_touch_update(r: ref ui_renderer, v: ref view) {
     g_lens_touch_rebase = false
+    g_lens_touch_tap = false
     let n = view_input_count(v)
     for i in 0 to n {
         let e = view_input_at(v, i)
         if e.device == VIEW_INPUT_DEVICE_TOUCH {
+            if e.phase == VIEW_INPUT_PHASE_BEGAN && g_lens_touch_count == 0 {
+                lens_tap_begin(ui_content_x(r, e.x), ui_content_y(r, e.y), os_time())
+            }
             if lens_touch_apply(e.phase, e.pointer_id, ui_content_x(r, e.x), ui_content_y(r, e.y)) {
                 g_lens_touch_rebase = true
             }
@@ -97,7 +114,45 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
             g_mouse_y = lens_touch_center_y()
         }
     }
+    g_lens_touch_tap = lens_tap_step(g_mouse_x, g_mouse_y, os_time(), v.mouse_down, g_lens_touch_multi)
     if v.mouse_down == false {
         g_lens_touch_multi = false
     }
+}
+
+fn lens_tap_begin(x: f64, y: f64, now: f64) {
+    g_lens_tap_down = true
+    g_lens_tap_moved = false
+    g_lens_tap_x = x
+    g_lens_tap_y = y
+    g_lens_tap_time = now
+}
+
+// Follows the held finger; true on the frame it lifts as a tap.
+fn lens_tap_step(x: f64, y: f64, now: f64, down: bool, multi: bool) bool {
+    if g_lens_tap_down == false { return false }
+    let dx = x - g_lens_tap_x
+    let dy = y - g_lens_tap_y
+    if multi || dx * dx + dy * dy > LENS_TAP_SLOP * LENS_TAP_SLOP {
+        g_lens_tap_moved = true
+    }
+    if down { return false }
+    g_lens_tap_down = false
+    return !g_lens_tap_moved && now - g_lens_tap_time <= LENS_TAP_TIME
+}
+
+// Called once the map knows the pointer is over it, before map input runs.
+// A tap anywhere on the map folds the software keyboard away; one that lands
+// on the open file's code brings it back (lens_touch_tap_code).
+fn lens_touch_tap_click(v: ref view, over_map: bool) {
+    if g_lens_touch_tap && over_map {
+        v.mouse_right_pressed = true
+        v.mouse_right_released = true
+        g_mobile_keyboard_hidden = true
+    }
+}
+
+// The tap placed the cursor in the code being edited.
+fn lens_touch_tap_code() {
+    if g_lens_touch_tap { g_mobile_keyboard_hidden = false }
 }

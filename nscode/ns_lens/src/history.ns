@@ -1159,7 +1159,7 @@ fn lens_history_draw_rows(r: ref ui_renderer, f: i32, leaf: lens_leaf_rect, cont
 fn lens_history_list_y() f64 { return main_menu_h() + LENS_TOP_BAR_H + LENS_HISTORY_MARGIN }
 
 fn lens_history_list_h() f64 {
-    let bottom = g_lens_canvas_h - 28.0 - LENS_ACTIVITY_H - 4.0 - LENS_HINT_LINE_H * (LENS_HINT_COUNT as f64) - LENS_HISTORY_MARGIN
+    let bottom = lens_hints_bottom(g_lens_canvas_h) - lens_hints_h() - LENS_HISTORY_MARGIN
     return clamp(bottom - lens_history_list_y(), LENS_HISTORY_TITLE_H + LENS_HISTORY_ROW_H * 2.0, 100000.0)
 }
 

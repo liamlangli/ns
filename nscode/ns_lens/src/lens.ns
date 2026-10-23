@@ -1255,6 +1255,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_unproject(screen_x, screen_y)
     g_mouse_x = g_lens_plane_x
     g_mouse_y = g_lens_plane_y
+    lens_touch_tap_click(v, over_map)
     if over_map {
         if shift_down(v) == false && v.scroll_y != 0.0 {
             lens_zoom_at(g_mouse_x, g_mouse_y, w, top, body_h, v.scroll_y)
@@ -1543,7 +1544,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     }
     draw_status_bar(r, 0.0, h - STATUS_BAR_H, w, lens_detail_of(code_ready, code_total, bars_ready, bars_total))
     if g_lens_view_mode == LENS_MODE_REF { lens_ref_controls(r, v, w) }
-    lens_draw_overlay(r, w, h)
+    lens_draw_overlay(r, v, w, h)
     if lens_history_active() { lens_history_draw_panels(r, v, w, h) }
     outline_draw(r, v, w, h)
     terminal_draw(r, v, w, h)

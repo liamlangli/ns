@@ -64,6 +64,11 @@ lit LENS_COMMIT_BUTTON_H = 26.0
 lit LENS_COMMIT_MENU_W = 190.0
 lit LENS_HINT_LINE_H = 15.0
 lit LENS_HINT_COUNT = 8
+// The hints fold into a "?" button; a tap toggles them. They start folded on
+// a phone, where they would cover much of the map.
+lit LENS_HINT_BUTTON = 22.0
+let g_lens_hints_open = true
+let g_lens_hints_ready = false
 lit LENS_ACTIVITY_H = 22.0
 
 let g_lens_file_open = false
@@ -709,6 +714,8 @@ fn lens_commit_menu_y(h: f64) f64 {
 // branch menu, ahead of the map. A click outside an open popup closes it.
 fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     if lens_edit_menu_mouse(v) { return }
+    // Panels drawn over the hints keep their own presses.
+    if g_workspace_root != "" && !terminal_blocks_pointer(v) && !outline_blocks_pointer(v) && lens_hints_mouse(v, h) { return }
     if lens_repo_menu_mouse(v) { return }
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * (lens_file_items() as f64)
@@ -1226,7 +1233,56 @@ fn lens_draw_commit_menu(r: ref ui_renderer, v: ref view, x: f64, y: f64) {
 }
 
 // Controls, one per line, stacked above the activity row.
-fn lens_draw_hints(r: ref ui_renderer, bottom: f64) {
+fn lens_hints_shown() bool {
+    if g_lens_hints_ready == false {
+        g_lens_hints_ready = true
+        g_lens_hints_open = lens_mobile() == false
+    }
+    return g_lens_hints_open
+}
+
+// The bottom of the hint block, just above the activity row.
+fn lens_hints_bottom(h: f64) f64 {
+    return h - 28.0 - LENS_ACTIVITY_H - 4.0
+}
+
+// Height the hints take above lens_hints_bottom: the button, plus the lines
+// while they are open.
+fn lens_hints_h() f64 {
+    if lens_hints_shown() {
+        return LENS_HINT_BUTTON + 4.0 + LENS_HINT_LINE_H * (LENS_HINT_COUNT as f64)
+    }
+    return LENS_HINT_BUTTON
+}
+
+fn lens_hints_button_y(h: f64) f64 {
+    return lens_hints_bottom(h) - LENS_HINT_BUTTON
+}
+
+// A press on the "?" button, or on the open hints, toggles them.
+fn lens_hints_mouse(v: ref view, h: f64) bool {
+    if v.mouse_pressed == false {
+        return false
+    }
+    let on_button = raw_hit(v, 12.0, lens_hints_button_y(h), LENS_HINT_BUTTON, LENS_HINT_BUTTON)
+    let on_lines = lens_hints_shown() && raw_hit(v, 12.0, lens_hints_bottom(h) - lens_hints_h(), 300.0, lens_hints_h() - LENS_HINT_BUTTON - 4.0)
+    if on_button == false && on_lines == false {
+        return false
+    }
+    g_lens_hints_open = !lens_hints_shown()
+    v.mouse_pressed = false
+    g_lens_input_dirty = true
+    panel_state_save()
+    return true
+}
+
+fn lens_draw_hints(r: ref ui_renderer, v: ref view, h: f64) {
+    let by = lens_hints_button_y(h)
+    lens_draw_button(r, v, 12.0, by, LENS_HINT_BUTTON, LENS_HINT_BUTTON, "?", lens_hints_shown())
+    if lens_hints_shown() == false {
+        return
+    }
+    let bottom = by - 4.0
     for i in 0 to LENS_HINT_COUNT {
         let y = bottom - ((LENS_HINT_COUNT - i) as f64) * LENS_HINT_LINE_H
         ui_draw_text(r, 12.0, y, lens_hint_keys(i), small_px(), col_text(), FONT_MONO())
@@ -1317,10 +1373,10 @@ fn lens_draw_activity(r: ref ui_renderer, y: f64, w: f64) {
 
 // The bottom-left hints and activity row float over the map but under the
 // panels, so a panel dragged over them stays readable.
-fn lens_draw_overlay(r: ref ui_renderer, w: f64, h: f64) {
+fn lens_draw_overlay(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let activity_y = h - 28.0 - LENS_ACTIVITY_H
     lens_draw_activity(r, activity_y, w)
-    lens_draw_hints(r, activity_y - 4.0)
+    lens_draw_hints(r, v, h)
 }
 
 // Menu buttons and every popup, drawn after the panels so an open menu is

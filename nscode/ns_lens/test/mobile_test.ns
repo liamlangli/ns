@@ -60,6 +60,22 @@ fn main() {
     assert view_on_text_input(v, "unconsumed")
     view_input_reset(v)
     assert view_take_text(v) == ""
+    // The "?" button folds and unfolds the hints; a press elsewhere does not.
+    g_lens_hints_ready = true
+    g_lens_hints_open = true
+    g_mouse_x = 20.0
+    g_mouse_y = lens_hints_button_y(800.0) + 5.0
+    v.mouse_pressed = true
+    assert lens_hints_mouse(v, 800.0)
+    assert g_lens_hints_open == false && v.mouse_pressed == false
+    assert lens_hints_h() == LENS_HINT_BUTTON
+    g_mouse_x = 600.0
+    v.mouse_pressed = true
+    assert !lens_hints_mouse(v, 800.0)
+    g_mouse_x = 20.0
+    assert lens_hints_mouse(v, 800.0)
+    assert g_lens_hints_open
+    v.mouse_pressed = false
     view_close(v)
     print("mobile_test: passed\n")
 }
