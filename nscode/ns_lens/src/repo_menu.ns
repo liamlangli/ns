@@ -75,22 +75,13 @@ fn lens_repo_menu_mouse(v: ref view) bool {
 
 fn lens_draw_repo_menu(r: ref ui_renderer, v: ref view) {
     if lens_repo_menu_shown() == false { return }
-    let y = lens_mode_y()
-    let border = col_muted()
-    if g_lens_repo_menu_open { border = col_accent() }
-    ui_fill_round_rect(r, LENS_REPO_X, y, LENS_REPO_W, LENS_MODE_H, 3.0, col_editor_panel(), 0.0)
-    ui_stroke_round_rect(r, LENS_REPO_X, y, LENS_REPO_W, LENS_MODE_H, 3.0, 1.0, border, 0.0)
-    draw_centered_text(r, LENS_REPO_X, y, LENS_REPO_W, LENS_MODE_H, "Repo v", small_px(), col_text())
+    lens_draw_menu_button(r, LENS_REPO_X, lens_mode_y(), LENS_REPO_W, LENS_MODE_H, "Repo", g_lens_repo_menu_open)
     if g_lens_repo_menu_open == false { return }
     let top = lens_mode_popup_y()
-    let pop_h = LENS_MODE_ITEM * (LENS_REPO_ITEMS as f64)
-    ui_fill_round_rect(r, LENS_REPO_X, top, LENS_REPO_MENU_W, pop_h, 3.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, LENS_REPO_X, top, LENS_REPO_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_menu_popup(r, LENS_REPO_X, top, LENS_REPO_MENU_W, LENS_MODE_ITEM * (LENS_REPO_ITEMS as f64))
     for index in 0 to LENS_REPO_ITEMS {
         let row = top + (index as f64) * LENS_MODE_ITEM
-        if raw_hit(v, LENS_REPO_X, row, LENS_REPO_MENU_W, LENS_MODE_ITEM) {
-            ui_fill_rect(r, LENS_REPO_X + 1.0, row, LENS_REPO_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
-        }
+        if raw_hit(v, LENS_REPO_X, row, LENS_REPO_MENU_W, LENS_MODE_ITEM) { lens_draw_menu_row_hi(r, LENS_REPO_X, row, LENS_REPO_MENU_W) }
         draw_text_clipped(r, LENS_REPO_X + 10.0, ui_text_v_center_y(r, row, LENS_MODE_ITEM, small_px(), FONT_MONO()), LENS_REPO_MENU_W - 20.0, LENS_MODE_ITEM, lens_repo_label(index), small_px(), col_text())
     }
 }

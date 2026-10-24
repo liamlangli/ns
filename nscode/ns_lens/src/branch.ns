@@ -717,7 +717,7 @@ fn lens_draw_branch_item(r: ref ui_renderer, v: ref view, x: f64, y: f64, label:
     if live {
         color = col_text()
         if raw_hit(v, x, y, LENS_BRANCH_MENU_W, LENS_MODE_ITEM) {
-            ui_fill_rect(r, x + 1.0, y, LENS_BRANCH_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+            lens_draw_menu_row_hi(r, x, y, LENS_BRANCH_MENU_W)
         }
     }
     let ty = ui_text_v_center_y(r, y, LENS_MODE_ITEM, small_px(), FONT_MONO())
@@ -743,8 +743,7 @@ fn lens_draw_branch_menu(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let x = lens_branch_menu_x(w)
     let y = lens_branch_menu_y(h)
     let menu_h = lens_branch_menu_h(h)
-    ui_fill_round_rect(r, x, y, LENS_BRANCH_MENU_W, menu_h, 3.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, x, y, LENS_BRANCH_MENU_W, menu_h, 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_menu_popup(r, x, y, LENS_BRANCH_MENU_W, menu_h)
     lens_draw_branch_item(r, v, x, y, "Create Branch...", "", true)
     lens_draw_branch_item(r, v, x, y + LENS_MODE_ITEM, "Pull Remote Branch...", "", true)
     let list_y = lens_branch_list_y(h)

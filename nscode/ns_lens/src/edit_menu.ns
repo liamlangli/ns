@@ -73,20 +73,13 @@ fn lens_edit_menu_mouse(v: ref view) bool {
 }
 
 fn lens_draw_edit_menu(r: ref ui_renderer, v: ref view) {
-    let y = lens_mode_y()
-    let border = col_muted()
-    if g_lens_edit_menu_open { border = col_accent() }
-    ui_fill_round_rect(r, LENS_EDIT_X, y, LENS_EDIT_W, LENS_MODE_H, 3.0, col_editor_panel(), 0.0)
-    ui_stroke_round_rect(r, LENS_EDIT_X, y, LENS_EDIT_W, LENS_MODE_H, 3.0, 1.0, border, 0.0)
-    draw_centered_text(r, LENS_EDIT_X, y, LENS_EDIT_W, LENS_MODE_H, "Edit v", small_px(), col_text())
+    lens_draw_menu_button(r, LENS_EDIT_X, lens_mode_y(), LENS_EDIT_W, LENS_MODE_H, "Edit", g_lens_edit_menu_open)
     if g_lens_edit_menu_open == false { return }
     let top = lens_mode_popup_y()
-    ui_fill_round_rect(r, LENS_EDIT_X, top, LENS_EDIT_MENU_W, LENS_MODE_ITEM * (LENS_EDIT_ITEMS as f64), 3.0, col_popup_bg(), 0.0)
+    lens_draw_menu_popup(r, LENS_EDIT_X, top, LENS_EDIT_MENU_W, LENS_MODE_ITEM * (LENS_EDIT_ITEMS as f64))
     for index in 0 to LENS_EDIT_ITEMS {
         let row = top + (index as f64) * LENS_MODE_ITEM
-        if raw_hit(v, LENS_EDIT_X, row, LENS_EDIT_MENU_W, LENS_MODE_ITEM) {
-            ui_fill_rect(r, LENS_EDIT_X, row, LENS_EDIT_MENU_W, LENS_MODE_ITEM, col_popup_hi(), 0.0)
-        }
-        draw_text_clipped(r, LENS_EDIT_X + 8.0, ui_text_v_center_y(r, row, LENS_MODE_ITEM, small_px(), FONT_MONO()), LENS_EDIT_MENU_W - 16.0, LENS_MODE_ITEM, lens_edit_label(index), small_px(), col_text())
+        if raw_hit(v, LENS_EDIT_X, row, LENS_EDIT_MENU_W, LENS_MODE_ITEM) { lens_draw_menu_row_hi(r, LENS_EDIT_X, row, LENS_EDIT_MENU_W) }
+        draw_text_clipped(r, LENS_EDIT_X + 10.0, ui_text_v_center_y(r, row, LENS_MODE_ITEM, small_px(), FONT_MONO()), LENS_EDIT_MENU_W - 20.0, LENS_MODE_ITEM, lens_edit_label(index), small_px(), col_text())
     }
 }

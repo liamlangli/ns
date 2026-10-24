@@ -293,6 +293,28 @@ fn col_popup_hi() u32 {
     return (col_editor_panel_hi() & 0x00ffffffu) | 0x66000000u
 }
 
+// Every drop menu shares one look: an outlined button whose label sits left
+// with a muted arrow at the right, accented while open, and an outlined
+// popup whose hovered or chosen rows are tinted inside that outline.
+fn lens_draw_menu_button(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, label: str, open: bool) {
+    let border = col_muted()
+    if open { border = col_accent() }
+    ui_fill_round_rect(r, x, y, w, h, 3.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, x, y, w, h, 3.0, 1.0, border, 0.0)
+    let ty = ui_text_v_center_y(r, y, h, small_px(), FONT_MONO())
+    draw_text_clipped(r, x + 10.0, ty, w - 28.0, h, label, small_px(), col_text())
+    draw_text_clipped(r, x + w - 16.0, ty, 12.0, h, "v", small_px(), col_muted())
+}
+
+fn lens_draw_menu_popup(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_round_rect(r, x, y, w, h, 3.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, w, h, 3.0, 1.0, col_muted(), 0.0)
+}
+
+fn lens_draw_menu_row_hi(r: ref ui_renderer, x: f64, y: f64, w: f64) {
+    ui_fill_rect(r, x + 1.0, y, w - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+}
+
 // The top bar and status bar float over the map, which shows through them.
 fn col_bar() u32 { return (col_editor_panel() & 0x00ffffffu) | 0xb8000000u }
 

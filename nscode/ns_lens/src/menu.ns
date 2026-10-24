@@ -890,28 +890,18 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
 }
 
 fn lens_draw_file_menu(r: ref ui_renderer, v: ref view) {
-    let y = lens_mode_y()
-    let border = col_muted()
-    if g_lens_file_open {
-        border = col_accent()
-    }
-    ui_fill_round_rect(r, LENS_FILE_X, y, LENS_FILE_W, LENS_MODE_H, 3.0, col_editor_panel(), 0.0)
-    ui_stroke_round_rect(r, LENS_FILE_X, y, LENS_FILE_W, LENS_MODE_H, 3.0, 1.0, border, 0.0)
-    let ty = ui_text_v_center_y(r, y, LENS_MODE_H, small_px(), FONT_MONO())
-    draw_text_clipped(r, LENS_FILE_X + 10.0, ty, LENS_FILE_W - 28.0, LENS_MODE_H, "File", small_px(), col_text())
-    draw_text_clipped(r, LENS_FILE_X + LENS_FILE_W - 16.0, ty, 12.0, LENS_MODE_H, "v", small_px(), col_muted())
+    lens_draw_menu_button(r, LENS_FILE_X, lens_mode_y(), LENS_FILE_W, LENS_MODE_H, "File", g_lens_file_open)
     if g_lens_file_open == false {
         return
     }
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * (lens_file_items() as f64)
-    ui_fill_round_rect(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h, 3.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_menu_popup(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h)
     for i in 0 to lens_file_items() {
         let iy = pop_y + (i as f64) * LENS_MODE_ITEM
         let parent = i == LENS_FILE_RECENT && g_lens_recent_open
         if parent || raw_hit(v, LENS_FILE_X, iy, LENS_FILE_MENU_W, LENS_MODE_ITEM) {
-            ui_fill_rect(r, LENS_FILE_X + 1.0, iy, LENS_FILE_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+            lens_draw_menu_row_hi(r, LENS_FILE_X, iy, LENS_FILE_MENU_W)
         }
         let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
         draw_text_clipped(r, LENS_FILE_X + 10.0, row_ty, 110.0, LENS_MODE_ITEM, lens_file_item_label(i), small_px(), col_text())
@@ -930,15 +920,14 @@ fn lens_draw_file_menu(r: ref ui_renderer, v: ref view) {
 fn lens_draw_recent_menu(r: ref ui_renderer, v: ref view) {
     let x = lens_recent_x()
     let y = lens_recent_y()
-    ui_fill_round_rect(r, x, y, lens_recent_width(), lens_recent_h(), 3.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, x, y, lens_recent_width(), lens_recent_h(), 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_menu_popup(r, x, y, lens_recent_width(), lens_recent_h())
     let clear_y = lens_recent_clear_y()
     ui_fill_rect(r, x + 8.0, clear_y - LENS_RECENT_SEPARATOR_H * 0.5 - 0.5, lens_recent_width() - 16.0, 1.0, col_muted(), 0.0)
     let clear_color = col_muted()
     if g_recent_count > 0 {
         clear_color = col_text()
         if raw_hit(v, x, clear_y, lens_recent_width(), LENS_MODE_ITEM) {
-            ui_fill_rect(r, x + 1.0, clear_y, lens_recent_width() - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+            lens_draw_menu_row_hi(r, x, clear_y, lens_recent_width())
         }
     }
     let clear_ty = ui_text_v_center_y(r, clear_y, LENS_MODE_ITEM, small_px(), FONT_MONO())
@@ -953,7 +942,7 @@ fn lens_draw_recent_menu(r: ref ui_renderer, v: ref view) {
     for i in 0 to count {
         let iy = y + (i as f64) * LENS_MODE_ITEM
         if raw_hit(v, x, iy, lens_recent_width(), LENS_MODE_ITEM) {
-            ui_fill_rect(r, x + 1.0, iy, lens_recent_width() - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+            lens_draw_menu_row_hi(r, x, iy, lens_recent_width())
         }
         let path = g_recent[i]
         let name = recent_name(path)
@@ -974,27 +963,17 @@ fn lens_draw_recent_menu(r: ref ui_renderer, v: ref view) {
 }
 
 fn lens_draw_view_menu(r: ref ui_renderer, v: ref view) {
-    let y = lens_mode_y()
-    let border = col_muted()
-    if g_lens_view_open {
-        border = col_accent()
-    }
-    ui_fill_round_rect(r, LENS_VIEW_X, y, LENS_VIEW_W, LENS_MODE_H, 3.0, col_editor_panel(), 0.0)
-    ui_stroke_round_rect(r, LENS_VIEW_X, y, LENS_VIEW_W, LENS_MODE_H, 3.0, 1.0, border, 0.0)
-    let ty = ui_text_v_center_y(r, y, LENS_MODE_H, small_px(), FONT_MONO())
-    draw_text_clipped(r, LENS_VIEW_X + 10.0, ty, LENS_VIEW_W - 28.0, LENS_MODE_H, "View", small_px(), col_text())
-    draw_text_clipped(r, LENS_VIEW_X + LENS_VIEW_W - 16.0, ty, 12.0, LENS_MODE_H, "v", small_px(), col_muted())
+    lens_draw_menu_button(r, LENS_VIEW_X, lens_mode_y(), LENS_VIEW_W, LENS_MODE_H, "View", g_lens_view_open)
     if g_lens_view_open == false {
         return
     }
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * (lens_view_items() as f64)
-    ui_fill_round_rect(r, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, pop_h, 3.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_menu_popup(r, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, pop_h)
     for i in 0 to lens_view_items() {
         let iy = pop_y + (i as f64) * LENS_MODE_ITEM
         if raw_hit(v, LENS_VIEW_X, iy, LENS_VIEW_MENU_W, LENS_MODE_ITEM) {
-            ui_fill_rect(r, LENS_VIEW_X + 1.0, iy, LENS_VIEW_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+            lens_draw_menu_row_hi(r, LENS_VIEW_X, iy, LENS_VIEW_MENU_W)
         }
         let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
         draw_text_clipped(r, LENS_VIEW_X + 10.0, row_ty, 100.0, LENS_MODE_ITEM, lens_view_item_label(i), small_px(), col_text())
@@ -1223,12 +1202,11 @@ fn lens_draw_commit_button(r: ref ui_renderer, v: ref view, x: f64, y: f64) {
 // One row per mode; the chosen one stays lit and names the key that runs it.
 fn lens_draw_commit_menu(r: ref ui_renderer, v: ref view, x: f64, y: f64) {
     let menu_h = lens_commit_menu_h()
-    ui_fill_round_rect(r, x, y, LENS_COMMIT_MENU_W, menu_h, 3.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, x, y, LENS_COMMIT_MENU_W, menu_h, 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_menu_popup(r, x, y, LENS_COMMIT_MENU_W, menu_h)
     for i in 0 to LENS_COMMIT_MODES {
         let iy = y + (i as f64) * LENS_MODE_ITEM
         if i == g_lens_commit_mode || raw_hit(v, x, iy, LENS_COMMIT_MENU_W, LENS_MODE_ITEM) {
-            ui_fill_rect(r, x + 1.0, iy, LENS_COMMIT_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+            lens_draw_menu_row_hi(r, x, iy, LENS_COMMIT_MENU_W)
         }
         let ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
         draw_text_clipped(r, x + 10.0, ty, LENS_COMMIT_MENU_W - 70.0, LENS_MODE_ITEM, lens_commit_mode_label(i), small_px(), col_text())
