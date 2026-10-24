@@ -1,0 +1,107 @@
+// The audio player bar: which files get one, its time label and layout, and a
+// rendered WAV played, paused, scrubbed and turned down through bar input.
+use std
+use os
+use view
+use audio
+use sono
+
+fn press(v: ref view, x: f64, y: f64) {
+    g_mouse_x = x
+    g_mouse_y = y
+    v.mouse_down = true
+    v.mouse_pressed = true
+    lens_sound_input(v, true)
+    assert v.mouse_pressed == false
+}
+
+fn release(v: ref view, x: f64) {
+    g_mouse_x = x
+    v.mouse_down = false
+    v.mouse_released = true
+    lens_sound_input(v, true)
+    v.mouse_released = false
+}
+
+fn main() i32 {
+    assert lens_sound_kind("a/b.wav")
+    assert lens_sound_kind("a/B.MP3")
+    assert lens_sound_kind("song.flac")
+    assert lens_sound_kind("x.aiff")
+    assert lens_sound_kind("a/b.png") == false
+    assert lens_sound_kind("mp3") == false
+    assert lens_sound_time(0.0) == "0:00"
+    assert lens_sound_time(9.6) == "0:10"
+    assert lens_sound_time(125.0) == "2:05"
+
+    // Play, track, time, speaker and volume run left to right without overlap.
+    let bar = lens_sound_layout(0.0, 0.0, 440.0, 20.0)
+    assert bar.track_x == 20.0
+    assert bar.track_x + bar.track_w <= bar.time_x
+    assert bar.time_w > 0.0
+    assert bar.time_x + bar.time_w <= bar.icon_x
+    assert bar.icon_x < bar.volume_x
+    assert bar.volume_x + bar.volume_w <= 440.0
+    assert lens_sound_layout(0.0, 0.0, 120.0, 20.0).time_w == 0.0
+    assert lens_sound_fraction(50.0, 0.0, 100.0) == 0.5
+    assert lens_sound_fraction(-5.0, 0.0, 100.0) == 0.0
+    assert lens_sound_fraction(500.0, 0.0, 100.0) == 1.0
+
+    let root = "/tmp/ns_lens_sound_" + itos((os_time_us() % 1000000000) as i32)
+    assert os_make_dirs(root) != 0
+    let path = root + "/tone.wav"
+    let song = sono_new(44100, 120.0)
+    let track = sono_track(song, SONO_SINE)
+    assert sono_note(song, track, 0.0, 8.0, 60.0, 0.5)
+    assert sono_save_wav(song, path)
+    sono_free(song)
+
+    // A file that does not decode shows as failed and is not loaded again.
+    assert os_write_file_atomic(root + "/bad.wav", "not audio") != 0
+    assert lens_sound_open(root + "/bad.wav") == false
+    assert has(g_lens_sound_failed, root + "/bad.wav")
+    if lens_sound_open(path) == false {
+        print("sound: skip, no audio backend\n")
+        return 0
+    }
+    assert g_lens_sound_duration > 3.5
+
+    let v = view_create("sound test", 200, 200)
+    g_lens_sound_bar_count = 1
+    g_lens_sound_bar_path[0] = path
+    g_lens_sound_bar_x[0] = bar.x
+    g_lens_sound_bar_y[0] = bar.y
+    g_lens_sound_bar_w[0] = bar.w
+    g_lens_sound_bar_h[0] = bar.h
+
+    lens_sound_set_volume(0.0)
+    press(v, 10.0, 10.0)
+    release(v, 10.0)
+    assert g_lens_sound_playing
+    press(v, 10.0, 10.0)
+    release(v, 10.0)
+    assert g_lens_sound_playing == false
+
+    // Scrub the track to its middle, then drag the volume to full.
+    press(v, bar.track_x + 1.0, 10.0)
+    assert g_lens_sound_drag == LENS_SOUND_DRAG_SEEK
+    release(v, bar.track_x + bar.track_w * 0.5)
+    assert g_lens_sound_drag == LENS_SOUND_DRAG_NONE
+    let middle = audio_position(g_lens_sound_handle) / g_lens_sound_duration
+    assert middle > 0.45 && middle < 0.55
+    press(v, bar.volume_x + 1.0, 10.0)
+    assert g_lens_sound_drag == LENS_SOUND_DRAG_VOLUME
+    release(v, bar.volume_x + bar.volume_w + 30.0)
+    assert g_lens_sound_volume == 1.0
+
+    // A press outside every bar is left to the map.
+    g_mouse_x = 600.0
+    v.mouse_pressed = true
+    lens_sound_input(v, true)
+    assert v.mouse_pressed
+
+    lens_sound_close()
+    assert g_lens_sound_handle == 0
+    view_close(v)
+    return 0
+}

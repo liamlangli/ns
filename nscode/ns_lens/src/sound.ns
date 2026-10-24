@@ -1,0 +1,353 @@
+// Audio files on the change and full maps show a player bar: play/pause on
+// the left, a seek track in the middle, the volume on the right. One file
+// plays at a time; it loads on the first press and stays loaded until another
+// file is played. The bars drawn in a frame are the hit targets of the next
+// frame's input, which runs before the map pans.
+use std
+use os
+use ui
+use audio
+
+lit LENS_SOUND_BARS = 32
+lit LENS_SOUND_MIN_H: f64 = 14.0
+lit LENS_SOUND_MAX_H: f64 = 44.0
+// A press only queues the start; the player reports playing a moment later.
+lit LENS_SOUND_START_GRACE: f64 = 0.5
+lit LENS_SOUND_DRAG_NONE = 0
+lit LENS_SOUND_DRAG_SEEK = 1
+lit LENS_SOUND_DRAG_VOLUME = 2
+
+struct lens_sound_bar {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    play_w: f64,
+    track_x: f64,
+    track_w: f64,
+    time_x: f64,
+    time_w: f64,
+    icon_x: f64,
+    volume_x: f64,
+    volume_w: f64
+}
+
+let g_lens_sound_path = ""
+let g_lens_sound_handle = 0
+let g_lens_sound_playing = false
+let g_lens_sound_started: f64 = 0.0
+let g_lens_sound_duration: f64 = 0.0
+let g_lens_sound_volume: f64 = 0.8
+let g_lens_sound_failed = set[str](64)
+let g_lens_sound_drag = 0
+let g_lens_sound_drag_x: f64 = 0.0
+let g_lens_sound_drag_w: f64 = 0.0
+let g_lens_sound_bar_count = 0
+let g_lens_sound_bar_path = [str](32)
+let g_lens_sound_bar_x = [f64](32)
+let g_lens_sound_bar_y = [f64](32)
+let g_lens_sound_bar_w = [f64](32)
+let g_lens_sound_bar_h = [f64](32)
+
+fn lens_sound_ext(path: str, ext: str) bool {
+    if path.len < ext.len {
+        return false
+    }
+    for i in 0 to ext.len {
+        if (path[path.len - ext.len + i] | 32) != ext[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn lens_sound_kind(path: str) bool {
+    return lens_sound_ext(path, ".wav") || lens_sound_ext(path, ".mp3") || lens_sound_ext(path, ".m4a") ||
+        lens_sound_ext(path, ".aac") || lens_sound_ext(path, ".aif") || lens_sound_ext(path, ".aiff") ||
+        lens_sound_ext(path, ".caf") || lens_sound_ext(path, ".flac")
+}
+
+// "m:ss" for a time in seconds.
+fn lens_sound_time(seconds: f64) str {
+    let total = 0
+    if seconds > 0.0 {
+        total = (seconds + 0.5) as i32
+    }
+    let s = total % 60
+    let pad = ""
+    if s < 10 {
+        pad = "0"
+    }
+    return itos(total / 60) + ":" + pad + itos(s)
+}
+
+// The parts of a bar at (x, y, w, h). The time label is left out of a bar
+// too narrow to hold it.
+fn lens_sound_layout(x: f64, y: f64, w: f64, h: f64) lens_sound_bar {
+    let gap = h * 0.3
+    let volume_w = clamp(w * 0.16, h * 1.2, h * 3.0)
+    let time_w: f64 = 0.0
+    if w >= h * 10.0 {
+        time_w = h * 3.4
+    }
+    let icon_x = x + w - gap - volume_w - h * 0.8
+    let time_x = icon_x - time_w
+    let track_x = x + h
+    let track_w = clamp(time_x - gap - track_x, 0.0, w)
+    return lens_sound_bar(x, y, w, h, h, track_x, track_w, time_x, time_w, icon_x, x + w - gap - volume_w, volume_w)
+}
+
+// The fraction 0...1 of `width` that `px` falls at from `left`.
+fn lens_sound_fraction(px: f64, left: f64, width: f64) f64 {
+    if width <= 0.0 {
+        return 0.0
+    }
+    return clamp((px - left) / width, 0.0, 1.0)
+}
+
+fn lens_sound_close() {
+    if g_lens_sound_handle > 0 {
+        audio_stop(g_lens_sound_handle)
+        audio_unload(g_lens_sound_handle)
+    }
+    g_lens_sound_handle = 0
+    g_lens_sound_path = ""
+    g_lens_sound_playing = false
+    g_lens_sound_duration = 0.0
+}
+
+// Load `path` as the current file unless it already is. False when it does
+// not decode; such a file is not tried again.
+fn lens_sound_open(path: str) bool {
+    if g_lens_sound_handle > 0 && g_lens_sound_path == path {
+        return true
+    }
+    if has(g_lens_sound_failed, path) {
+        return false
+    }
+    lens_sound_close()
+    let handle = audio_load_music(path)
+    if handle <= 0 {
+        insert(g_lens_sound_failed, path)
+        return false
+    }
+    g_lens_sound_handle = handle
+    g_lens_sound_path = path
+    g_lens_sound_duration = audio_duration(handle)
+    audio_set_volume(handle, g_lens_sound_volume)
+    return true
+}
+
+fn lens_sound_toggle(path: str) {
+    if lens_sound_open(path) == false {
+        return
+    }
+    if g_lens_sound_playing {
+        audio_pause(g_lens_sound_handle)
+        g_lens_sound_playing = false
+        return
+    }
+    // A finished player has rewound, so resuming plays it again from the start.
+    if audio_resume(g_lens_sound_handle) {
+        g_lens_sound_playing = true
+        g_lens_sound_started = os_time()
+    }
+}
+
+fn lens_sound_seek(fraction: f64) {
+    if g_lens_sound_handle > 0 {
+        audio_seek(g_lens_sound_handle, fraction * g_lens_sound_duration)
+    }
+}
+
+fn lens_sound_set_volume(volume: f64) {
+    g_lens_sound_volume = clamp(volume, 0.0, 1.0)
+    if g_lens_sound_handle > 0 {
+        audio_set_volume(g_lens_sound_handle, g_lens_sound_volume)
+    }
+}
+
+// Start a map frame: notice a file that played to its end, keep frames coming
+// while one plays, and clear the bars the last frame drew.
+fn lens_sound_frame() {
+    g_lens_sound_bar_count = 0
+    if g_lens_sound_playing == false {
+        return
+    }
+    if os_time() - g_lens_sound_started > LENS_SOUND_START_GRACE && audio_is_playing(g_lens_sound_handle) == false {
+        g_lens_sound_playing = false
+    }
+    g_lens_input_dirty = true
+}
+
+// Pointer input on the bars drawn last frame. A press on a bar is taken from
+// the map, so it never starts a pan or selects the leaf under it.
+fn lens_sound_input(v: ref view, over_map: bool) {
+    if g_lens_sound_drag != LENS_SOUND_DRAG_NONE {
+        let fraction = lens_sound_fraction(g_mouse_x, g_lens_sound_drag_x, g_lens_sound_drag_w)
+        if g_lens_sound_drag == LENS_SOUND_DRAG_SEEK {
+            lens_sound_seek(fraction)
+        } else {
+            lens_sound_set_volume(fraction)
+        }
+        g_lens_input_dirty = true
+        v.mouse_pressed = false
+        if v.mouse_released || !v.mouse_down {
+            g_lens_sound_drag = LENS_SOUND_DRAG_NONE
+        }
+        return
+    }
+    if v.mouse_pressed == false || over_map == false {
+        return
+    }
+    for k in 0 to g_lens_sound_bar_count {
+        let bar = lens_sound_layout(g_lens_sound_bar_x[k], g_lens_sound_bar_y[k], g_lens_sound_bar_w[k], g_lens_sound_bar_h[k])
+        if raw_hit(v, bar.x, bar.y, bar.w, bar.h) == false {
+            continue
+        }
+        let path = g_lens_sound_bar_path[k]
+        v.mouse_pressed = false
+        g_lens_input_dirty = true
+        if g_mouse_x < bar.track_x {
+            lens_sound_toggle(path)
+        } else if g_mouse_x < bar.time_x {
+            if lens_sound_open(path) {
+                g_lens_sound_drag = LENS_SOUND_DRAG_SEEK
+                g_lens_sound_drag_x = bar.track_x
+                g_lens_sound_drag_w = bar.track_w
+                lens_sound_seek(lens_sound_fraction(g_mouse_x, bar.track_x, bar.track_w))
+            }
+        } else if g_mouse_x >= bar.icon_x {
+            g_lens_sound_drag = LENS_SOUND_DRAG_VOLUME
+            g_lens_sound_drag_x = bar.volume_x
+            g_lens_sound_drag_w = bar.volume_w
+            lens_sound_set_volume(lens_sound_fraction(g_mouse_x, bar.volume_x, bar.volume_w))
+        }
+        return
+    }
+}
+
+// The seek track and the volume are status bar meters, the same as the fps one.
+fn lens_sound_slider(r: ref ui_renderer, x: f64, cy: f64, w: f64, fraction: f64) {
+    draw_status_meter(r, x, cy - STATUS_METER_H * 0.5, w, fraction)
+}
+
+// A filled triangle with its corners rounded by `bevel`: a core shrunk about
+// the incenter, grown back out by `bevel` with edge strokes and corner discs.
+fn lens_sound_triangle(r: ref ui_renderer, x0: f64, y0: f64, x1: f64, y1: f64, x2: f64, y2: f64, bevel: f64, color: u32) {
+    let a = sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
+    let b = sqrt((x2 - x0) * (x2 - x0) + (y2 - y0) * (y2 - y0))
+    let c = sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0))
+    let p = a + b + c
+    if p <= 0.0 {
+        return
+    }
+    let ix = (a * x0 + b * x1 + c * x2) / p
+    let iy = (a * y0 + b * y1 + c * y2) / p
+    let area = ((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)) * 0.5
+    if area < 0.0 {
+        area = -area
+    }
+    let inradius = 2.0 * area / p
+    let round = clamp(bevel, 0.0, inradius * 0.9)
+    let k = 1.0
+    if inradius > 0.0 {
+        k = (inradius - round) / inradius
+    }
+    let ax = ix + (x0 - ix) * k
+    let ay = iy + (y0 - iy) * k
+    let bx = ix + (x1 - ix) * k
+    let by = iy + (y1 - iy) * k
+    let cx = ix + (x2 - ix) * k
+    let cy = iy + (y2 - iy) * k
+    ui_fill_triangle(r, ax, ay, bx, by, cx, cy, color, 0.0)
+    if round <= 0.0 {
+        return
+    }
+    ui_stroke_line(r, ax, ay, bx, by, round * 2.0, color, 0.5)
+    ui_stroke_line(r, bx, by, cx, cy, round * 2.0, color, 0.5)
+    ui_stroke_line(r, cx, cy, ax, ay, round * 2.0, color, 0.5)
+    ui_fill_circle(r, ax, ay, round, color, 0.5)
+    ui_fill_circle(r, bx, by, round, color, 0.5)
+    ui_fill_circle(r, cx, cy, round, color, 0.5)
+}
+
+// Draw the player bar of file `index` centred in the box (x, y, w, h) and
+// record it for the next frame's input. False for a file that is no audio.
+fn lens_sound_draw(r: ref ui_renderer, index: i32, x: f64, y: f64, w: f64, h: f64) bool {
+    let path = os_entry_path(index)
+    if lens_sound_kind(path) == false {
+        return false
+    }
+    let bh = clamp(w * 0.11, 0.0, LENS_SOUND_MAX_H)
+    if bh > h {
+        bh = h
+    }
+    if bh < LENS_SOUND_MIN_H {
+        return false
+    }
+    let bw = w
+    if bw > bh * 22.0 {
+        bw = bh * 22.0
+    }
+    let bar = lens_sound_layout(x + (w - bw) * 0.5, y + (h - bh) * 0.5, bw, bh)
+    if g_lens_sound_bar_count < LENS_SOUND_BARS {
+        let k = g_lens_sound_bar_count
+        g_lens_sound_bar_path[k] = path
+        g_lens_sound_bar_x[k] = bar.x
+        g_lens_sound_bar_y[k] = bar.y
+        g_lens_sound_bar_w[k] = bar.w
+        g_lens_sound_bar_h[k] = bar.h
+        g_lens_sound_bar_count = k + 1
+    }
+    let current = g_lens_sound_handle > 0 && g_lens_sound_path == path
+    let cy = bar.y + bh * 0.5
+    ui_fill_round_rect(r, bar.x, bar.y, bar.w, bh, bh * 0.12, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, bar.x, bar.y, bar.w, bh, bh * 0.12, 1.0, col_muted(), 0.0)
+
+    let failed = has(g_lens_sound_failed, path)
+    let icon = col_text()
+    if failed {
+        icon = col_muted()
+    }
+    let px = bar.x + bh * 0.5
+    let s = bh * 0.2
+    if current && g_lens_sound_playing {
+        ui_fill_round_rect(r, px - s * 0.9, cy - s, s * 0.6, s * 2.0, s * 0.18, icon, 0.5)
+        ui_fill_round_rect(r, px + s * 0.3, cy - s, s * 0.6, s * 2.0, s * 0.18, icon, 0.5)
+    } else {
+        lens_sound_triangle(r, px - s * 0.7, cy - s, px - s * 0.7, cy + s, px + s * 1.0, cy, s * 0.2, icon)
+    }
+
+    let position: f64 = 0.0
+    if current {
+        position = audio_position(g_lens_sound_handle)
+    }
+    let fraction: f64 = 0.0
+    if current && g_lens_sound_duration > 0.0 {
+        fraction = clamp(position / g_lens_sound_duration, 0.0, 1.0)
+    }
+    if bar.track_w > 0.0 {
+        lens_sound_slider(r, bar.track_x, cy, bar.track_w, fraction)
+    }
+    if bar.time_w > 0.0 {
+        let label = "--:--"
+        if failed {
+            label = "no audio"
+        } else if current {
+            label = lens_sound_time(position) + " / " + lens_sound_time(g_lens_sound_duration)
+        }
+        let font_px = bh * 0.34
+        let tw = ui_text_width(r, label, font_px, FONT_MONO())
+        let ty = ui_text_v_center_y(r, bar.y, bh, font_px, FONT_MONO())
+        ui_draw_text(r, bar.time_x + (bar.time_w - tw) * 0.5, ty, label, font_px, col_muted(), FONT_MONO())
+    }
+
+    // A speaker: a box and a cone.
+    let sx = bar.icon_x + bh * 0.2
+    let ss = bh * 0.14
+    ui_fill_round_rect(r, sx, cy - ss, ss * 1.2, ss * 2.0, ss * 0.3, icon, 0.5)
+    lens_sound_triangle(r, sx + ss * 0.6, cy, sx + ss * 2.6, cy - ss * 2.0, sx + ss * 2.6, cy + ss * 2.0, ss * 0.3, icon)
+    lens_sound_slider(r, bar.volume_x, cy, bar.volume_w, g_lens_sound_volume)
+    return true
+}

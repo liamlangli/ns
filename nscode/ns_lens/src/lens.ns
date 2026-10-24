@@ -846,6 +846,7 @@ fn lens_open_root(root: str) bool {
 // No project: the window shows its Open Folder button and the recent list.
 fn lens_close_root() {
     os_watch_stop()
+    lens_sound_close()
     g_workspace_root = ""
     g_workspace_count = 0
 }
@@ -1011,7 +1012,8 @@ fn lens_draw_plain_leaf(r: ref ui_renderer, v: ref view, i: i32, w: f64, top: f6
     } else if content.w > 1.0 && content.h > 1.0 {
         ui_fill_rect(r, content.x, content.y, content.w, content.h, col_editor_panel_hi(), 0.0)
     }
-    // A PNG on the change and full maps shows its picture under the name.
+    // A PNG on the change and full maps shows its picture under the name, an
+    // audio file a player bar.
     if g_lens_view_mode == LENS_MODE_CHANGE || g_lens_view_mode == LENS_MODE_FULL {
         let name_px = lens_name_px(leaf.w, leaf.h, ui_text_width(r, g_lens_names[i], 10.0, FONT_MONO()))
         let band: f64 = 0.0
@@ -1022,7 +1024,9 @@ fn lens_draw_plain_leaf(r: ref ui_renderer, v: ref view, i: i32, w: f64, top: f6
         if ph < pw {
             pad = clamp(ph * 0.04, 2.0, 24.0)
         }
-        lens_preview_draw(r, i, px + pad, py + pad + band, pw - pad * 2.0, ph - pad * 2.0 - band)
+        if !lens_preview_draw(r, i, px + pad, py + pad + band, pw - pad * 2.0, ph - pad * 2.0 - band) {
+            lens_sound_draw(r, i, px + pad, py + pad + band, pw - pad * 2.0, ph - pad * 2.0 - band)
+        }
     }
     // A file without code never shows glyphs, so it keeps the large name.
     lens_draw_far_name(r, content, g_lens_names[i], i == g_lens_selected)
@@ -1264,6 +1268,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     }
     let cell_drag = false
     if g_lens_view_mode == LENS_MODE_REF { cell_drag = lens_ref_input(v, over_map, w, top, body_h) }
+    lens_sound_input(v, over_map)
     lens_pan_input(v, over_map && !cell_drag)
     let dt = clamp(os_time() - g_lens_last_time, 0.001, 0.05)
     g_lens_last_time = os_time()
@@ -1307,6 +1312,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let code_ready: i32 = 0
     let code_total: i32 = 0
     lens_preview_frame(r, g_workspace_generation)
+    lens_sound_frame()
     for i in 0 to g_workspace_count {
         g_lens_on_screen[i] = 0
         if !lens_ref_visible(i) { continue }
