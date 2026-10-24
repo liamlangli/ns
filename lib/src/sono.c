@@ -104,6 +104,7 @@ static const sono_preset sono_presets[NS_SONO_INSTRUMENT_COUNT] = {
     [NS_SONO_CELESTA] = {0.002, 0, 1, 1.1, false, 0, 0, 0},
     [NS_SONO_FLUTE] = {0.035, 0.12, 0.85, 0.16, false, 0, 4.8, 0.08},
     [NS_SONO_PIZZICATO] = {0.003, 0, 1, 0.18, false, 0, 0, 0},
+    [NS_SONO_PIANO] = {0.001, 0, 1, 0.28, false, 0, 0, 0},
 };
 
 static sono_song *sono_songs[SONO_MAX_SONGS];
@@ -1014,6 +1015,29 @@ static f64 sono_instrument(i32 instrument, sono_voice *v, f64 t, f64 pitch, f64 
         if (dt * 3 < 0.45) tone += 0.035 * sin(6 * SONO_PI * v->phase[0]);
         sono_svf_out breath = sono_svf_run(&v->filter[0], sono_noise(&v->rng), hz * 2, 0.1, rate);
         return 0.65 * tone + 0.035 * breath.low;
+    }
+    case NS_SONO_PIANO: {
+        // Stretched string partials, each with a fast then a slow decay that
+        // shortens up the keyboard, a slow beat between the unison strings
+        // and a short felt-hammer thump.
+        static const f64 weights[6] = {1.0, 0.55, 0.34, 0.2, 0.11, 0.06};
+        f64 stretch = 0.00035 * sqrt(tune);
+        f64 damp = sqrt(tune);
+        f64 sum = 0;
+        for (i32 k = 0; k < 6; k++) {
+            f64 n = k + 1;
+            f64 ratio = n * sqrt(1 + stretch * n * n);
+            if (dt * ratio < 0.45) {
+                v->phase[k] = sono_wrap(v->phase[k] + dt * ratio);
+                f64 d = (0.6 + 0.7 * k) * damp;
+                f64 env = 0.6 * exp(-t * d * 4.0) + 0.4 * exp(-t * d * 0.5);
+                f64 beat = 1.0 + 0.12 * sin(2 * SONO_PI * (0.6 + 0.35 * k) * t);
+                sum += weights[k] * env * beat * sin(2 * SONO_PI * v->phase[k]);
+            }
+        }
+        f64 felt = hz * 5 < 4000 ? hz * 5 : 4000;
+        sono_svf_out hammer = sono_svf_run(&v->filter[0], sono_noise(&v->rng), felt, 0.1, rate);
+        return 0.5 * sum + 0.18 * exp(-t * 90.0) * hammer.low;
     }
     case NS_SONO_KICK: {
         f64 f = (45.0 + 110.0 * exp(-t * 30.0)) * tune;

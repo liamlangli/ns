@@ -102,7 +102,7 @@ sono_set_loop(song, 0.0)
 
 // Every instrument renders something audible, through every effect.
 let kit = sono_new(RATE, 100.0)
-for instrument in 0 to SONO_PIZZICATO + 1 {
+for instrument in 0 to SONO_PIANO + 1 {
     let t = sono_track(kit, instrument)
     assert t == instrument
     sono_note(kit, t, instrument as f64, 0.5, 60.0, 1.0)
@@ -122,7 +122,7 @@ let kit_frames = sono_frames(kit)
 let kit_out = [f32](kit_frames * 2)
 assert sono_render(kit, kit_out, kit_frames) == kit_frames
 lit FRAMES_PER_BEAT = 4800 // 0.6 s per beat at 100 bpm and 8 kHz
-for instrument in 0 to SONO_PIZZICATO + 1 {
+for instrument in 0 to SONO_PIANO + 1 {
     let begin = instrument * FRAMES_PER_BEAT
     let slice = [f32](FRAMES_PER_BEAT)
     for i in 0 to FRAMES_PER_BEAT {
@@ -133,7 +133,7 @@ for instrument in 0 to SONO_PIZZICATO + 1 {
 
 // New acoustic colours render independently, including high notes at a
 // low sample rate. Their default releases decay and rerenders match exactly.
-for instrument in SONO_HARP to SONO_PIZZICATO + 1 {
+for instrument in SONO_HARP to SONO_PIANO + 1 {
     let acoustic = sono_new(RATE, 120)
     let t = sono_track(acoustic, instrument)
     assert t == 0

@@ -60,6 +60,7 @@ lit SONO_HARP = 26 // bright plucked harmonic string
 lit SONO_CELESTA = 27 // soft struck metal, sparkling upper partials
 lit SONO_FLUTE = 28 // breathy sustained woodwind
 lit SONO_PIZZICATO = 29 // short, warm orchestral string pluck
+lit SONO_PIANO = 30 // acoustic piano: stretched partials, hammer thump
 
 // Songs. sample_rate is 8000..192000; bpm counts beats (quarter notes).
 ref fn sono_new(sample_rate: i32, bpm: f64) i32
