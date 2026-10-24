@@ -1000,7 +1000,7 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
         if (inst->b >= 0) ns_aarch_load_value(c, 1, inst->b);
         else ns_aarch_emit_u32(c, ns_aarch_movz(1, 0, 0));
-        ns_aarch_emit_const_u64(c, 2, (u64)(u32)(inst->c > 0 ? inst->c : 0));
+        ns_aarch_emit_const_u64(c, 2, (u64)(i64)inst->c);
         ns_aarch_emit_rt_call(c, "ns_rt_scope_leave");
         if (inst->dst >= 0) ns_aarch_store_value(c, inst->dst, 0);
     } break;

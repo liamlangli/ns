@@ -73,6 +73,42 @@ case "$out" in
         ;;
 esac
 
+# A function returning a string used to leave its scratch to the caller, where
+# storing the result into a global kept it for good. The result now moves down
+# to the release point. 200000 calls of 16 KiB scratch is about 3 GiB.
+cat > "$tmp/strret.ns" <<'NS'
+use std
+
+let last = ""
+let total = 0
+
+fn label(round: i32) str {
+    let scratch = [f32](4096)
+    scratch[0] = round as f32
+    let head = substr(`prefix-{round}`, 0, 3)
+    return head + `-{(scratch[0] as i32) % 10}`
+}
+
+fn main() {
+    for round in 0 to 200000 {
+        last = label(round)
+        total = total + last.len
+    }
+    print(`{last} {total}\n`)
+}
+NS
+
+"$ns" build --exe "$tmp/strret.ns" -o "$tmp/strret" >/dev/null
+if ! out=$("$tmp/strret" 2>"$tmp/strret.err"); then
+    printf '%s\n' "FAIL: string results kept their callee's scratch." >&2
+    sed -n '1,5p' "$tmp/strret.err" >&2
+    exit 1
+fi
+if [ "$out" != "pre-9 1000000" ]; then
+    printf '%s\n' "FAIL: moved string results read back wrong: $out" >&2
+    exit 1
+fi
+
 # Storing into containers - a fresh local one, or the caller's from a worker
 # thread - and dispatching a worker every frame used to pin the whole frame for
 # good. 200000 frames of 16 KiB scratch is about 3 GiB.

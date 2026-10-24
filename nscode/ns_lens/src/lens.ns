@@ -523,6 +523,23 @@ fn lens_set_mode(mode: i32) {
     }
 }
 
+fn lens_entry_relative(index: i32) str {
+    return lens_relative_path(os_entry_path(index))
+}
+
+// A string stored in a global is kept for the life of the process, so a rescan
+// keeps the name and path an entry already had and stores only a changed one.
+fn lens_entry_names_sync(index: i32) {
+    let path = lens_entry_relative(index)
+    if path != g_lens_paths[index] {
+        g_lens_paths[index] = path
+    }
+    let name = os_entry_name(index)
+    if name != g_lens_names[index] {
+        g_lens_names[index] = name
+    }
+}
+
 fn lens_rebuild() {
     lens_scope_sync()
     if g_lens_view_mode == LENS_MODE_CHANGE && g_lens_change_root != g_workspace_root {
@@ -531,6 +548,9 @@ fn lens_rebuild() {
         lens_changes_parse("")
         g_lens_change_text = ""
         lens_changes_request(false)
+    }
+    for i in 0 to g_workspace_count {
+        lens_entry_names_sync(i)
     }
     lens_mini_remap()
     lens_atlas_reset()
@@ -552,8 +572,6 @@ fn lens_rebuild() {
     for i in 0 to g_workspace_count {
         g_lens_weight[i] = 0.0
         g_lens_files[i] = 0
-        g_lens_names[i] = os_entry_name(i)
-        g_lens_paths[i] = lens_relative_path(os_entry_path(i))
         g_lens_folder_header[i] = 0.0
         if lens_entry_shown(i) {
             lens_include_file(i)

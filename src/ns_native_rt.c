@@ -731,6 +731,30 @@ int64_t ns_rt_scope_leave(int64_t mark, int64_t value, int64_t size) {
             ns_rt_run_trim(target);
             ns_rt_owned_trim(target);
             ns_rt_run_push(self, target);
+        } else if (size < 0 && value + 8 <= (int64_t)ns_rt_used) {
+            // A string result (size -1) moves down the same way: its bytes
+            // follow the descriptor at the release point, unless they lie
+            // below it, in a string the caller already owned, and stay there.
+            int32_t bytes = 0, len = 0;
+            ns_rt_str_parts(value, &bytes, &len);
+            if (len < 0) len = 0;
+            uint32_t top = target + 8;
+            if (len > 0 && (uint32_t)bytes >= target && (int64_t)bytes + len <= (int64_t)ns_rt_used) {
+                memmove(ns_rt_mem + top, ns_rt_mem + (uint32_t)bytes, (size_t)len);
+                bytes = (int32_t)top;
+                top += (uint32_t)len;
+            } else if (len > 0 && (uint64_t)(uint32_t)bytes + (uint32_t)len > target) {
+                // Bytes straddling the release point: keep the region.
+                ns_rt_heap_unlock();
+                return result;
+            }
+            ns_rt_store(target, 0, bytes, 4);
+            ns_rt_store(target, 4, len, 4);
+            ns_rt_used = top;
+            result = (int64_t)target;
+            ns_rt_run_trim(target);
+            ns_rt_owned_trim(target);
+            ns_rt_run_push(self, target);
         }
         // Any other heap result is one the scope cannot move: keeping the
         // region costs memory but never hands back a recycled address.

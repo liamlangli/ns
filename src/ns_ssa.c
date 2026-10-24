@@ -4026,8 +4026,10 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
     /* A result the release cannot move keeps the whole call's memory instead;
      * leaving such a function unscoped lets its caller reclaim the same bytes
      * once it is done with the value. */
+    ns_bool string_result = ns_type_is(fn->ret, NS_TYPE_STRING) && !ns_type_is_ref(fn->ret) &&
+        !ns_type_is_array(fn->ret);
     ns_bool scoped = allocates &&
-        (!ns_ssa_scope_heap_type(fn->ret) || ns_ssa_scope_copies_bytes(b, fn->ret));
+        (!ns_ssa_scope_heap_type(fn->ret) || ns_ssa_scope_copies_bytes(b, fn->ret) || string_result);
     i32 next_value = nvalues;
     i32 mark = -1;
     i32 enter_index = -1;
@@ -4039,8 +4041,9 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
         enter_index = (i32)ns_array_length(fn->insts);
         ns_array_push(fn->insts, enter);
     }
+    /* A string result moves down as a descriptor and its bytes (size -1). */
     i32 result_size = scoped && ns_ssa_scope_struct_value(fn->ret)
-        ? ns_ssa_wasm32_size(b, fn->ret) : 0;
+        ? ns_ssa_wasm32_size(b, fn->ret) : (scoped && string_result ? -1 : 0);
     ns_type *types = ns_ssa_scope_value_types(fn, nvalues);
     ns_ssa_op *ops = ns_ssa_scope_value_ops(fn, nvalues);
 
@@ -4129,7 +4132,7 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
                 leave.a = mark;
                 leave.c = 0;
                 leave.type = fn->ret;
-                if (result_size > 0 && fn->insts[index].a >= 0) {
+                if (result_size != 0 && fn->insts[index].a >= 0) {
                     leave.b = fn->insts[index].a;
                     leave.c = result_size;
                     leave.dst = next_value++;

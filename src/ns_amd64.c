@@ -1149,7 +1149,7 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
         ns_amd64_load_value(c, c->int_regs[0], inst->a);
         if (inst->b >= 0) ns_amd64_load_value(c, c->int_regs[1], inst->b);
         else ns_amd64_emit_xor32_rr(c, c->int_regs[1]);
-        ns_amd64_emit_const_u64(c, c->int_regs[2], (u64)(u32)(inst->c > 0 ? inst->c : 0));
+        ns_amd64_emit_const_u64(c, c->int_regs[2], (u64)(i64)inst->c);
         ns_amd64_emit_rt_call(c, "ns_rt_scope_leave");
         if (inst->dst >= 0) ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
     } break;

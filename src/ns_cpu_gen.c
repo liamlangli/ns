@@ -760,7 +760,7 @@ static void ns_cpu_gen_inst(ns_cpu_gen *g, i32 pos, i32 index) {
     case NS_SSA_OP_SCOPE_LEAVE: {
         i32 args[3] = {ns_cpu_gen_reg(g, inst->a),
                        inst->b >= 0 ? ns_cpu_gen_reg(g, inst->b) : ns_cpu_gen_imm(g, 0),
-                       ns_cpu_gen_imm(g, (u64)(u32)(inst->c > 0 ? inst->c : 0))};
+                       ns_cpu_gen_imm(g, (u64)(i64)inst->c)};
         ns_cpu_gen_rt_call(g, ns_cpu_gen_dst(g, inst->dst), "ns_rt_scope_leave", args, 3);
     } break;
     case NS_SSA_OP_PIN: {

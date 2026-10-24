@@ -7,7 +7,6 @@ let g_lens_cache_root = ""
 let g_lens_cache_found = false
 let g_lens_cache_hits: i32 = 0
 let g_lens_cache_misses: i32 = 0
-let g_lens_cache_keys = [str](4096)
 
 fn lens_cache_init() {
     g_lens_cache_root = g_workspace_root + "/bin/ns_lens"
@@ -97,13 +96,26 @@ fn lens_read_source(path: str, offset: i64, bytes: i32) str {
 
 // The layout signature covers the ordered source set, sizes, and ancestry.
 // Text changes with an unchanged size still validate against SHA-256 on use.
-fn lens_layout_signature() str {
-    let signature = "layout6-files\n" + ftos(g_lens_code_world) + "\n" + g_lens_scope_path
-    for i in 0 to g_workspace_count {
-        g_lens_cache_keys[i] = os_text_hash(os_entry_path(i))
-        signature = signature + os_text_hash(g_lens_cache_keys[i] + ":" + ftos(g_lens_weight[i]) + ":" + itos(os_entry_parent(i)))
+// The signature and the layout record each join one row per file. Appending
+// each row to a running string copies everything before it, and the heap only
+// gives memory back when a call returns, so a project of 4096 files left
+// ~1 GiB behind on every open. Halving keeps the copies at n log n bytes.
+// The rows are plain functions: calling a block value keeps the whole heap.
+fn lens_signature_rows(first: i32, end: i32) str {
+    if end - first > 16 {
+        let mid = first + (end - first) / 2
+        return lens_signature_rows(first, mid) + lens_signature_rows(mid, end)
     }
-    return os_text_hash(signature)
+    let text = ""
+    for i in first to end {
+        text = text + os_text_hash(os_text_hash(os_entry_path(i)) + ":" + ftos(g_lens_weight[i]) + ":" + itos(os_entry_parent(i)))
+    }
+    return text
+}
+
+fn lens_layout_signature() str {
+    let head = "layout6-files\n" + ftos(g_lens_code_world) + "\n" + g_lens_scope_path
+    return os_text_hash(head + lens_signature_rows(0, g_workspace_count))
 }
 
 let g_lens_parse_offset: i32 = 0
@@ -137,11 +149,19 @@ fn lens_load_layout(signature: str) bool {
 }
 
 fn lens_store_layout(signature: str) {
-    let data = ""
-    for i in 0 to g_workspace_count {
-        data = data + ftos(g_lens_x[i]) + "\n" + ftos(g_lens_y[i]) + "\n" + ftos(g_lens_w[i]) + "\n" + ftos(g_lens_h[i]) + "\n" + ftos(g_lens_folder_header[i]) + "\n"
+    lens_cache_put(g_lens_cache_root + "/index.cache", signature, lens_layout_rows(0, g_workspace_count))
+}
+
+fn lens_layout_rows(first: i32, end: i32) str {
+    if end - first > 16 {
+        let mid = first + (end - first) / 2
+        return lens_layout_rows(first, mid) + lens_layout_rows(mid, end)
     }
-    lens_cache_put(g_lens_cache_root + "/index.cache", signature, data)
+    let text = ""
+    for i in first to end {
+        text = text + ftos(g_lens_x[i]) + "\n" + ftos(g_lens_y[i]) + "\n" + ftos(g_lens_w[i]) + "\n" + ftos(g_lens_h[i]) + "\n" + ftos(g_lens_folder_header[i]) + "\n"
+    }
+    return text
 }
 
 fn lens_offset_key(value: i64) str {

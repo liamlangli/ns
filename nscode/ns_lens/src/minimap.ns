@@ -27,12 +27,39 @@ let g_lens_mini_queue_block = [i32](8)
 let g_lens_mini_build_block: i32 = 0
 let g_lens_mini_queue_count: i32 = 0
 
-// A rescan renumbers entries: carry each batch over to its path's new index.
-fn lens_mini_remap() {
+// The project the batch paths are relative to.
+let g_lens_mini_root = ""
+// Old index of each new entry's batch, or -1. Filled by its own call so the
+// path dictionary is released when it returns.
+let g_lens_mini_source = [i32](4096)
+
+fn lens_mini_sources() {
     let old_index = [str: i32](8192)
-    for j in 0 to 4096 {
-        if g_lens_mini_batch[j] != 0 && g_lens_mini_path[j] != "" {
-            old_index[g_lens_mini_path[j]] = j
+    if g_lens_mini_root == g_workspace_root {
+        for j in 0 to 4096 {
+            if g_lens_mini_batch[j] != 0 && g_lens_mini_path[j] != "" {
+                old_index[g_lens_mini_path[j]] = j
+            }
+        }
+    }
+    for i in 0 to 4096 {
+        g_lens_mini_source[i] = -1
+        if i < g_workspace_count && has(old_index, g_lens_paths[i]) {
+            g_lens_mini_source[i] = old_index[g_lens_paths[i]]
+        }
+    }
+}
+
+// A rescan renumbers entries: carry each batch over to its path's new index.
+// The paths are the map's own relative path strings (lens_entry_names_sync),
+// shared rather than copied: a string stored in a global is never released.
+fn lens_mini_remap() {
+    lens_mini_sources()
+    g_lens_mini_root = g_workspace_root
+    for i in 0 to 4096 {
+        g_lens_mini_path[i] = ""
+        if i < g_workspace_count {
+            g_lens_mini_path[i] = g_lens_paths[i]
         }
     }
     let batch = [i32](4096)
@@ -44,10 +71,9 @@ fn lens_mini_remap() {
     let line_pitch = [f64](4096)
     let document = [bool](4096)
     let kept = [i32](4096)
-    for i in 0 to g_workspace_count {
-        let path = os_entry_path(i)
-        if has(old_index, path) {
-            let j = old_index[path]
+    for i in 0 to 4096 {
+        let j = g_lens_mini_source[i]
+        if j >= 0 {
             batch[i] = g_lens_mini_batch[j]
             hash[i] = g_lens_mini_hash[j]
             lines[i] = g_lens_mini_lines[j]
@@ -76,10 +102,6 @@ fn lens_mini_remap() {
         g_lens_mini_document[i] = document[i]
         g_lens_mini_doc_version[i] = -1
         g_lens_mini_diff_version[i] = -1
-        g_lens_mini_path[i] = ""
-        if i < g_workspace_count {
-            g_lens_mini_path[i] = os_entry_path(i)
-        }
     }
     g_lens_mini_queue_count = 0
 }
