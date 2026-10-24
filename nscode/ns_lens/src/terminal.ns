@@ -17,9 +17,6 @@ lit TERM_DRAIN_ROUNDS = 16
 
 lit TERM_TITLE_H = 30.0
 lit TERM_FOOTER_H = 18.0
-// Touch screens get a row of the keys a software keyboard lacks.
-lit TERM_KEY_BAR_H = 30.0
-lit TERM_KEYS = 9
 lit TERM_PAD = 6.0
 lit TERM_MIN_W = 320.0
 lit TERM_MIN_H = 160.0
@@ -141,26 +138,6 @@ let g_terminal_resize_px: f64 = 0.0
 let g_terminal_resize_py: f64 = 0.0
 let g_terminal_grab_x: f64 = 0.0
 let g_terminal_grab_y: f64 = 0.0
-
-// Where the shell runs. Desktop starts a local login shell over a pty; iOS has
-// no local shell and opens one on a remote host over SSH instead.
-lit TERM_SESSION_LOCAL = 0
-lit TERM_SESSION_SSH = 1
-let g_terminal_kind: i32 = TERM_SESSION_LOCAL
-// The SSH state last seen, and why the last session ended.
-let g_terminal_ssh_state: i32 = OS_SSH_CLOSED
-let g_terminal_note = ""
-// The remote host, remembered app-wide: a development machine serves every
-// project, and it is independent of where the repository's Git remote lives.
-let g_terminal_ssh_host = ""
-let g_terminal_ssh_port: i32 = 22
-let g_terminal_ssh_user = ""
-let g_terminal_ssh_folder = ""
-let g_terminal_ssh_loaded = false
-// Tests turn this off so they never touch the real app data.
-let g_terminal_ssh_persist = true
-// Ctrl latched from the touch key bar modifies the next typed key.
-let g_terminal_ctrl_latch = false
 
 // ---- colours ---------------------------------------------------------------
 
@@ -583,7 +560,7 @@ fn term_receive_char(cp: i32) {
 
 fn term_reply(text: str) {
     if g_terminal_handle > 0 && g_terminal_exited == false {
-        terminal_session_write(text)
+        os_pty_write(g_terminal_handle, text)
     }
 }
 
@@ -1188,7 +1165,7 @@ fn term_resize(cols: i32, rows: i32) {
     g_term_cur_col = clamp_i(g_term_cur_col, 0, new_cols)
     g_term_cur_row = clamp_i(g_term_cur_row, 0, new_rows - 1)
     if g_terminal_handle > 0 {
-        terminal_session_resize(new_cols, new_rows)
+        os_pty_resize(g_terminal_handle, new_cols, new_rows)
     }
     if g_term_offset > g_term_hist_count {
         g_term_offset = g_term_hist_count
@@ -1239,228 +1216,30 @@ fn terminal_clamp(w: f64, h: f64) {
     g_terminal_y = clamp(g_terminal_y, min_y, max_y)
 }
 
-// ---- session backends ------------------------------------------------------
-
-fn terminal_session_kind() i32 {
-    if lens_mobile() {
-        return TERM_SESSION_SSH
-    }
-    return TERM_SESSION_LOCAL
-}
-
-fn terminal_session_open() i32 {
-    if g_terminal_kind == TERM_SESSION_SSH {
-        g_terminal_ssh_state = OS_SSH_CONNECTING
-        return os_ssh_open(g_terminal_ssh_host, g_terminal_ssh_port, g_terminal_ssh_user, g_terminal_ssh_folder, g_term_cols, g_term_rows)
-    }
-    return os_pty_open(g_workspace_root, g_term_cols, g_term_rows)
-}
-
-fn terminal_session_read(capacity: i32) str {
-    if g_terminal_kind == TERM_SESSION_SSH {
-        return os_ssh_read(g_terminal_handle, capacity)
-    }
-    return os_pty_read(g_terminal_handle, capacity)
-}
-
-fn terminal_session_write(data: str) {
-    if g_terminal_kind == TERM_SESSION_SSH {
-        os_ssh_write(g_terminal_handle, data)
-    } else {
-        os_pty_write(g_terminal_handle, data)
-    }
-}
-
-fn terminal_session_resize(cols: i32, rows: i32) {
-    if g_terminal_kind == TERM_SESSION_SSH {
-        os_ssh_resize(g_terminal_handle, cols, rows)
-    } else {
-        os_pty_resize(g_terminal_handle, cols, rows)
-    }
-}
-
-// Connecting counts as running: typed input waits for the remote shell.
-fn terminal_session_running() bool {
-    if g_terminal_kind == TERM_SESSION_SSH {
-        g_terminal_ssh_state = os_ssh_state(g_terminal_handle)
-        return g_terminal_ssh_state > 0
-    }
-    return os_pty_running(g_terminal_handle) != 0
-}
-
-// Keeps why an SSH session ended for the status line.
-fn terminal_session_close() {
-    if g_terminal_handle <= 0 {
-        return
-    }
-    if g_terminal_kind == TERM_SESSION_SSH {
-        g_terminal_note = os_ssh_error(g_terminal_handle)
-        g_terminal_ssh_state = os_ssh_state(g_terminal_handle)
-        os_ssh_close(g_terminal_handle)
-    } else {
-        os_pty_close(g_terminal_handle)
-    }
-    g_terminal_handle = 0
-}
-
-// ---- remote host -----------------------------------------------------------
-
-fn terminal_ssh_path() str {
-    return os_app_data_dir("ns_lens") + "/ssh_terminal"
-}
-
-// One value per line: host, port, user, remote folder.
-fn terminal_ssh_load() {
-    if g_terminal_ssh_loaded || g_terminal_ssh_persist == false {
-        return
-    }
-    g_terminal_ssh_loaded = true
-    let text = os_read_file(terminal_ssh_path())
-    let field: i32 = 0
-    let start: i32 = 0
-    for i in 0 to text.len + 1 {
-        if i == text.len || ((text[i] as i32) & 255) == 10 {
-            let value = substr(text, start, i - start)
-            if field == 0 {
-                g_terminal_ssh_host = value
-            } else if field == 1 {
-                g_terminal_ssh_port = terminal_ssh_port(value)
-            } else if field == 2 {
-                g_terminal_ssh_user = value
-            } else if field == 3 {
-                g_terminal_ssh_folder = value
-            }
-            field = field + 1
-            start = i + 1
-        }
-    }
-    if terminal_ssh_valid(g_terminal_ssh_host, g_terminal_ssh_user) == false || g_terminal_ssh_port <= 0 {
-        g_terminal_ssh_host = ""
-        g_terminal_ssh_port = 22
-        g_terminal_ssh_user = ""
-        g_terminal_ssh_folder = ""
-    }
-}
-
-// 22 for an empty field, 0 for anything but a port number.
-fn terminal_ssh_port(text: str) i32 {
-    if text == "" {
-        return 22
-    }
-    if text.len > 5 {
-        return 0
-    }
-    let port: i32 = 0
-    for c in text {
-        if c < 48 || c > 57 {
-            return 0
-        }
-        port = port * 10 + c - 48
-    }
-    if port < 1 || port > 65535 {
-        return 0
-    }
-    return port
-}
-
-// A host or user name is one printable token; anything that could read as an
-// option or a second field is refused.
-fn terminal_ssh_token(value: str) bool {
-    if value == "" || value.len > 120 || ((value[0] as i32) & 255) == 45 {
-        return false
-    }
-    for c in value {
-        if c <= 32 || c == 127 || c == 64 {
-            return false
-        }
-    }
-    return true
-}
-
-fn terminal_ssh_valid(host: str, user: str) bool {
-    return terminal_ssh_token(host) && terminal_ssh_token(user)
-}
-
-// `user@host` splits into its fields when the user field is left empty.
-fn terminal_ssh_configure(host: str, port_text: str, user: str, folder: str) bool {
-    let h = host
-    let u = user
-    if u == "" {
-        for i in 0 to host.len {
-            if ((host[i] as i32) & 255) == 64 && u == "" {
-                u = substr(host, 0, i)
-                h = substr(host, i + 1, host.len - i - 1)
-            }
-        }
-    }
-    let port = terminal_ssh_port(port_text)
-    if terminal_ssh_valid(h, u) == false || port == 0 || (folder != "" && lens_mobile_line(folder) == false) || folder.len > 1000 {
-        g_lens_message = "Enter a host, user and port for the SSH terminal"
-        return false
-    }
-    g_terminal_ssh_host = h
-    g_terminal_ssh_port = port
-    g_terminal_ssh_user = u
-    g_terminal_ssh_folder = folder
-    g_terminal_ssh_loaded = true
-    if g_terminal_ssh_persist && os_make_dirs(os_app_data_dir("ns_lens")) != 0 {
-        os_write_file_atomic(terminal_ssh_path(), h + "\n" + itos(port) + "\n" + u + "\n" + folder + "\n")
-    }
-    return true
-}
-
-fn terminal_ssh_target() str {
-    let target = g_terminal_ssh_user + "@" + g_terminal_ssh_host
-    if g_terminal_ssh_port != 22 {
-        target = target + ":" + itos(g_terminal_ssh_port)
-    }
-    return target
-}
-
-// Asks for the host; the answer arrives through lens_mobile_tick.
-fn terminal_ssh_edit() {
-    lens_mobile_terminal_prompt()
-}
-
-// ---- shell process ---------------------------------------------------------
-
 fn terminal_restart() {
-    terminal_session_close()
+    if g_terminal_handle > 0 {
+        os_pty_close(g_terminal_handle)
+        g_terminal_handle = 0
+    }
     term_full_reset()
     g_terminal_exited = false
     g_terminal_error = ""
-    g_terminal_note = ""
-    g_terminal_ctrl_latch = false
     if g_terminal_open == false {
         return
     }
-    g_terminal_kind = terminal_session_kind()
-    if g_terminal_kind == TERM_SESSION_SSH {
-        terminal_ssh_load()
-        if g_terminal_ssh_host == "" {
-            g_terminal_exited = true
-            g_terminal_focus = false
-            g_terminal_ssh_state = OS_SSH_CLOSED
-            g_terminal_note = "No host yet  ·  tap host to connect to your development machine"
-            terminal_ssh_edit()
-            g_lens_input_dirty = true
-            return
-        }
-    }
-    g_terminal_handle = terminal_session_open()
+    g_terminal_handle = os_pty_open(g_workspace_root, g_term_cols, g_term_rows)
     g_terminal_focus = g_terminal_handle > 0
     if g_terminal_handle <= 0 {
-        if g_terminal_kind == TERM_SESSION_SSH {
-            g_terminal_error = "SSH terminals are not available in this build"
-        } else {
-            g_terminal_error = "This platform has no terminal backend"
-        }
+        g_terminal_error = "This platform has no terminal backend"
         g_terminal_exited = true
     }
     g_lens_input_dirty = true
 }
 
 fn terminal_show() {
+    if lens_mobile() {
+        return
+    }
     g_terminal_open = true
     if g_terminal_ready == false {
         g_terminal_ready = true
@@ -1468,12 +1247,6 @@ fn terminal_show() {
         g_terminal_h = 380.0
         g_terminal_x = g_lens_view_w - g_terminal_w - 24.0
         g_terminal_y = g_lens_canvas_h - g_terminal_h - 56.0
-        if lens_mobile() {
-            // A phone has no room for a floating window beside the map.
-            g_terminal_x = 4.0
-            g_terminal_w = g_lens_view_w - 8.0
-            g_terminal_h = g_lens_canvas_h * 0.55
-        }
     }
     if g_terminal_handle <= 0 && g_terminal_exited == false {
         terminal_restart()
@@ -1496,7 +1269,10 @@ fn terminal_toggle() {
 }
 
 fn terminal_shutdown() {
-    terminal_session_close()
+    if g_terminal_handle > 0 {
+        os_pty_close(g_terminal_handle)
+        g_terminal_handle = 0
+    }
     g_terminal_open = false
     g_terminal_focus = false
 }
@@ -1516,7 +1292,7 @@ fn terminal_poll() {
     }
     let got = false
     for round in 0 to TERM_READ_ROUNDS {
-        let chunk = terminal_session_read(TERM_READ_BYTES)
+        let chunk = os_pty_read(g_terminal_handle, TERM_READ_BYTES)
         if chunk.len > 0 {
             term_feed_text(chunk)
             got = true
@@ -1528,22 +1304,19 @@ fn terminal_poll() {
         g_lens_input_dirty = true
         g_term_offset = clamp_i(g_term_offset, 0, g_term_hist_count)
     }
-    let state = g_terminal_ssh_state
-    if terminal_session_running() == false {
-        // Drain everything the shell wrote just before it exited.
+    if os_pty_running(g_terminal_handle) == 0 {
+        // Drain everything the child wrote just before it exited.
         for round in 0 to TERM_DRAIN_ROUNDS {
-            let tail = terminal_session_read(TERM_READ_BYTES)
+            let tail = os_pty_read(g_terminal_handle, TERM_READ_BYTES)
             if tail.len <= 0 {
                 break
             }
             term_feed_text(tail)
         }
-        terminal_session_close()
+        os_pty_close(g_terminal_handle)
+        g_terminal_handle = 0
         g_terminal_exited = true
         g_terminal_focus = false
-        g_lens_input_dirty = true
-    } else if state != g_terminal_ssh_state {
-        // Connecting, verifying and open read differently in the title.
         g_lens_input_dirty = true
     }
 }
@@ -1554,7 +1327,7 @@ fn terminal_send(data: str) {
     if g_terminal_handle <= 0 || data == "" {
         return
     }
-    terminal_session_write(data)
+    os_pty_write(g_terminal_handle, data)
     g_term_offset = 0
 }
 
@@ -1887,114 +1660,7 @@ fn terminal_keys(v: ref view) {
             }
         }
     }
-    // A system keyboard delivers typed and IME-composed text as committed
-    // UTF-8 rather than key presses.
-    if lens_mobile() {
-        send = send + terminal_latched_text(view_take_text(v))
-    }
     terminal_send(send)
-}
-
-// The touch bar's latched Ctrl turns the first typed letter into its control
-// byte, and then releases.
-fn terminal_latched_text(text: str) str {
-    if text == "" || g_terminal_ctrl_latch == false {
-        return text
-    }
-    g_terminal_ctrl_latch = false
-    let k = (text[0] as i32) & 255
-    if k >= 97 && k <= 122 {
-        k = k - 32
-    }
-    let byte = terminal_control_byte(k)
-    if byte < 0 {
-        return text
-    }
-    return terminal_cp_str(byte) + substr(text, 1, text.len - 1)
-}
-
-fn terminal_key_label(index: i32) str {
-    if index == 0 {
-        return "esc"
-    }
-    if index == 1 {
-        return "tab"
-    }
-    if index == 2 {
-        return "ctrl"
-    }
-    if index == 3 {
-        return "<-"
-    }
-    if index == 4 {
-        return "dn"
-    }
-    if index == 5 {
-        return "up"
-    }
-    if index == 6 {
-        return "->"
-    }
-    if index == 7 {
-        return "^C"
-    }
-    return "paste"
-}
-
-fn terminal_key_bar_action(v: ref view, index: i32) {
-    if index == 2 {
-        g_terminal_ctrl_latch = !g_terminal_ctrl_latch
-        return
-    }
-    g_terminal_ctrl_latch = false
-    if index == 0 {
-        terminal_send("\u{1b}")
-    } else if index == 1 {
-        terminal_send("\t")
-    } else if index == 3 {
-        terminal_send(terminal_arrow("D"))
-    } else if index == 4 {
-        terminal_send(terminal_arrow("B"))
-    } else if index == 5 {
-        terminal_send(terminal_arrow("A"))
-    } else if index == 6 {
-        terminal_send(terminal_arrow("C"))
-    } else if index == 7 {
-        terminal_send("\u{3}")
-    } else {
-        terminal_paste(v)
-    }
-}
-
-fn terminal_footer_h() f64 {
-    if lens_mobile() {
-        return TERM_FOOTER_H + TERM_KEY_BAR_H
-    }
-    return TERM_FOOTER_H
-}
-
-fn terminal_key_bar_y() f64 {
-    return g_terminal_y + g_terminal_h - TERM_FOOTER_H - TERM_KEY_BAR_H
-}
-
-fn terminal_key_w() f64 {
-    return (g_terminal_w - 12.0) / (TERM_KEYS as f64)
-}
-
-fn terminal_key_bar_hit(v: ref view) i32 {
-    if lens_mobile() == false || raw_hit(v, g_terminal_x + 6.0, terminal_key_bar_y(), g_terminal_w - 12.0, TERM_KEY_BAR_H) == false {
-        return -1
-    }
-    return clamp_i(((g_mouse_x - g_terminal_x - 6.0) / terminal_key_w()) as i32, 0, TERM_KEYS - 1)
-}
-
-fn terminal_draw_key_bar(r: ref ui_renderer, v: ref view) {
-    let w = terminal_key_w()
-    let y = terminal_key_bar_y()
-    for i in 0 to TERM_KEYS {
-        let x = g_terminal_x + 6.0 + (i as f64) * w
-        lens_draw_button(r, v, x + 2.0, y + 3.0, w - 4.0, TERM_KEY_BAR_H - 6.0, terminal_key_label(i), i == 2 && g_terminal_ctrl_latch)
-    }
 }
 
 // ---- selection -------------------------------------------------------------
@@ -2239,10 +1905,6 @@ fn terminal_title_button_restart_x() f64 {
     return g_terminal_x + g_terminal_w - 102.0
 }
 
-fn terminal_title_button_host_x() f64 {
-    return terminal_title_button_restart_x() - 52.0
-}
-
 fn terminal_title_button_close_x() f64 {
     return g_terminal_x + g_terminal_w - 34.0
 }
@@ -2266,18 +1928,6 @@ fn terminal_mouse(v: ref view, w: f64, h: f64) {
         }
         if raw_hit(v, terminal_title_button_restart_x(), g_terminal_y + 5.0, 60.0, 20.0) {
             terminal_restart()
-            v.mouse_pressed = false
-            return
-        }
-        if g_terminal_kind == TERM_SESSION_SSH && raw_hit(v, terminal_title_button_host_x(), g_terminal_y + 5.0, 46.0, 20.0) {
-            terminal_ssh_edit()
-            v.mouse_pressed = false
-            return
-        }
-        let key = terminal_key_bar_hit(v)
-        if key >= 0 {
-            terminal_key_bar_action(v, key)
-            g_terminal_focus = true
             v.mouse_pressed = false
             return
         }
@@ -2548,20 +2198,8 @@ fn terminal_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     // instead of painting a second, more opaque header fill.
     ui_fill_rect(r, g_terminal_x + 1.0, g_terminal_y + TERM_TITLE_H - 1.0, g_terminal_w - 2.0, 1.0, col_editor_sel(), 0.0)
     let ty = ui_text_v_center_y(r, g_terminal_y, TERM_TITLE_H, small_px(), FONT_MONO())
-    let title = "Terminal  " + g_workspace_root
-    let restart = "restart"
-    let title_w = g_terminal_w - 130.0
-    if g_terminal_kind == TERM_SESSION_SSH {
-        title = "SSH  " + terminal_ssh_target()
-        if g_terminal_ssh_host == "" {
-            title = "SSH  not configured"
-        }
-        restart = "connect"
-        title_w = title_w - 52.0
-        lens_draw_button(r, v, terminal_title_button_host_x(), g_terminal_y + 5.0, 46.0, 20.0, "host", g_terminal_ssh_host == "")
-    }
-    draw_text_clipped(r, g_terminal_x + 12.0, ty, title_w, TERM_TITLE_H, title, small_px(), col_text())
-    lens_draw_button(r, v, terminal_title_button_restart_x(), g_terminal_y + 5.0, 60.0, 20.0, restart, false)
+    draw_text_clipped(r, g_terminal_x + 12.0, ty, g_terminal_w - 130.0, TERM_TITLE_H, "Terminal  " + g_workspace_root, small_px(), col_text())
+    lens_draw_button(r, v, terminal_title_button_restart_x(), g_terminal_y + 5.0, 60.0, 20.0, "restart", false)
     if raw_hit(v, terminal_title_button_close_x(), g_terminal_y + 5.0, 22.0, 20.0) {
         ui_fill_round_rect(r, terminal_title_button_close_x(), g_terminal_y + 5.0, 22.0, 20.0, 3.0, col_editor_panel_hi(), 0.0)
     }
@@ -2569,7 +2207,7 @@ fn terminal_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let gx = g_terminal_x + TERM_PAD
     let gy = g_terminal_y + TERM_TITLE_H + TERM_PAD
     let gw = clamp(g_terminal_w - TERM_PAD * 2.0, 20.0, 10000.0)
-    let gh = clamp(g_terminal_h - TERM_TITLE_H - terminal_footer_h() - TERM_PAD * 2.0, 20.0, 10000.0)
+    let gh = clamp(g_terminal_h - TERM_TITLE_H - TERM_FOOTER_H - TERM_PAD * 2.0, 20.0, 10000.0)
     let cw = ui_mono_char_width(r, TERM_FONT_PX(), FONT_MONO())
     if cw <= 0.0 {
         cw = TERM_FONT_PX() * 0.6
@@ -2607,20 +2245,9 @@ fn terminal_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     if g_terminal_exited {
         if g_terminal_error != "" {
             status = g_terminal_error
-        } else if g_terminal_kind == TERM_SESSION_SSH {
-            status = g_terminal_note + "  ·  connect to start again"
-            if g_terminal_ssh_host == "" {
-                status = g_terminal_note
-            }
         } else {
             status = "shell exited  ·  restart to open a new one"
         }
-    } else if g_terminal_kind == TERM_SESSION_SSH && g_terminal_ssh_state == OS_SSH_CONNECTING {
-        status = "connecting to " + terminal_ssh_target() + "..."
-    } else if g_terminal_kind == TERM_SESSION_SSH && g_terminal_ssh_state == OS_SSH_VERIFYING {
-        status = "checking the host key and signing in..."
-    } else if g_terminal_kind == TERM_SESSION_SSH && g_terminal_focus {
-        status = "tap for the keyboard  ·  drag selects  ·  ctrl applies to the next key"
     } else if terminal_has_selection() && g_terminal_focus {
         status = "cmd+C copies the selection  ·  click clears it"
     } else if g_term_offset > 0 {
@@ -2631,8 +2258,5 @@ fn terminal_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         status = "click to type"
     }
     draw_text_clipped(r, g_terminal_x + 12.0, g_terminal_y + g_terminal_h - TERM_FOOTER_H + 1.0, g_terminal_w - 24.0, TERM_FOOTER_H, status, small_px(), col_muted())
-    if lens_mobile() {
-        terminal_draw_key_bar(r, v)
-    }
     draw_panel_grip(r, g_terminal_x, g_terminal_y, g_terminal_w, g_terminal_h)
 }

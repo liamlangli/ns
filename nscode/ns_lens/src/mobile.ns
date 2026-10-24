@@ -284,16 +284,6 @@ fn lens_mobile_git_begin(kind: i32, path: str, steps: [str], places: [str], coun
     }
 }
 
-// The SSH terminal's host. Any repository work may continue meanwhile.
-fn lens_mobile_terminal_prompt() {
-    if g_mobile_dialog != 0 {
-        return
-    }
-    if os_dialog_prompt_begin("SSH terminal host", "Host or user@host\nPort (empty for 22)\nUser\nRemote folder (optional, ~/ for home)", 0) != 0 {
-        g_mobile_dialog = 6
-    }
-}
-
 fn lens_mobile_line(value: str) bool {
     if value == "" { return false }
     for c in value { if c == 10 || c == 13 || c == 0 { return false } }
@@ -360,10 +350,6 @@ fn lens_mobile_tick(v: ref view) {
                 os_dialog_clear()
             } else if kind == 5 {
                 lens_mobile_author_begin(os_dialog_value(0), os_dialog_value(1))
-            } else if kind == 6 {
-                if terminal_ssh_configure(os_dialog_value(0), os_dialog_value(1), os_dialog_value(2), os_dialog_value(3)) {
-                    terminal_restart()
-                }
             }
             g_lens_input_dirty = true
         }

@@ -402,18 +402,8 @@ fetches and fast-forwards; divergent histories are refused without discarding
 local commits. Resolve a divergent rebase on a desktop. Git hooks, submodule
 recursion, Git LFS and arbitrary Git command execution are not provided.
 
-iOS has no local shell, so View > Terminal opens a shell on a development
-machine over SSH. Tap **host** in the terminal's title bar to enter the host
-(or `user@host`), port, user and an optional remote start folder (`~/` is the
-remote home); the setting is kept app-wide and is independent of the
-repository's Git remote. It signs in with the imported SSH key and uses the
-same first-use fingerprint confirmation and pins as Git. **connect** reconnects;
-a dropped session is never resumed or replayed automatically. The key row
-under the terminal sends esc, tab, arrows and ^C, latches ctrl for the next
-typed key, and pastes. Commands run on the remote machine, not on the phone's
-copy of the repository: push from Lens and pull on the machine to move edits.
-Remote file synchronization and optional offline commands are described in
-[the terminal implementation plan](../../doc/lens-ios-terminal.md).
+iOS has no local shell, so the View menu lists only the outline there; the
+terminal panel is desktop-only. The embedded SSH transport stays in use for Git.
 
 Validation:
 

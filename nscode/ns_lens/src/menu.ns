@@ -170,6 +170,14 @@ fn lens_recent_row_at(y: f64) i32 {
     return clamp_i(((y - lens_recent_y()) / LENS_MODE_ITEM) as i32, 0, lens_recent_rows() - 1)
 }
 
+// iOS has no local shell, so its View menu lists the outline alone.
+fn lens_view_items() i32 {
+    if lens_mobile() {
+        return 1
+    }
+    return LENS_VIEW_ITEMS
+}
+
 fn lens_view_item_label(i: i32) str {
     if i == 0 {
         return "Outline"
@@ -726,7 +734,7 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     if g_lens_file_block {
         g_lens_recent_open = clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, lens_file_items() - 1) == LENS_FILE_RECENT
     }
-    let view_pop_h = LENS_MODE_ITEM * (LENS_VIEW_ITEMS as f64)
+    let view_pop_h = LENS_MODE_ITEM * (lens_view_items() as f64)
     g_lens_view_block = g_lens_view_open && raw_hit(v, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, view_pop_h)
     let sx = lens_search_x(w)
     let sy = lens_search_y()
@@ -815,7 +823,7 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     }
     if g_lens_view_open {
         if g_lens_view_block {
-            lens_view_action(clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, LENS_VIEW_ITEMS - 1))
+            lens_view_action(clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, lens_view_items() - 1))
         }
         g_lens_view_open = false
         v.mouse_pressed = false
@@ -980,10 +988,10 @@ fn lens_draw_view_menu(r: ref ui_renderer, v: ref view) {
         return
     }
     let pop_y = lens_mode_popup_y()
-    let pop_h = LENS_MODE_ITEM * (LENS_VIEW_ITEMS as f64)
+    let pop_h = LENS_MODE_ITEM * (lens_view_items() as f64)
     ui_fill_round_rect(r, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, pop_h, 3.0, col_popup_bg(), 0.0)
     ui_stroke_round_rect(r, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
-    for i in 0 to LENS_VIEW_ITEMS {
+    for i in 0 to lens_view_items() {
         let iy = pop_y + (i as f64) * LENS_MODE_ITEM
         if raw_hit(v, LENS_VIEW_X, iy, LENS_VIEW_MENU_W, LENS_MODE_ITEM) {
             ui_fill_rect(r, LENS_VIEW_X + 1.0, iy, LENS_VIEW_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
