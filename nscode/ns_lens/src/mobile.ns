@@ -156,7 +156,7 @@ fn lens_mobile_open() {
 
 fn lens_mobile_clone() {
     if lens_mobile_busy() || lens_open_blocked() { return }
-    if os_dialog_prompt_begin("Clone repository", "SSH or HTTPS URL\nLocal folder name", 0) != 0 {
+    if os_dialog_prompt_begin("Clone repository", "SSH or HTTPS URL\nLocal folder name (optional)", 0) != 0 {
         g_mobile_dialog = 2
     }
 }
@@ -298,7 +298,21 @@ fn lens_mobile_folder(value: str) bool {
     return true
 }
 
-fn lens_mobile_clone_begin(url: str, name: str) {
+// The folder a clone lands in when none is given: the last path segment of
+// the URL without a trailing slash or ".git", as git itself would pick.
+fn lens_mobile_repo_name(url: str) str {
+    let end = url.len
+    loop end > 0 && url[end - 1] == 47 { end = end - 1 }
+    let start = end
+    loop start > 0 && url[start - 1] != 47 && url[start - 1] != 58 { start = start - 1 }
+    let name = substr(url, start, end - start)
+    if name.len > 4 && substr(name, name.len - 4, 4) == ".git" { name = substr(name, 0, name.len - 4) }
+    return name
+}
+
+fn lens_mobile_clone_begin(url: str, folder: str) {
+    let name = folder
+    if name == "" { name = lens_mobile_repo_name(url) }
     if lens_mobile_line(url) == false || lens_mobile_folder(name) == false {
         g_lens_message = "Enter a repository URL and a safe folder name"
         return

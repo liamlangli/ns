@@ -10,6 +10,11 @@ fn main() {
     assert !lens_mobile_folder("a\nb")
     assert !lens_mobile_line("user\n--config")
     assert lens_mobile_line("ssh://git@example.test:2222/team/repo.git")
+    assert lens_mobile_repo_name("ssh://git@example.test:2222/team/repo.git") == "repo"
+    assert lens_mobile_repo_name("git@example.test:team/my-repo.git") == "my-repo"
+    assert lens_mobile_repo_name("git@example.test:solo") == "solo"
+    assert lens_mobile_repo_name("https://example.test/team/repo/") == "repo"
+    assert lens_mobile_repo_name("https://example.test/") == "example.test"
     assert lens_mobile_after("/a/Documents/x/Documents/repo", "/Documents/") == "repo"
     assert lens_mobile_after("/a/b", "/Documents/") == ""
     assert lens_mobile_relocate("/elsewhere/project") == "/elsewhere/project"
