@@ -22,11 +22,16 @@ let g_lens_touch_rebase = false
 // click does there: focus a file or place the text cursor.
 lit LENS_TAP_SLOP = 10.0
 lit LENS_TAP_TIME = 0.5
+// A finger landing this soon after a pinch lifted is the pinch's straggler,
+// not a tap.
+lit LENS_TAP_AFTER_MULTI = 0.3
 let g_lens_tap_down = false
 let g_lens_tap_x: f64 = 0.0
 let g_lens_tap_y: f64 = 0.0
 let g_lens_tap_time: f64 = 0.0
 let g_lens_tap_moved = false
+// When the last multi-finger gesture lifted.
+let g_lens_multi_end: f64 = -1.0
 // Set on the frame a tap ends, with g_mouse_x/y at the release point.
 let g_lens_touch_tap = false
 
@@ -83,14 +88,12 @@ fn lens_touch_center_y() f64 {
 fn lens_touch_update(r: ref ui_renderer, v: ref view) {
     g_lens_touch_rebase = false
     g_lens_touch_tap = false
+    let now = os_time()
     let n = view_input_count(v)
     for i in 0 to n {
         let e = view_input_at(v, i)
         if e.device == VIEW_INPUT_DEVICE_TOUCH {
-            if e.phase == VIEW_INPUT_PHASE_BEGAN && g_lens_touch_count == 0 {
-                lens_tap_begin(ui_content_x(r, e.x), ui_content_y(r, e.y), os_time())
-            }
-            if lens_touch_apply(e.phase, e.pointer_id, ui_content_x(r, e.x), ui_content_y(r, e.y)) {
+            if lens_touch_event(e.phase, e.pointer_id, ui_content_x(r, e.x), ui_content_y(r, e.y), now) {
                 g_lens_touch_rebase = true
             }
         }
@@ -99,10 +102,9 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
         // The view saw every finger lift; nothing can still be held.
         g_lens_touch_count = 0
     }
-    if g_lens_touch_count >= 2 && g_lens_touch_multi == false {
-        g_lens_touch_multi = true
-        // A label pressed by the first finger is not clicked by this gesture.
-        g_lens_label_press = -1
+    if view_gesture(v).zoom_factor != 1.0 {
+        // The system saw a pinch even if no frame held both fingers at once.
+        lens_touch_multi_begin()
     }
     if g_lens_touch_multi {
         // Only the first finger's press counts; the rest of the gesture
@@ -114,10 +116,34 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
             g_mouse_y = lens_touch_center_y()
         }
     }
-    g_lens_touch_tap = lens_tap_step(g_mouse_x, g_mouse_y, os_time(), v.mouse_down, g_lens_touch_multi)
-    if v.mouse_down == false {
+    g_lens_touch_tap = lens_tap_step(g_mouse_x, g_mouse_y, now, v.mouse_down, g_lens_touch_multi)
+    if v.mouse_down == false && g_lens_touch_multi {
         g_lens_touch_multi = false
+        g_lens_multi_end = now
     }
+}
+
+// One finger event. An idle frame can queue a whole quick pinch, both fingers
+// landing and lifting, so a second finger is noticed as its event arrives
+// rather than from the count left once the frame's events are applied.
+fn lens_touch_event(phase: i32, id: i32, x: f64, y: f64, now: f64) bool {
+    if phase == VIEW_INPUT_PHASE_BEGAN && g_lens_touch_count == 0 {
+        lens_tap_begin(x, y, now)
+        if g_lens_multi_end >= 0.0 && now - g_lens_multi_end < LENS_TAP_AFTER_MULTI {
+            g_lens_tap_moved = true
+        }
+    }
+    let changed = lens_touch_apply(phase, id, x, y)
+    if g_lens_touch_count >= 2 { lens_touch_multi_begin() }
+    return changed
+}
+
+fn lens_touch_multi_begin() {
+    if g_lens_touch_multi { return }
+    g_lens_touch_multi = true
+    g_lens_tap_moved = true
+    // A label pressed by the first finger is not clicked by this gesture.
+    g_lens_label_press = -1
 }
 
 fn lens_tap_begin(x: f64, y: f64, now: f64) {

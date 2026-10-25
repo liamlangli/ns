@@ -37,6 +37,27 @@ fn main() {
     lens_tap_begin(50.0, 60.0, 4.0)
     assert !lens_tap_step(50.0, 60.0, 4.05, true, true)
     assert !lens_tap_step(50.0, 60.0, 4.1, false, false)
+    // A pinch queued whole in one idle frame still marks the gesture, so its
+    // lift is no tap.
+    g_lens_touch_multi = false
+    g_lens_multi_end = -1.0
+    lens_touch_event(VIEW_INPUT_PHASE_BEGAN, 1, 100.0, 100.0, 5.0)
+    lens_touch_event(VIEW_INPUT_PHASE_BEGAN, 2, 104.0, 100.0, 5.0)
+    lens_touch_event(VIEW_INPUT_PHASE_ENDED, 1, 100.0, 100.0, 5.0)
+    lens_touch_event(VIEW_INPUT_PHASE_ENDED, 2, 104.0, 100.0, 5.0)
+    assert g_lens_touch_count == 0
+    assert g_lens_touch_multi
+    assert !lens_tap_step(102.0, 100.0, 5.05, false, g_lens_touch_multi)
+    // A finger landing just after the pinch lifted is its straggler; one
+    // landing later is a tap again.
+    g_lens_touch_multi = false
+    g_lens_multi_end = 5.05
+    lens_touch_event(VIEW_INPUT_PHASE_BEGAN, 3, 100.0, 100.0, 5.2)
+    lens_touch_event(VIEW_INPUT_PHASE_ENDED, 3, 100.0, 100.0, 5.25)
+    assert !lens_tap_step(100.0, 100.0, 5.25, false, false)
+    lens_touch_event(VIEW_INPUT_PHASE_BEGAN, 4, 100.0, 100.0, 6.0)
+    lens_touch_event(VIEW_INPUT_PHASE_ENDED, 4, 100.0, 100.0, 6.05)
+    assert lens_tap_step(100.0, 100.0, 6.05, false, false)
     // Only a tap on the code brings the folded keyboard back.
     g_mobile_keyboard_hidden = true
     g_lens_touch_tap = false
