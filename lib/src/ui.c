@@ -481,6 +481,10 @@ typedef struct ui_gpu_root {
     f32 batch_clip[4];
     // Per MSDF face its (u, v) origin and (u, v) extent in the font pack.
     f32 font_faces[UI_FACES][4];
+    // A retained draw's projection words: the matrix and, for a plane, its
+    // framebuffer rectangle. Its own vertex buffer is bound in place of the
+    // frame storage that holds them for every other draw.
+    f32 projection[UI_PROJECTION_WORDS];
 } ui_gpu_root;
 
 _Static_assert(sizeof(ui_gpu_root) <= GPU_V2_ALLOC_ALIGN, "UI root must fit its frame-storage stride");
@@ -552,7 +556,7 @@ static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inne
 static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
-"struct UiRoot { float screen_width; float screen_height; float offset_x; float offset_y; uint clip_offset; uint projection_offset; uint batch_meta; uint quad_origin; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4 vertex_scale; float4 batch_clip; float4 font_faces[2]; };\n"
+"struct UiRoot { float screen_width; float screen_height; float offset_x; float offset_y; uint clip_offset; uint projection_offset; uint batch_meta; uint quad_origin; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4 vertex_scale; float4 batch_clip; float4 font_faces[2]; float4 projection[5]; };\n"
 "struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; uint meta [[flat]]; };\n"
 "static inline float ui_word(device const uint *s, uint i) { return as_type<float>(s[i]); }\n"
 "vertex VOut ui_vs(uint vertex_id [[vertex_id]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
@@ -595,6 +599,8 @@ static const char *ui_shader_src =
 "                          float4(ui_word(s, p + 4u), ui_word(s, p + 5u), ui_word(s, p + 6u), ui_word(s, p + 7u)),\n"
 "                          float4(ui_word(s, p + 8u), ui_word(s, p + 9u), ui_word(s, p + 10u), ui_word(s, p + 11u)),\n"
 "                          float4(ui_word(s, p + 12u), ui_word(s, p + 13u), ui_word(s, p + 14u), ui_word(s, p + 15u)));\n"
+"    // A retained draw's storage is its own vertices; the root carries its projection.\n"
+"    if (ns_root.vertex_scale.z > 0.5) { m = float4x4(ns_root.projection[0], ns_root.projection[1], ns_root.projection[2], ns_root.projection[3]); }\n"
 "    pos = m * float4(ndc, 0.0, 1.0);\n"
 "    if (projection != 9u) { pos.z = pos.w; }\n"
 "  }\n"
@@ -615,7 +621,7 @@ static const char *ui_shader_src =
 "  uint projection = (in.meta >> 8u) & 15u;\n"
 "  if (projection > 0u && projection < 9u) {\n"
 "    uint p = ns_root.projection_offset / 4u + (projection - 1u) * 20u + 16u;\n"
-"    float4 b = float4(ui_word(s, p), ui_word(s, p + 1u), ui_word(s, p + 2u), ui_word(s, p + 3u));\n"
+"    float4 b = ns_root.vertex_scale.z > 0.5 ? ns_root.projection[4] : float4(ui_word(s, p), ui_word(s, p + 1u), ui_word(s, p + 2u), ui_word(s, p + 3u));\n"
 "    if (in.pos.x < b.x || in.pos.y < b.y || in.pos.x >= b.z || in.pos.y >= b.w) { return true; }\n"
 "  }\n"
 "  if (in.params.w < -0.5) { float4 b = ns_root.batch_clip; return in.pixel.x < b.x || in.pixel.y < b.y || in.pixel.x >= b.z || in.pixel.y >= b.w; }\n"
@@ -698,6 +704,7 @@ static const char *ui_shader_glsl_common =
     "    vec4 vertex_scale;\n"
     "    vec4 batch_clip;\n"
     "    vec4 font_faces[2];\n"
+    "    vec4 projection[5];\n"
     "} ns_root;\n"
     "layout(set = 0, binding = 8, std430) readonly buffer UiStorage { uint values[]; } ns_storage_buffer_0_block;\n"
     "#define ns_storage_buffer_0 ns_storage_buffer_0_block.values\n"
@@ -746,6 +753,7 @@ static const char *ui_shader_glsl_vs_body =
     "                      vec4(ui_word(p + 4u), ui_word(p + 5u), ui_word(p + 6u), ui_word(p + 7u)),\n"
     "                      vec4(ui_word(p + 8u), ui_word(p + 9u), ui_word(p + 10u), ui_word(p + 11u)),\n"
     "                      vec4(ui_word(p + 12u), ui_word(p + 13u), ui_word(p + 14u), ui_word(p + 15u)));\n"
+    "        if (ns_root.vertex_scale.z > 0.5) { m = mat4(ns_root.projection[0], ns_root.projection[1], ns_root.projection[2], ns_root.projection[3]); }\n"
     "        pos = m * vec4(ndc, 0.0, 1.0);\n"
     "        if (projection != 9u) { pos.z = pos.w; }\n"
     "    }\n"
@@ -779,7 +787,7 @@ static const char *ui_shader_glsl_fs_body =
     "    uint projection = (ns_meta >> 8u) & 15u;\n"
     "    if (projection > 0u && projection < 9u) {\n"
     "        uint p = ns_root.projection_offset / 4u + (projection - 1u) * 20u + 16u;\n"
-    "        vec4 b = vec4(ui_word(p), ui_word(p + 1u), ui_word(p + 2u), ui_word(p + 3u));\n"
+    "        vec4 b = ns_root.vertex_scale.z > 0.5 ? ns_root.projection[4] : vec4(ui_word(p), ui_word(p + 1u), ui_word(p + 2u), ui_word(p + 3u));\n"
     "        if (gl_FragCoord.x < b.x || gl_FragCoord.y < b.y || gl_FragCoord.x >= b.z || gl_FragCoord.y >= b.w) { return true; }\n"
     "    }\n"
     "    if (ns_params.w < -0.5) { vec4 b = ns_root.batch_clip; return ns_pixel.x < b.x || ns_pixel.y < b.y || ns_pixel.x >= b.z || ns_pixel.y >= b.w; }\n"
@@ -2980,9 +2988,8 @@ static ns_bool ui_plan_draws(ui_renderer *r, ns_bool panel, ns_bool hud) {
 // The planes and the panel, in the frame storage ui_upload_storage reserved
 // for them. A plane's bounding rectangle is kept in framebuffer pixels, where
 // the fragment stage tests it.
-static void ui_upload_projections(ui_renderer *r, f64 sx, f64 sy) {
-    f32 words[UI_PROJECTION_PANEL * UI_PROJECTION_WORDS];
-    memset(words, 0, sizeof(words));
+static void ui_upload_projections(ui_renderer *r, f64 sx, f64 sy, f32 *words) {
+    memset(words, 0, sizeof(f32) * UI_PROJECTION_PANEL * UI_PROJECTION_WORDS);
     for (i32 i = 0; i < r->plane_count; i++) {
         f32 *out = words + i * UI_PROJECTION_WORDS;
         const ui_clip c = r->plane_scissors[i];
@@ -2993,7 +3000,7 @@ static void ui_upload_projections(ui_renderer *r, f64 sx, f64 sy) {
         out[19] = (f32)ceil((c.y + c.h) * sy);
     }
     memcpy(words + (UI_PROJECTION_PANEL - 1) * UI_PROJECTION_WORDS, r->panel_clip, 16 * sizeof(f32));
-    gpu_write(r->storage + r->projection_offset, words, sizeof(words));
+    gpu_write(r->storage + r->projection_offset, words, sizeof(f32) * UI_PROJECTION_PANEL * UI_PROJECTION_WORDS);
 }
 
 void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
@@ -3018,7 +3025,8 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     const i32 framebuffer_height = r->v && r->v->framebuffer_height > 0
                                        ? r->v->framebuffer_height
                                        : (i32)(r->rect.h * fallback_scale + 0.5);
-    ui_upload_projections(r, (f64)framebuffer_width / r->rect.w, (f64)framebuffer_height / r->rect.h);
+    f32 projection_words[UI_PROJECTION_PANEL * UI_PROJECTION_WORDS];
+    ui_upload_projections(r, (f64)framebuffer_width / r->rect.w, (f64)framebuffer_height / r->rect.h, projection_words);
     // One pass, one pipeline: clips, planes and the panel are resolved per
     // fragment, so nothing changes between the draws but their roots.
     if (hud) gpu_screen_pass_begin("ui", 0.0, 0.0, 0.0, 1.0);
@@ -3069,6 +3077,10 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             root.batch_clip[1] = (f32)(cmd->batch_clip.y + r->safe_rect.y);
             root.batch_clip[2] = (f32)(cmd->batch_clip.x + r->safe_rect.x + cmd->batch_clip.w);
             root.batch_clip[3] = (f32)(cmd->batch_clip.y + r->safe_rect.y + cmd->batch_clip.h);
+            const u32 projection = (d->batch_meta >> UI_META_PROJECTION_SHIFT) & 15u;
+            if (projection > 0 && projection <= UI_PROJECTION_PANEL) {
+                memcpy(root.projection, projection_words + (projection - 1) * UI_PROJECTION_WORDS, sizeof(root.projection));
+            }
         }
         if (hud) ui_fill_hud_root(&root, &hud_frame);
         // All roots have reserved, aligned space in this frame's private
