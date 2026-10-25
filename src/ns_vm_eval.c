@@ -1097,6 +1097,18 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                 v = cast_ret.r;
             }
         }
+        // A storage-backed scalar (a global or a caller local) is copied into
+        // a slot of its own, so a callee that changes that storage leaves its
+        // parameter alone and assigning the parameter leaves the caller's
+        // binding alone. Refs, strings and containers keep sharing storage.
+        if (!ns_type_is_const(v.t) && !ns_type_is_ref(v.t) &&
+            (ns_type_is_number(ns_enum_underlying_type(vm, v.t)) || ns_type_is(v.t, NS_TYPE_BOOL))) {
+            i32 v_size = ns_type_size(vm, v.t);
+            ns_value copy = (ns_value){.t = ns_type_set_stack(v.t, true), .o = ns_eval_alloc(vm, v_size)};
+            ns_return_value copy_ret = ns_eval_copy(vm, copy, v, v_size);
+            if (ns_return_is_error(copy_ret)) return copy_ret;
+            v = copy;
+        }
         next = ctx->nodes[next].next;
         ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = ns_str_null, .val = v, .parsed = true};
         ns_array_push(vm->symbol_stack, arg);
