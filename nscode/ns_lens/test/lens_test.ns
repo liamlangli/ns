@@ -292,10 +292,11 @@ fn main() {
     assert visible.w > 0.0 && visible.h > 0.0
     let index = workspace_find("editor.ns")
     assert index >= 0
-    // A rescan keeps each file's resident minimap, matched by path.
+    // A rescan keeps each file's resident minimap, matched by the map's own
+    // project-relative path.
     g_lens_mini_batch[index] = 77
     g_lens_mini_hash[index] = "kept"
-    g_lens_mini_path[index] = os_entry_path(index)
+    g_lens_mini_path[index] = g_lens_paths[index]
     lens_rebuild()
     let again = workspace_find("editor.ns")
     assert g_lens_mini_batch[again] == 77 && g_lens_mini_hash[again] == "kept"
