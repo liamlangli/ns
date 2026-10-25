@@ -398,6 +398,13 @@ fn main() {
     let large = workspace_find("large.ns")
     assert large >= 0
     assert lens_open(large)
+    // Opening a file for editing waits for a tap before raising the keyboard.
+    assert g_mobile_keyboard_hidden
+    assert !lens_mobile_keyboard_wanted()
+    g_lens_touch_tap = true
+    lens_touch_tap_code()
+    g_lens_touch_tap = false
+    assert lens_mobile_keyboard_wanted()
     assert g_lens_reading == false
     assert g_lens_large_index == -1
     assert g_lens_editing

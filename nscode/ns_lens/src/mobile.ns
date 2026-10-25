@@ -390,11 +390,17 @@ fn lens_mobile_tick(v: ref view) {
             g_lens_input_dirty = true
         }
     }
-    let keyboard = (g_lens_editing || lens_typing()) && !g_mobile_keyboard_hidden && g_mobile_dialog == 0 && !g_lens_file_open && !g_lens_view_open && !g_lens_edit_menu_open && !g_lens_repo_menu_open
+    let keyboard = lens_mobile_keyboard_wanted() && g_mobile_dialog == 0 && !g_lens_file_open && !g_lens_view_open && !g_lens_edit_menu_open && !g_lens_repo_menu_open
     if keyboard != g_mobile_keyboard_on {
         view_set_text_input(v, keyboard)
         g_mobile_keyboard_on = keyboard
     }
+}
+
+// A prompt (search, commit message, terminal...) always takes the keyboard; the
+// open file only after a tap placed its cursor, until it is folded away.
+fn lens_mobile_keyboard_wanted() bool {
+    return lens_typing() || (g_lens_editing && !g_mobile_keyboard_hidden)
 }
 
 fn lens_has_prefix(value: str, prefix: str) bool {

@@ -761,7 +761,9 @@ fn lens_open(index: i32) bool {
         g_workspace_originals[index] = text
         g_workspace_opened[index] = 1
     }
-    g_mobile_keyboard_hidden = false
+    // Zooming in opens a file for editing; the software keyboard waits for a
+    // tap that places the cursor (lens_touch_tap_code).
+    g_mobile_keyboard_hidden = true
     g_lens_editing = workspace_open(index)
     g_lens_message = ""
     g_code_scroll = 0.0
