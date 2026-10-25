@@ -340,6 +340,14 @@ fn main() {
     select_all()
     paste_str("small replacement")
     assert g_doc == "small replacement"
+    // Unsaved edits keep the file open when the map zooms out or a tap lands
+    // on empty map; only the keyboard folds away.
+    g_mobile_keyboard_hidden = false
+    assert lens_leave_editing() == false
+    assert g_lens_editing && g_workspace_active == index
+    assert g_mobile_keyboard_hidden
+    lens_deselect()
+    assert g_lens_selected == index
     g_editor_byte_limit = 0
     os_watch_stop()
     let fixture = "/tmp/ns_lens_stream_test"
@@ -361,6 +369,15 @@ fn main() {
     assert g_lens_editing
     assert g_workspace_active == large
     assert g_doc.len == big.len
+    // A saved file leaves editing but stays selected; a tap on empty map then
+    // clears the selection.
+    assert lens_leave_editing()
+    assert g_lens_editing == false
+    assert g_workspace_opened[large] == 0
+    assert g_lens_selected == large
+    lens_deselect()
+    assert g_lens_selected == -1 && g_lens_selected_path == ""
+    assert lens_open(large)
     for slot in 0 to LENS_CACHE_SLOTS {
         g_lens_cache_id[slot] = 100 + slot
         g_lens_cache_age[slot] = slot + 1

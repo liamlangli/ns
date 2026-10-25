@@ -740,16 +740,7 @@ fn lens_open(index: i32) bool {
             return false
         }
         let old = g_workspace_active
-        // Restore the source-only minimap before releasing the old document.
-        lens_mini_offer(old, g_workspace_buffers[old])
-        g_lens_mini_document[old] = false
-        workspace_close_tab(old)
-        g_workspace_buffers[old] = ""
-        g_workspace_originals[old] = ""
-        g_workspace_opened[old] = 0
-        for slot in 0 to history_cap() {
-            g_history_doc[history_key(g_history_id, slot)] = ""
-        }
+        lens_release_document(old)
     }
     g_lens_selected = index
     g_lens_selected_path = os_entry_path(index)
@@ -769,6 +760,49 @@ fn lens_open(index: i32) bool {
     g_lens_message = ""
     g_code_scroll = 0.0
     return g_lens_editing
+}
+
+// Drop the resident editor of a saved file.
+fn lens_release_document(old: i32) {
+    // Restore the source-only minimap before releasing the old document.
+    lens_mini_offer(old, g_workspace_buffers[old])
+    g_lens_mini_document[old] = false
+    workspace_close_tab(old)
+    g_workspace_buffers[old] = ""
+    g_workspace_originals[old] = ""
+    g_workspace_opened[old] = 0
+    for slot in 0 to history_cap() {
+        g_history_doc[history_key(g_history_id, slot)] = ""
+    }
+}
+
+// Stop editing the open file; zooming back in reopens it. Unsaved changes keep
+// it resident, with only the software keyboard folded away. False then.
+fn lens_leave_editing() bool {
+    if g_lens_editing == false {
+        return true
+    }
+    g_mobile_keyboard_hidden = true
+    g_code_drag = false
+    if g_workspace_active >= 0 && workspace_entry_dirty(g_workspace_active) {
+        return false
+    }
+    let active = g_workspace_active
+    if active >= 0 {
+        lens_release_document(active)
+    }
+    g_lens_editing = false
+    return true
+}
+
+// A tap on the map's empty space clears the selected file.
+fn lens_deselect() {
+    if lens_leave_editing() == false {
+        return
+    }
+    g_lens_selected = -1
+    g_lens_selected_path = ""
+    g_lens_reading = false
 }
 
 // The map menu sits just right of View.
@@ -1308,6 +1342,8 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     ui_push_clip(r, vx0, vy0, vx1 - vx0, vy1 - vy0)
     lens_draw_grid(r, w, top, body_h)
     let close_view = false
+    // The open file's detail this frame; -1 while it is out of view.
+    let resident_lod = -1
     let bars_ready: i32 = 0
     let bars_total: i32 = 0
     let code_ready: i32 = 0
@@ -1368,6 +1404,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                     fit = g_lens_flow_fit
                     code_y = lens_code_y(leaf, fit)
                     lod = lens_lod(zoom * fit * gain)
+                    if resident { resident_lod = lod }
                     // The full-file bar batch is not drawn while glyphs cover
                     // the leaf. Building it here tokenizes every line on the
                     // select frame. Tilt still wants those bars under the far band.
@@ -1490,6 +1527,16 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     }
     if g_lens_view_mode == LENS_MODE_REF { lens_ref_links(r, w, top, body_h) }
     if lens_history_active() { lens_history_draw_map(r, v, w, top, body_h, over_map, moving) }
+    // Once the open file, or the whole view, is down to minimap bars, the file
+    // stops taking edits.
+    if g_lens_editing && g_lens_view_mode != LENS_MODE_REF && (resident_lod > 1 || close_view == false) {
+        lens_leave_editing()
+    }
+    // No file took this tap or right click: it landed on empty map.
+    if v.mouse_right_pressed && over_map {
+        lens_deselect()
+        v.mouse_right_pressed = false
+    }
     if v.mouse_released || !v.mouse_down {
         g_lens_label_press = -1
     }
