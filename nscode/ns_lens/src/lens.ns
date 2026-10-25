@@ -1013,12 +1013,7 @@ fn lens_draw_plain_leaf(r: ref ui_renderer, v: ref view, i: i32, w: f64, top: f6
     }
     let content = lens_leaf_content(leaf, vx0, vy0, vx1, vy1)
     let on_screen = px >= vx0 && py >= vy0 && px + pw <= vx1 && py + ph <= vy1
-    if on_screen && pw >= 12.0 && ph >= 12.0 {
-        ui_fill_round_rect(r, px + 1.0, py + 1.0, pw - 2.0, ph - 2.0, LENS_CORNER_RADIUS, col_editor_panel_hi(), 0.0)
-        ui_stroke_round_rect(r, px + 1.0, py + 1.0, pw - 2.0, ph - 2.0, LENS_CORNER_RADIUS, 1.0, color, 0.0)
-    } else if content.w > 1.0 && content.h > 1.0 {
-        ui_fill_rect(r, content.x, content.y, content.w, content.h, col_editor_panel_hi(), 0.0)
-    }
+    lens_leaf_frame(r, leaf, vx0, vy0, vx1, vy1, 1.0, color)
     // A PNG on the change and full maps shows its picture under the name, an
     // audio file a player bar.
     if g_lens_view_mode == LENS_MODE_CHANGE || g_lens_view_mode == LENS_MODE_FULL {
@@ -1341,19 +1336,10 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                 if i == g_lens_selected {
                     color = col_accent()
                 }
-                // Leaves tile edge to edge; a one-pixel inset keeps a seam.
-                // A zoomed leaf is far larger than the viewport. Rounding the
-                // whole rectangle submits triangles whose corners sit thousands
-                // of pixels off screen, so a partial leaf is just its visible fill.
                 let content = lens_leaf_content(leaf, vx0, vy0, vx1, vy1)
                 let inner = lens_leaf_code_clip(leaf, vx0, vy0, vx1, vy1, 1.0)
                 let on_screen = px >= vx0 && py >= vy0 && px + pw <= vx1 && py + ph <= vy1
-                if on_screen && pw >= 12.0 && ph >= 12.0 {
-                    ui_fill_round_rect(r, px + 1.0, py + 1.0, pw - 2.0, ph - 2.0, LENS_CORNER_RADIUS, col_editor_panel_hi(), 0.0)
-                    ui_stroke_round_rect(r, px + 1.0, py + 1.0, pw - 2.0, ph - 2.0, LENS_CORNER_RADIUS, 1.0, color, 0.0)
-                } else if content.w > 1.0 && content.h > 1.0 {
-                    ui_fill_rect(r, content.x, content.y, content.w, content.h, col_editor_panel_hi(), 0.0)
-                }
+                lens_leaf_frame(r, leaf, vx0, vy0, vx1, vy1, 1.0, color)
                 let zoom = lens_code_zoom(leaf)
                 // Detail follows the size on screen: a leaf far up the tilted
                 // plane is smaller than its flat layout.
@@ -2483,6 +2469,67 @@ fn lens_leaf_code_clip(leaf: lens_leaf_rect, x0: f64, y0: f64, x1: f64, y1: f64,
 
 // Code stays inside the visible portion of its leaf even when its edges leave
 // the viewport during a close zoom. This never creates a separate editor pane.
+// Below this many points across, a leaf is a plain fill; its outline fades in
+// over the next LENS_FRAME_FADE points instead of popping on.
+lit LENS_FRAME_MIN = 8.0
+lit LENS_FRAME_FADE = 8.0
+
+// `value` rounded to the nearest whole framebuffer pixel, `scale` per point.
+fn lens_snap(value: f64, scale: f64) f64 {
+    let p = value * scale + 0.5
+    let n = (p as i64) as f64
+    if n > p {
+        n = n - 1.0
+    }
+    return n / scale
+}
+
+// A leaf's panel and its `stroke`-point outline, on whole framebuffer pixels.
+// An unsnapped one-point stroke lands on one pixel or splits over two as the
+// camera moves, so every frame on the map shimmers; snapped, the straight
+// edges hold still and stay hard, and a half-pixel feather still smooths the
+// corners. Leaves tile edge to edge; the one-point inset keeps a seam. A leaf
+// reaching past the viewport keeps its frame while its corners stay within a
+// viewport of it; a zoomed leaf far larger than that is just its visible fill,
+// since rounding it would submit triangles thousands of pixels off screen.
+fn lens_leaf_frame(r: ref ui_renderer, leaf: lens_leaf_rect, x0: f64, y0: f64, x1: f64, y1: f64, stroke: f64, color: u32) {
+    let size = leaf.w
+    if leaf.h < size {
+        size = leaf.h
+    }
+    let near = leaf.x >= x0 - (x1 - x0) && leaf.y >= y0 - (y1 - y0) && leaf.x + leaf.w <= x1 + (x1 - x0) && leaf.y + leaf.h <= y1 + (y1 - y0)
+    if !near || size < LENS_FRAME_MIN {
+        let content = lens_leaf_content(leaf, x0, y0, x1, y1)
+        if content.w > 1.0 && content.h > 1.0 {
+            ui_fill_rect(r, content.x, content.y, content.w, content.h, col_editor_panel_hi(), 0.0)
+        }
+        return
+    }
+    let scale = clamp(ui_pixel_scale(r), 0.25, 16.0)
+    let t = clamp(lens_snap(stroke, scale), 1.0 / scale, stroke * 2.0)
+    let feather = 0.5 / scale
+    let left = lens_snap(leaf.x + 1.0 - stroke * 0.5, scale)
+    let top = lens_snap(leaf.y + 1.0 - stroke * 0.5, scale)
+    let right = lens_snap(leaf.x + leaf.w - 1.0 + stroke * 0.5, scale)
+    let bottom = lens_snap(leaf.y + leaf.h - 1.0 + stroke * 0.5, scale)
+    if right - left <= t * 2.0 || bottom - top <= t * 2.0 {
+        return
+    }
+    let fade = clamp((size - LENS_FRAME_MIN) / LENS_FRAME_FADE, 0.0, 1.0)
+    let alpha = ((((color >> 24u) & 255u) as f64) * fade) as u32
+    let inside = leaf.x >= x0 && leaf.y >= y0 && leaf.x + leaf.w <= x1 && leaf.y + leaf.h <= y1
+    if !inside {
+        ui_push_clip(r, x0, y0, x1 - x0, y1 - y0)
+    }
+    ui_fill_round_rect(r, left, top, right - left, bottom - top, LENS_CORNER_RADIUS + t * 0.5, col_editor_panel_hi(), feather)
+    if alpha > 0u {
+        ui_stroke_round_rect(r, left + t * 0.5, top + t * 0.5, right - left - t, bottom - top - t, LENS_CORNER_RADIUS, t, (color & 16777215u) | (alpha << 24u), feather)
+    }
+    if !inside {
+        ui_pop_clip(r)
+    }
+}
+
 fn lens_leaf_content(leaf: lens_leaf_rect, x0: f64, y0: f64, x1: f64, y1: f64) lens_leaf_rect {
     let x = clamp(leaf.x + 1.0, x0 + 1.0, x1 - 1.0)
     let y = clamp(leaf.y + 1.0, y0, y1)

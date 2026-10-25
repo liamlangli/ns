@@ -172,6 +172,12 @@ static void test_batch_append(void) {
     assert(ui_rect_batch_append(r, a, b));
     assert(dst->vertex_count == 12 && src->vertex_count == 6);
     assert(memcmp(dst->vertices + 6, src->vertices, 6 * sizeof(ui_vertex)) == 0);
+    // A smooth rectangle marks every vertex for the shader's two-axis filter;
+    // a plain one leaves the mark clear.
+    ui_rect_batch_add_smooth(r, b, 5, 6, 7, 8, 0x12345678u);
+    assert(src->vertex_count == 12 && src->kind == UI_KIND_IMAGE);
+    for (i32 i = 0; i < 12; i++) assert(src->vertices[i].range == (i < 6 ? 0.0f : 1.0f));
+    src->vertex_count = 6;
     assert(!ui_rect_batch_append(r, a, a));
     src->texture_id++;
     assert(!ui_rect_batch_append(r, a, b) && dst->vertex_count == 12);
@@ -263,7 +269,8 @@ static void test_one_draw(void) {
     assert(r->draws[0].vertex_count == r->commands[0].vertex_count + r->commands[1].vertex_count);
     assert(r->draws[1].rgba == 101 && r->draws[1].vertex_offset == r->commands[2].vertex_offset);
     assert(r->draws[2].command == 3 && r->draws[2].rgba == 0);
-    assert(r->draws[2].batch_meta == meta(UI_KIND_SOLID, 0, 0));
+    // A retained rectangle batch filters its coverage, since it scales freely.
+    assert(r->draws[2].batch_meta == meta(UI_KIND_COVERAGE, 0, 0));
     assert(r->draws[3].command == -1 && r->draws[3].rgba == 0 && r->draws[3].msdf);
     assert(r->plan_msdf && r->plan_zh);
     assert(meta_of(r, 5) == meta(UI_KIND_MSDF, UI_FACE_ZH, 0));

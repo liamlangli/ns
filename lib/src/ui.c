@@ -55,6 +55,14 @@
 // Only in ui_vertex.meta: an image command with no texture of its own, drawn
 // in its vertex colour.
 #define UI_KIND_SOLID 4
+// Only in a retained draw's meta: a ui_rect_batch_add rectangle batch. The
+// batch scales freely, so a rectangle can shrink below a framebuffer pixel;
+// the vertex stage widens such an axis to one pixel and the fragment stage
+// box-filters its coverage, keeping thin rows from aliasing into moire. A
+// ui_rect_batch_add_smooth rectangle is filtered on both axes, so a repeating
+// pattern a few pixels tall does not beat against the pixel grid either;
+// plain rectangles keep hard edges there so abutting fills show no seam.
+#define UI_KIND_COVERAGE 5
 // ui_vertex.meta, written when the frame is flushed: the kind (bits 0-3), the
 // MSDF face in the font pack (bits 4-7) and the projection (bits 8-11) of the
 // command the vertex belongs to. Projection 0 is the flat screen,
@@ -201,8 +209,8 @@ typedef struct ui_vertex {
 } ui_vertex;
 
 _Static_assert(sizeof(ui_vertex) == UI_VERTEX_STRIDE, "the ui shader reads ten words per vertex");
-_Static_assert(UI_PROJECTION_PANEL == 9 && UI_KIND_SOLID == 4 && UI_FACE_ZH == 1,
-               "the ui shader sources hard-code the panel projection, the solid kind and the faces");
+_Static_assert(UI_PROJECTION_PANEL == 9 && UI_KIND_SOLID == 4 && UI_KIND_COVERAGE == 5 && UI_FACE_ZH == 1,
+               "the ui shader sources hard-code the panel projection, the solid and coverage kinds and the faces");
 
 typedef struct ui_clip {
     f64 x, y, w, h;
@@ -455,14 +463,18 @@ typedef struct ui_gpu_root {
     u32 projection_offset;
     // A retained draw's vertices carry no meta; this is theirs.
     u32 batch_meta;
-    u32 unused;
+    // A retained draw's first vertex. Its quads start there, wherever the
+    // draw's vertices sit: an overflow batch is copied into frame storage
+    // behind vertices of any count.
+    u32 quad_origin;
     f32 hud_center_enable[4];
     f32 hud_right_hw[4];
     f32 hud_up_hh[4];
     f32 hud_proj[4];
     f32 hud_depth[4];
     // Draw-time x/y scale of the recorded vertices before the offset; z set
-    // means vertices without a clip of their own use batch_clip.
+    // means vertices without a clip of their own use batch_clip; w is
+    // framebuffer pixels per ui unit.
     f32 vertex_scale[4];
     // Drawable-space clip (x0, y0, x1, y1) of a retained batch draw. A batch
     // binds its own vertex buffer, so it cannot index the frame's clip list.
@@ -540,7 +552,7 @@ static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inne
 static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
-"struct UiRoot { float screen_width; float screen_height; float offset_x; float offset_y; uint clip_offset; uint projection_offset; uint batch_meta; uint unused; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4 vertex_scale; float4 batch_clip; float4 font_faces[2]; };\n"
+"struct UiRoot { float screen_width; float screen_height; float offset_x; float offset_y; uint clip_offset; uint projection_offset; uint batch_meta; uint quad_origin; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4 vertex_scale; float4 batch_clip; float4 font_faces[2]; };\n"
 "struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; uint meta [[flat]]; };\n"
 "static inline float ui_word(device const uint *s, uint i) { return as_type<float>(s[i]); }\n"
 "vertex VOut ui_vs(uint vertex_id [[vertex_id]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
@@ -552,6 +564,24 @@ static const char *ui_shader_src =
 "  float4 params = float4(ui_word(s, base + 5u), ui_word(s, base + 6u), ui_word(s, base + 7u), ui_word(s, base + 8u));\n"
 "  uint meta = s[base + 9u];\n"
 "  if (ns_root.vertex_scale.z > 0.5) { meta = ns_root.batch_meta; if (params.w <= 0.0) { params.w = -1.0; } }\n"
+"  if ((meta & 15u) == 5u) {\n"
+"    // A rectangle's corners are its quad's vertices 0 and 2. An axis under one\n"
+"    // framebuffer pixel becomes a one-pixel box carrying the lost area as\n"
+"    // alpha. Every filtered axis (all of a smooth rectangle's) is padded so\n"
+"    // each pixel it touches is shaded; uv and params.xy hand the box to the\n"
+"    // fragment stage, which filters only those axes.\n"
+"    uint q = (ns_root.quad_origin + (vertex_id - ns_root.quad_origin) / 6u * 6u) * 10u;\n"
+"    float2 lo = float2(ui_word(s, q), ui_word(s, q + 1u)) * ns_root.vertex_scale.xy + float2(ns_root.offset_x, ns_root.offset_y);\n"
+"    float2 hi = float2(ui_word(s, q + 20u), ui_word(s, q + 21u)) * ns_root.vertex_scale.xy + float2(ns_root.offset_x, ns_root.offset_y);\n"
+"    float2 unit = float2(1.0 / max(ns_root.vertex_scale.w, 0.001));\n"
+"    float2 center = (lo + hi) * 0.5; float2 size = hi - lo; bool2 thin = size < unit;\n"
+"    bool smooth = params.x > 0.5; bool2 soft = bool2(thin.x || smooth, thin.y || smooth);\n"
+"    float2 box = select(size, unit, thin);\n"
+"    float2 side = select(float2(-1.0), float2(1.0), pixel > center);\n"
+"    pixel = center + side * (box * 0.5 + select(float2(0.0), unit, soft));\n"
+"    params.xy = select(float2(-1e30), center - box * 0.5, soft); uv = select(float2(1e30), center + box * 0.5, soft);\n"
+"    params.z = (size.x / box.x) * (size.y / box.y);\n"
+"  }\n"
 "  float2 screen = float2(ns_root.screen_width, ns_root.screen_height);\n"
 "  float2 ndc = float2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
 "  float4 pos = float4(ndc, 1.0, 1.0);\n"
@@ -606,8 +636,14 @@ static const char *ui_shader_src =
 "  // can belong to primitives of different kinds in the same draw.\n"
 "  float2 uv_dx = dfdx(in.uv); float2 uv_dy = dfdy(in.uv);\n"
 "  float arc_distance = ui_arc_distance(in); float arc_aa = max(fwidth(arc_distance), 0.35);\n"
+"  float2 pixel_fw = max(fwidth(in.pixel), float2(1e-6));\n"
 "  if (ui_clip_discard(in, ns_root, ns_storage_buffer)) { discard_fragment(); }\n"
 "  uint kind = in.meta & 15u;\n"
+"  if (kind == 5u) {\n"
+"    // The share of this pixel's footprint the box covers, per filtered axis.\n"
+"    float2 cover = clamp((min(in.pixel + pixel_fw * 0.5, in.uv) - max(in.pixel - pixel_fw * 0.5, in.params.xy)) / pixel_fw, 0.0, 1.0);\n"
+"    return float4(in.col.rgb, in.col.a * in.params.z * cover.x * cover.y);\n"
+"  }\n"
 "  if (kind == 2u) {\n"
 "    float opacity = 1.0 - smoothstep(-arc_aa, arc_aa, arc_distance);\n"
 "    if (in.params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
@@ -650,7 +686,7 @@ static const char *ui_shader_glsl_common =
     "    uint clip_offset;\n"
     "    uint projection_offset;\n"
     "    uint batch_meta;\n"
-    "    uint unused;\n"
+    "    uint quad_origin;\n"
     "    vec4 hud_center_enable;\n"
     "    vec4 hud_right_hw;\n"
     "    vec4 hud_up_hh;\n"
@@ -678,6 +714,24 @@ static const char *ui_shader_glsl_vs_body =
     "    vec4 params = vec4(ui_word(base + 5u), ui_word(base + 6u), ui_word(base + 7u), ui_word(base + 8u));\n"
     "    uint meta = ns_storage_buffer_0[base + 9u];\n"
     "    if (ns_root.vertex_scale.z > 0.5) { meta = ns_root.batch_meta; if (params.w <= 0.0) { params.w = -1.0; } }\n"
+    "    if ((meta & 15u) == 5u) {\n"
+    "        // A coverage rectangle: see the Metal source.\n"
+    "        uint q = (ns_root.quad_origin + (uint(gl_VertexIndex) - ns_root.quad_origin) / 6u * 6u) * 10u;\n"
+    "        vec2 lo = vec2(ui_word(q), ui_word(q + 1u)) * ns_root.vertex_scale.xy + vec2(ns_root.offset_x, ns_root.offset_y);\n"
+    "        vec2 hi = vec2(ui_word(q + 20u), ui_word(q + 21u)) * ns_root.vertex_scale.xy + vec2(ns_root.offset_x, ns_root.offset_y);\n"
+    "        vec2 unit = vec2(1.0 / max(ns_root.vertex_scale.w, 0.001));\n"
+    "        vec2 center = (lo + hi) * 0.5;\n"
+    "        vec2 size = hi - lo;\n"
+    "        bvec2 thin = lessThan(size, unit);\n"
+    "        bool smooth_rect = params.x > 0.5;\n"
+    "        bvec2 soft = bvec2(thin.x || smooth_rect, thin.y || smooth_rect);\n"
+    "        vec2 box = mix(size, unit, thin);\n"
+    "        vec2 side = mix(vec2(-1.0), vec2(1.0), greaterThan(pixel, center));\n"
+    "        pixel = center + side * (box * 0.5 + mix(vec2(0.0), unit, soft));\n"
+    "        params.xy = mix(vec2(-1e30), center - box * 0.5, soft);\n"
+    "        uv = mix(vec2(1e30), center + box * 0.5, soft);\n"
+    "        params.z = (size.x / box.x) * (size.y / box.y);\n"
+    "    }\n"
     "    vec2 screen = vec2(ns_root.screen_width, ns_root.screen_height);\n"
     "    vec2 ndc = vec2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
     "    vec4 pos = vec4(ndc, 1.0, 1.0);\n"
@@ -750,8 +804,14 @@ static const char *ui_shader_glsl_fs_body =
     "    vec2 uv_dy = dFdy(ns_uv);\n"
     "    float arc_distance = ui_arc_distance();\n"
     "    float arc_aa = max(fwidth(arc_distance), 0.35);\n"
+    "    vec2 pixel_fw = max(fwidth(ns_pixel), vec2(1e-6));\n"
     "    if (ui_clip_discard()) { discard; }\n"
     "    uint kind = ns_meta & 15u;\n"
+    "    if (kind == 5u) {\n"
+    "        vec2 cover = clamp((min(ns_pixel + pixel_fw * 0.5, ns_uv) - max(ns_pixel - pixel_fw * 0.5, ns_params.xy)) / pixel_fw, 0.0, 1.0);\n"
+    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * ns_params.z * cover.x * cover.y);\n"
+    "        return;\n"
+    "    }\n"
     "    if (kind == 2u) {\n"
     "        float opacity = 1.0 - smoothstep(-arc_aa, arc_aa, arc_distance);\n"
     "        if (ns_params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
@@ -1933,7 +1993,9 @@ static ns_bool ui_rect_batch_reserve(ui_rect_batch *batch, i32 additional) {
     return true;
 }
 
-void ui_rect_batch_add(ui_renderer *r, i32 batch_id, f64 x, f64 y, f64 w, f64 h, u32 rgba) {
+// A rectangle's `range` word marks a smooth one: the shader filters its
+// coverage on both axes instead of only on an axis under one pixel.
+static void ui_rect_batch_push(ui_renderer *r, i32 batch_id, f64 x, f64 y, f64 w, f64 h, u32 rgba, f32 smooth) {
     ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
     if (!batch || w <= 0.0 || h <= 0.0) return;
     if (batch->kind >= 0 && batch->kind != UI_KIND_IMAGE) return;
@@ -1943,15 +2005,23 @@ void ui_rect_batch_add(ui_renderer *r, i32 batch_id, f64 x, f64 y, f64 w, f64 h,
     batch->dirty = true;
     f32 x0 = (f32)x, y0 = (f32)y, x1 = (f32)(x + w), y1 = (f32)(y + h);
     ui_vertex quad[6] = {
-        {.x = x0, .y = y0, .color = rgba},
-        {.x = x1, .y = y0, .color = rgba},
-        {.x = x1, .y = y1, .color = rgba},
-        {.x = x0, .y = y0, .color = rgba},
-        {.x = x1, .y = y1, .color = rgba},
-        {.x = x0, .y = y1, .color = rgba},
+        {.x = x0, .y = y0, .color = rgba, .range = smooth},
+        {.x = x1, .y = y0, .color = rgba, .range = smooth},
+        {.x = x1, .y = y1, .color = rgba, .range = smooth},
+        {.x = x0, .y = y0, .color = rgba, .range = smooth},
+        {.x = x1, .y = y1, .color = rgba, .range = smooth},
+        {.x = x0, .y = y1, .color = rgba, .range = smooth},
     };
     memcpy(batch->vertices + batch->vertex_count, quad, sizeof(quad));
     batch->vertex_count += 6;
+}
+
+void ui_rect_batch_add(ui_renderer *r, i32 batch_id, f64 x, f64 y, f64 w, f64 h, u32 rgba) {
+    ui_rect_batch_push(r, batch_id, x, y, w, h, rgba, 0.0f);
+}
+
+void ui_rect_batch_add_smooth(ui_renderer *r, i32 batch_id, f64 x, f64 y, f64 w, f64 h, u32 rgba) {
+    ui_rect_batch_push(r, batch_id, x, y, w, h, rgba, 1.0f);
 }
 
 ns_bool ui_rect_batch_append(ui_renderer *r, i32 batch_id, i32 source_id) {
@@ -2487,6 +2557,7 @@ static u32 ui_command_meta(const ui_command *cmd, u32 rgba) {
         const u32 face = cmd->texture_id == UI_FONT_ZH_TEXTURE ? UI_FACE_ZH : UI_FACE_MAIN;
         return (u32)UI_KIND_MSDF | (face << UI_META_FACE_SHIFT);
     }
+    if (cmd->retained && cmd->kind == UI_KIND_IMAGE && cmd->texture_id == UI_WHITE_TEXTURE && !rgba) return UI_KIND_COVERAGE;
     if ((cmd->kind == UI_KIND_IMAGE || cmd->kind == UI_KIND_BITMAP) && !rgba) return UI_KIND_SOLID;
     return (u32)cmd->kind;
 }
@@ -2962,7 +3033,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             .screen_height = (f32)r->rect.h,
             .clip_offset = clip_offset,
             .projection_offset = r->projection_offset,
-            .vertex_scale = {1.0f, 1.0f, 0.0f, 1.0f},
+            .vertex_scale = {1.0f, 1.0f, 0.0f, (f32)((f64)framebuffer_width / r->rect.w)},
         };
         memcpy(root.font_faces, r->font_faces, sizeof(root.font_faces));
         // Both slots are bound on every draw; one the draw does not read
@@ -2986,6 +3057,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             root.offset_x = (f32)cmd->offset_x;
             root.offset_y = (f32)cmd->offset_y;
             root.batch_meta = d->batch_meta;
+            root.quad_origin = (u32)vertex_offset;
             root.vertex_scale[0] = cmd->scale_x > 0.0 ? (f32)cmd->scale_x : 1.0f;
             root.vertex_scale[1] = cmd->scale_y > 0.0 ? (f32)cmd->scale_y : 1.0f;
             root.vertex_scale[2] = 1.0f;
@@ -3344,6 +3416,12 @@ ns_bool ui_is_enter_pressed(ui_widgets *w) { return w ? w->input.key_enter : fal
 ns_bool ui_has_keyboard_focus(ui_widgets *w) { ns_unused(w); return false; }
 f64 ui_widgets_mouse_x(ui_widgets *w) { return w ? w->input.mouse_x : 0.0; }
 f64 ui_widgets_mouse_y(ui_widgets *w) { return w ? w->input.mouse_y : 0.0; }
+
+f64 ui_pixel_scale(ui_renderer *r) {
+    if (!r) return 1.0;
+    if (r->v && r->v->framebuffer_width > 0 && r->rect.w > 0.0) return (f64)r->v->framebuffer_width / r->rect.w;
+    return r->content_scale > 0.0 ? r->content_scale : 1.0;
+}
 
 ns_bool ui_rect_clipped(ui_renderer *r, f64 x, f64 y, f64 w, f64 h) {
     if (!r) return true;

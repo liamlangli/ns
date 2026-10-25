@@ -505,6 +505,9 @@ ref fn ui_push_clip(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64)
 ref fn ui_push_clip_round(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, radius: f64)
 ref fn ui_pop_clip(r: ref ui_renderer)
 
+// Framebuffer pixels per ui unit, for snapping thin strokes to whole pixels.
+ref fn ui_pixel_scale(r: ref ui_renderer) f64
+
 // True when the rect is fully outside the active clip (skip drawing it).
 ref fn ui_rect_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) bool
 
@@ -521,6 +524,11 @@ ref fn ui_rect_batch_create(r: ref ui_renderer) i32
 ref fn ui_rect_batch_destroy(r: ref ui_renderer, batch_id: i32)
 ref fn ui_rect_batch_begin(r: ref ui_renderer, batch_id: i32)
 ref fn ui_rect_batch_add(r: ref ui_renderer, batch_id: i32, x: f64, y: f64, w: f64, h: f64, rgba: u32)
+// A rectangle whose edges are filtered on both axes when the batch is drawn
+// scaled, for repeating thin shapes (a minimap's code bars) that would
+// otherwise shimmer against the pixel grid. Abutting smooth rectangles show
+// a faint seam, so plain fills stay ui_rect_batch_add.
+ref fn ui_rect_batch_add_smooth(r: ref ui_renderer, batch_id: i32, x: f64, y: f64, w: f64, h: f64, rgba: u32)
 // Glyphs of one text run at batch-local (x, y), laid out as ui_draw_text does.
 ref fn ui_rect_batch_add_text(r: ref ui_renderer, batch_id: i32, x: f64, y: f64, text: str, font_px: f64, rgba: u32, font_type: i32)
 // Byte range of a text run, equivalent to add_text(substr(text, offset, length)).

@@ -151,11 +151,13 @@ extern void ui_stroke_polyline(void *, void *, i32, f64, u32, f64);
 extern void ui_push_clip(void *, f64, f64, f64, f64);
 extern void ui_push_clip_round(void *, f64, f64, f64, f64, f64);
 extern void ui_pop_clip(void *);
+extern f64 ui_pixel_scale(void *);
 extern ns_bool ui_rect_clipped(void *, f64, f64, f64, f64);
 extern i32 ui_rect_batch_create(void *);
 extern void ui_rect_batch_destroy(void *, i32);
 extern void ui_rect_batch_begin(void *, i32);
 extern void ui_rect_batch_add(void *, i32, f64, f64, f64, f64, u32);
+extern void ui_rect_batch_add_smooth(void *, i32, f64, f64, f64, f64, u32);
 extern void ui_rect_batch_add_text(void *, i32, f64, f64, const char *, f64, u32, i32);
 extern void ui_rect_batch_add_text_range(void *, i32, f64, f64, const char *, i32, i32, f64, u32, i32);
 extern ns_bool ui_rect_batch_append(void *, i32, i32);
@@ -3210,6 +3212,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "ui_pack_color", (void *)ui_pack_color, ns_embedded_sig53, ns_embedded_cpu53 },
     { "ui_pack_rgba_floats", (void *)ui_pack_rgba_floats, ns_embedded_sig162, ns_embedded_cpu162 },
     { "ui_panel_touch_update", (void *)ui_panel_touch_update, ns_embedded_sig163, ns_embedded_cpu163 },
+    { "ui_pixel_scale", (void *)ui_pixel_scale, ns_embedded_sig157, ns_embedded_cpu157 },
     { "ui_pop_clip", (void *)ui_pop_clip, ns_embedded_sig64, ns_embedded_cpu64 },
     { "ui_preview_draw", (void *)ui_preview_draw, ns_embedded_sig164, ns_embedded_cpu164 },
     { "ui_preview_height", (void *)ui_preview_height, ns_embedded_sig20, ns_embedded_cpu20 },
@@ -3219,6 +3222,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "ui_push_clip", (void *)ui_push_clip, ns_embedded_sig165, ns_embedded_cpu165 },
     { "ui_push_clip_round", (void *)ui_push_clip_round, ns_embedded_sig166, ns_embedded_cpu166 },
     { "ui_rect_batch_add", (void *)ui_rect_batch_add, ns_embedded_sig164, ns_embedded_cpu164 },
+    { "ui_rect_batch_add_smooth", (void *)ui_rect_batch_add_smooth, ns_embedded_sig164, ns_embedded_cpu164 },
     { "ui_rect_batch_add_text", (void *)ui_rect_batch_add_text, ns_embedded_sig167, ns_embedded_cpu167 },
     { "ui_rect_batch_add_text_range", (void *)ui_rect_batch_add_text_range, ns_embedded_sig168, ns_embedded_cpu168 },
     { "ui_rect_batch_append", (void *)ui_rect_batch_append, ns_embedded_sig169, ns_embedded_cpu169 },

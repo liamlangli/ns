@@ -390,7 +390,7 @@ fn lens_batch_range(r: ref ui_renderer, batch: i32, input: ref lens_batch_input,
                     let x = column_x + gutter + inset + ((lead + a - segment * wrap) as f64) * input.char_w
                     let row_top = top + ((piece_row % input.rows) as f64) * input.line_pitch
                     if input.mini {
-                        ui_rect_batch_add(r, batch, x, row_top + (input.line_pitch - bar_h) * 0.5 + bar_h * 0.25, ((e - a) as f64) * input.char_w, bar_h * 0.5, color)
+                        ui_rect_batch_add_smooth(r, batch, x, row_top + (input.line_pitch - bar_h) * 0.5 + bar_h * 0.25, ((e - a) as f64) * input.char_w, bar_h * 0.5, color)
                     } else {
                         ui_rect_batch_add_text_range(r, batch, x, row_top + input.text_y, source, offset + a, e - a, font_px, color, CODE_FONT())
                     }

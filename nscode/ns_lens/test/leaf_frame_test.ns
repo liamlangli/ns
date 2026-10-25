@@ -1,0 +1,14 @@
+// Leaf outlines snap to whole framebuffer pixels so they hold still while
+// the camera moves, including negative coordinates past the viewport.
+fn main() {
+    assert lens_snap(10.3, 2.0) == 10.5
+    assert lens_snap(10.2, 2.0) == 10.0
+    assert lens_snap(10.75, 2.0) == 11.0
+    assert lens_snap(10.4, 1.0) == 10.0
+    assert lens_snap(10.6, 1.0) == 11.0
+    assert lens_snap(-3.3, 2.0) == -3.5
+    assert lens_snap(-3.2, 2.0) == -3.0
+    assert lens_snap(-0.4, 1.0) == 0.0
+    assert lens_snap(-0.6, 1.0) == -1.0
+    print("leaf_frame_test: passed\n")
+}

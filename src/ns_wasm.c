@@ -2430,9 +2430,9 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "ui_stroke_rect|ui_stroke_round_rect|ui_stroke_round_rect_per_corner|"
             "ui_stroke_circle|ui_stroke_line|ui_stroke_polyline|"
             // clipping and retained rectangle batches
-            "ui_push_clip|ui_push_clip_round|ui_pop_clip|ui_rect_clipped|"
+            "ui_push_clip|ui_push_clip_round|ui_pop_clip|ui_rect_clipped|ui_pixel_scale|"
             "ui_rect_batch_create|ui_rect_batch_destroy|ui_rect_batch_begin|"
-            "ui_rect_batch_add|ui_rect_batch_add_text|ui_rect_batch_end|ui_rect_batch_draw|"
+            "ui_rect_batch_add|ui_rect_batch_add_smooth|ui_rect_batch_add_text|ui_rect_batch_end|ui_rect_batch_draw|"
             "ui_rect_batch_draw_at|ui_rect_batch_draw_scaled|ui_rect_batch_vertex_count|"
             "ui_rect_batch_draw_range|ui_begin_plane|ui_end_plane|"
             // text
