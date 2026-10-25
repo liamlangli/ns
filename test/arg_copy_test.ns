@@ -1,0 +1,49 @@
+// A scalar argument is a copy of the caller's value. Regression for the
+// interpreter binding a global argument to the global's storage, so a callee
+// that changed the global also changed its own parameter.
+use std
+
+enum arg_kind: u8 {
+    first = 0,
+    second,
+}
+
+let g_n: i32 = 5
+let g_f: f64 = 1.5
+let g_b = true
+let g_kind = arg_kind.second
+
+fn clear_globals() {
+    g_n = -1
+    g_f = 0.0
+    g_b = false
+    g_kind = arg_kind.first
+}
+
+fn take_globals(n: i32, f: f64, b: bool, kind: arg_kind) {
+    clear_globals()
+    assert n == 5
+    assert f == 1.5
+    assert b
+    assert kind == arg_kind.second
+    assert g_n == -1
+    print(`n = {n}, f = {f}, b = {b}, kind = {kind as i32}\n`)
+}
+
+fn overwrite(n: i32) {
+    n = 9
+    assert n == 9
+}
+
+fn main() {
+    take_globals(g_n, g_f, g_b, g_kind)
+
+    // assigning a parameter leaves the caller's local and global alone
+    let local = 1
+    overwrite(local)
+    assert local == 1
+    g_n = 3
+    overwrite(g_n)
+    assert g_n == 3
+    print(`local = {local}, g_n = {g_n}\n`)
+}
