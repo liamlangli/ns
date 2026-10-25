@@ -1012,7 +1012,6 @@ fn lens_draw_plain_leaf(r: ref ui_renderer, v: ref view, i: i32, w: f64, top: f6
         color = col_accent()
     }
     let content = lens_leaf_content(leaf, vx0, vy0, vx1, vy1)
-    let on_screen = px >= vx0 && py >= vy0 && px + pw <= vx1 && py + ph <= vy1
     lens_leaf_frame(r, leaf, vx0, vy0, vx1, vy1, 1.0, color)
     // A PNG on the change and full maps shows its picture under the name, an
     // audio file a player bar.
@@ -1032,7 +1031,7 @@ fn lens_draw_plain_leaf(r: ref ui_renderer, v: ref view, i: i32, w: f64, top: f6
     }
     // A file without code never shows glyphs, so it keeps the large name.
     lens_draw_far_name(r, content, g_lens_names[i], i == g_lens_selected)
-    lens_draw_search_mark(r, i, leaf, on_screen)
+    lens_draw_search_mark(r, i, leaf, vx0, vy0, vx1, vy1)
     if v.mouse_right_pressed && over_map && hit(v, px, py, pw, ph) {
         g_lens_selected = i
         g_lens_selected_path = os_entry_path(i)
@@ -1338,7 +1337,6 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                 }
                 let content = lens_leaf_content(leaf, vx0, vy0, vx1, vy1)
                 let inner = lens_leaf_code_clip(leaf, vx0, vy0, vx1, vy1, 1.0)
-                let on_screen = px >= vx0 && py >= vy0 && px + pw <= vx1 && py + ph <= vy1
                 lens_leaf_frame(r, leaf, vx0, vy0, vx1, vy1, 1.0, color)
                 let zoom = lens_code_zoom(leaf)
                 // Detail follows the size on screen: a leaf far up the tilted
@@ -1470,7 +1468,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                 } else {
                     lens_draw_far_name(r, content, g_lens_names[i], i == g_lens_selected)
                 }
-                lens_draw_search_mark(r, i, leaf, on_screen)
+                lens_draw_search_mark(r, i, leaf, vx0, vy0, vx1, vy1)
                 if v.mouse_right_pressed && hovered {
                     g_lens_selected = i
                     g_lens_selected_path = os_entry_path(i)
@@ -1728,11 +1726,19 @@ fn lens_header_h() f64 {
     return code_base_line_h()
 }
 
-// While the search box is open, files with a hit are outlined. A leaf partly
-// off screen skips it rather than tessellating a huge rectangle.
-fn lens_draw_search_mark(r: ref ui_renderer, i: i32, leaf: lens_leaf_rect, on_screen: bool) {
-    if on_screen && leaf.w >= 6.0 && leaf.h >= 6.0 && lens_search_marked(i) {
-        ui_stroke_round_rect(r, leaf.x + 1.0, leaf.y + 1.0, leaf.w - 2.0, leaf.h - 2.0, LENS_CORNER_RADIUS, 2.0, col_accent(), 0.0)
+// While the search box is open, files with a hit are outlined, snapped and
+// faded in like the leaf frame under it.
+fn lens_draw_search_mark(r: ref ui_renderer, i: i32, leaf: lens_leaf_rect, x0: f64, y0: f64, x1: f64, y1: f64) {
+    if !lens_search_marked(i) {
+        return
+    }
+    let size = leaf.w
+    if leaf.h < size {
+        size = leaf.h
+    }
+    let near = lens_leaf_near(leaf, x0, y0, x1, y1)
+    if near && size >= LENS_FRAME_MIN {
+        lens_leaf_ring(r, leaf, x0, y0, x1, y1, 2.0, col_accent(), size, false)
     }
 }
 
@@ -2497,7 +2503,7 @@ fn lens_leaf_frame(r: ref ui_renderer, leaf: lens_leaf_rect, x0: f64, y0: f64, x
     if leaf.h < size {
         size = leaf.h
     }
-    let near = leaf.x >= x0 - (x1 - x0) && leaf.y >= y0 - (y1 - y0) && leaf.x + leaf.w <= x1 + (x1 - x0) && leaf.y + leaf.h <= y1 + (y1 - y0)
+    let near = lens_leaf_near(leaf, x0, y0, x1, y1)
     if !near || size < LENS_FRAME_MIN {
         let content = lens_leaf_content(leaf, x0, y0, x1, y1)
         if content.w > 1.0 && content.h > 1.0 {
@@ -2505,6 +2511,16 @@ fn lens_leaf_frame(r: ref ui_renderer, leaf: lens_leaf_rect, x0: f64, y0: f64, x
         }
         return
     }
+    lens_leaf_ring(r, leaf, x0, y0, x1, y1, stroke, color, size, true)
+}
+
+// Every corner of the leaf within a viewport of the viewport.
+fn lens_leaf_near(leaf: lens_leaf_rect, x0: f64, y0: f64, x1: f64, y1: f64) bool {
+    return leaf.x >= x0 - (x1 - x0) && leaf.y >= y0 - (y1 - y0) && leaf.x + leaf.w <= x1 + (x1 - x0) && leaf.y + leaf.h <= y1 + (y1 - y0)
+}
+
+// The snapped outline of lens_leaf_frame, over the leaf's panel when `fill`.
+fn lens_leaf_ring(r: ref ui_renderer, leaf: lens_leaf_rect, x0: f64, y0: f64, x1: f64, y1: f64, stroke: f64, color: u32, size: f64, fill: bool) {
     let scale = clamp(ui_pixel_scale(r), 0.25, 16.0)
     let t = clamp(lens_snap(stroke, scale), 1.0 / scale, stroke * 2.0)
     let feather = 0.5 / scale
@@ -2521,7 +2537,9 @@ fn lens_leaf_frame(r: ref ui_renderer, leaf: lens_leaf_rect, x0: f64, y0: f64, x
     if !inside {
         ui_push_clip(r, x0, y0, x1 - x0, y1 - y0)
     }
-    ui_fill_round_rect(r, left, top, right - left, bottom - top, LENS_CORNER_RADIUS + t * 0.5, col_editor_panel_hi(), feather)
+    if fill {
+        ui_fill_round_rect(r, left, top, right - left, bottom - top, LENS_CORNER_RADIUS + t * 0.5, col_editor_panel_hi(), feather)
+    }
     if alpha > 0u {
         ui_stroke_round_rect(r, left + t * 0.5, top + t * 0.5, right - left - t, bottom - top - t, LENS_CORNER_RADIUS, t, (color & 16777215u) | (alpha << 24u), feather)
     }
