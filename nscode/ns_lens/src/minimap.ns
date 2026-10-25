@@ -277,18 +277,11 @@ fn lens_mini_draw(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squ
     return true
 }
 
-// A loading marker until the worker builds this file's sole minimap batch.
-// Once ready, the same batch scales continuously at every distance.
+// A leaf too small for content shows a single bar in its place. One with room
+// for content stays empty until the worker builds its sole minimap batch;
+// once ready, the same batch scales continuously at every distance.
 fn lens_mini_loading(r: ref ui_renderer, leaf: lens_leaf_rect, content: lens_leaf_rect) {
     if content.w <= 0.0 || content.h <= 0.0 {
         ui_fill_rect(r, leaf.x + leaf.w * 0.15, leaf.y + leaf.h * 0.45, leaf.w * 0.7, clamp(leaf.h * 0.15, 0.2, 1.0), col_muted(), 0.0)
-        return
     }
-    ui_push_clip(r, content.x, content.y, content.w, content.h)
-    let height = clamp(content.h * 0.02, 0.5, 2.0)
-    for row in 0 to 3 {
-        let width = content.w * (0.62 - (row as f64) * 0.13)
-        ui_fill_rect(r, content.x + content.w * 0.08, content.y + content.h * (0.12 + (row as f64) * 0.13), width, height, ui_pack_color("#555555"), 0.0)
-    }
-    ui_pop_clip(r)
 }

@@ -23,12 +23,17 @@ lit LENS_DISTANCE_LIMIT = 1000000000.0
 lit LENS_WHEEL_NEAR = 0.05
 lit LENS_WHEEL_FAR = 0.012
 lit LENS_ORTHO_SNAP = 5.0
-lit LENS_MAX_TILT = 60.0
+lit LENS_MAX_TILT = 89.0
 lit LENS_EDIT_ZOOM = 0.5
 lit LENS_GLYPH_ZOOM: f64 = 0.18
 // On a tilted plane the far edge compresses many lines into a few screen
 // pixels. Glyphs sampled there vanish; bars stay visible down to this height.
 lit LENS_PLANE_LINE_FLOOR = 3.0
+// A tilted plane is drawn out to this many times the pinhole distance. Past
+// it everything has shrunk into the few pixels under the horizon.
+lit LENS_PLANE_DEPTH_MAX = 64.0
+// A leaf this few screen pixels across on a tilted plane is not drawn.
+lit LENS_PLANE_LEAF_MIN = 2.0
 // Extra columns and local rows kept around the visible window, so a small
 // pan or scroll reuses the glyph batch instead of tessellating it again.
 lit LENS_GLYPH_COL_MARGIN = 1
@@ -162,8 +167,10 @@ let g_lens_center_x: f64 = 0.0
 let g_lens_center_y: f64 = 0.0
 let g_lens_target_x: f64 = 0.0
 let g_lens_target_y: f64 = 0.0
-// Map tilt in degrees. Under LENS_ORTHO_SNAP the camera is orthographic and
-// a released drag settles back to 0; past it the map is a plane in perspective.
+// Map tilt in degrees, positive with the top edge receding and negative with
+// the bottom edge receding. Within LENS_ORTHO_SNAP of level the camera is
+// orthographic and a released drag settles back to 0; past it the map is a
+// plane in perspective.
 let g_lens_tilt: f64 = 0.0
 let g_lens_screen_drag_y: f64 = 0.0
 // Plane camera for this frame: the pivot, the pinhole distance, the tilt in
@@ -557,7 +564,6 @@ fn lens_rebuild() {
     lens_clear_cache()
     g_lens_ready_index = -1
     g_lens_ready_text = ""
-    g_lens_warm_cursor = 0
     g_lens_selected = workspace_find_path(g_lens_selected_path)
     if g_lens_reading && g_lens_selected < 0 {
         g_lens_reading = false
@@ -1284,9 +1290,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let over_panel = outline_blocks_pointer(v) || terminal_blocks_pointer(v) || lens_history_blocks_pointer(v, w)
     let over_map = g_lens_mode_block == false && lens_menu_blocks() == false && over_panel == false && !lens_ref_depth_hit(v, w) && hit(v, 0.0, bar_bottom, map_w, h - STATUS_BAR_H - bar_bottom)
     if over_map && v.mouse_middle_down {
-        g_lens_tilt = clamp(g_lens_tilt + (screen_y - g_lens_screen_drag_y) * 0.25, 0.0, LENS_MAX_TILT)
+        lens_tilt_by(screen_y - g_lens_screen_drag_y)
     }
-    if v.mouse_middle_down == false && g_lens_tilt < LENS_ORTHO_SNAP {
+    if v.mouse_middle_down == false && g_lens_touch_tilt == false && abs(g_lens_tilt) < LENS_ORTHO_SNAP {
         g_lens_tilt = 0.0
     }
     g_lens_screen_drag_y = screen_y
@@ -1299,7 +1305,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         if shift_down(v) == false && v.scroll_y != 0.0 {
             lens_zoom_at(g_mouse_x, g_mouse_y, w, top, body_h, v.scroll_y)
         }
-        lens_pinch_at(g_mouse_x, g_mouse_y, w, top, body_h, view_gesture(v).zoom_factor)
+        if g_lens_touch_tilt == false {
+            lens_pinch_at(g_mouse_x, g_mouse_y, w, top, body_h, view_gesture(v).zoom_factor)
+        }
     }
     let cell_drag = false
     if g_lens_view_mode == LENS_MODE_REF { cell_drag = lens_ref_input(v, over_map, w, top, body_h) }
@@ -1336,7 +1344,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     g_code_view_x1 = vx1
     g_code_view_y0 = vy0
     g_code_view_y1 = vy1
-    if g_lens_plane_tilt > 0.0 {
+    if g_lens_plane_tilt != 0.0 {
         ui_begin_plane(r, g_lens_plane_cx, g_lens_plane_cy, g_lens_plane_tilt, g_lens_plane_focal, 0.0, top, w, body_h)
     }
     ui_push_clip(r, vx0, vy0, vx1 - vx0, vy1 - vy0)
@@ -1365,7 +1373,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
             let ph = leaf.h
             let px = leaf.x
             let py = leaf.y
-            if pw > 1.0 && ph > 1.0 && px < vx1 && px + pw > vx0 && py < vy1 && py + ph > vy0 {
+            if pw > 1.0 && ph > 1.0 && px < vx1 && px + pw > vx0 && py < vy1 && py + ph > vy0 && lens_leaf_seen(leaf) {
                 g_lens_on_screen[i] = 1
                 let color = col_muted()
                 if i == g_lens_selected {
@@ -1408,7 +1416,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                     // The full-file bar batch is not drawn while glyphs cover
                     // the leaf. Building it here tokenizes every line on the
                     // select frame. Tilt still wants those bars under the far band.
-                    if resident && (g_lens_plane_tilt > 0.0 || lod > 1) {
+                    if resident && (g_lens_plane_tilt != 0.0 || lod > 1) {
                         lens_mini_sync_document(r, i)
                     }
                 }
@@ -1426,10 +1434,13 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                     draw_leaf_code(r, v, code_x, code_y, pw - 2.0, py + ph - code_y - 1.0, resident && lod == 0 && lens_typing() == false)
                     g_code_draw_glyphs = true
                     // One form per file: glyphs when the batch is on screen,
-                    // otherwise the bars.
-                    if lens_draw_document_batch(r, i, code_x, code_y, zoom, leaf.scale_y / leaf.scale, content) {
+                    // otherwise the bars. A tilted plane keeps glyphs to the
+                    // band where lines stay legible and draws bars beyond it.
+                    let near = lens_near_band(content, lens_line_flat(zoom))
+                    if near.h > 0.5 && lens_draw_document_batch(r, i, code_x, code_y, zoom, leaf.scale_y / leaf.scale, near) {
                         content_drawn = true
                         glyphs = true
+                        lens_draw_far_bars(r, i, code_x, code_y, zoom, leaf.scale_y / leaf.scale, content, near)
                     } else {
                         content_drawn = lens_mini_draw(r, i, code_x, code_y, zoom, leaf.scale_y / leaf.scale)
                     }
@@ -1459,7 +1470,15 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                             if lod <= 1 {
                                 fit = g_lens_flow_fit
                                 code_y = lens_code_y(leaf, fit)
-                                code = lens_draw_code_batch(r, slot, i, code_x, code_y, zoom * g_lens_flow_fit, leaf.scale_y / leaf.scale, content)
+                                let near = lens_near_band(content, lens_line_flat(zoom))
+                                if near.h > 0.5 {
+                                    ui_push_clip(r, near.x, near.y, near.w, near.h)
+                                    code = lens_draw_code_batch(r, slot, i, code_x, code_y, zoom * g_lens_flow_fit, leaf.scale_y / leaf.scale, near)
+                                    ui_pop_clip(r)
+                                }
+                                if code && mini {
+                                    lens_draw_far_bars(r, i, code_x, lens_code_y(leaf, g_lens_mini_fit[i]), zoom, leaf.scale_y / leaf.scale, content, near)
+                                }
                             }
                             if mini == false || lens_mini_stale(i) {
                                 lens_mini_offer(i, g_lens_cache_text[slot])
@@ -1595,7 +1614,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_draw_mode_menu(r, v, w)
     lens_draw_menus(r, v, w, h)
 
-    lens_warm_cache(moving)
+    lens_warm_cache()
     if moving || lens_animating() {
         // The display paces a moving camera and every animation (progress
         // bars, the caret fade). A timer started after the frame would add
@@ -1626,7 +1645,13 @@ struct lens_leaf_rect {
     scale_y: f64
 }
 
-// The plane camera for this frame. Below LENS_ORTHO_SNAP it is orthographic:
+// Tilt the map by a vertical drag of `dy` screen points: dragging down tips
+// the top edge away.
+fn lens_tilt_by(dy: f64) {
+    g_lens_tilt = clamp(g_lens_tilt + dy * 0.25, -LENS_MAX_TILT, LENS_MAX_TILT)
+}
+
+// The plane camera for this frame. Near level it is orthographic:
 // the flat map is the screen. Past it, the map plane turns about the
 // horizontal line through the map's centre, seen from a pinhole in front of
 // the screen, and the visible part of the flat map grows toward the horizon.
@@ -1635,11 +1660,16 @@ fn lens_plane_setup(w: f64, top: f64, body_h: f64) {
     g_lens_plane_cy = top + body_h * 0.5
     g_lens_plane_focal = body_h * 1.3
     g_lens_plane_tilt = 0.0
-    if g_lens_tilt >= LENS_ORTHO_SNAP {
-        g_lens_plane_tilt = clamp(g_lens_tilt, 0.0, LENS_MAX_TILT) * 0.017453292519943295
+    if abs(g_lens_tilt) >= LENS_ORTHO_SNAP {
+        g_lens_plane_tilt = clamp(g_lens_tilt, -LENS_MAX_TILT, LENS_MAX_TILT) * 0.017453292519943295
     }
     let far: f64 = lens_unproject_y(top - g_lens_plane_cy)
     let near: f64 = lens_unproject_y(body_h * 0.5)
+    if g_lens_plane_tilt != 0.0 {
+        let reach = g_lens_plane_focal * (LENS_PLANE_DEPTH_MAX - 1.0) / abs(sin(g_lens_plane_tilt))
+        far = clamp(far, -reach, reach)
+        near = clamp(near, -reach, reach)
+    }
     let far_half: f64 = w * 0.5 * lens_depth(far) / g_lens_plane_focal
     let near_half: f64 = w * 0.5 * lens_depth(near) / g_lens_plane_focal
     let half: f64 = clamp(far_half, near_half, 1000000.0)
@@ -1655,10 +1685,33 @@ fn lens_depth(y: f64) f64 {
 }
 
 // Plane offset below the pivot seen at screen offset `t` below it; clamped
-// short of the horizon.
+// short of the horizon. The floor stays under cos(LENS_MAX_TILT), so the
+// pivot's own neighbourhood is never clamped.
 fn lens_unproject_y(t: f64) f64 {
     let denom: f64 = g_lens_plane_focal * cos(g_lens_plane_tilt) + t * sin(g_lens_plane_tilt)
-    return t * g_lens_plane_focal / clamp(denom, g_lens_plane_focal * 0.05, 1000000000.0)
+    return t * g_lens_plane_focal / clamp(denom, g_lens_plane_focal * 0.01, 1000000000.0)
+}
+
+// Screen offset below the pivot of the plane point `y` below it.
+fn lens_project_y(y: f64) f64 {
+    return y * cos(g_lens_plane_tilt) * g_lens_plane_focal / clamp(lens_depth(y), 1.0, 1000000000.0)
+}
+
+// False for a leaf the tilted plane shrinks under LENS_PLANE_LEAF_MIN screen
+// pixels in either direction; near the horizon most of the map is such
+// leaves, and drawing them costs frames without showing anything.
+fn lens_leaf_seen(leaf: lens_leaf_rect) bool {
+    if g_lens_plane_tilt == 0.0 {
+        return true
+    }
+    let y0 = leaf.y - g_lens_plane_cy
+    let y1 = y0 + leaf.h
+    if abs(lens_project_y(y1) - lens_project_y(y0)) < LENS_PLANE_LEAF_MIN {
+        return false
+    }
+    let near_y = y1
+    if g_lens_plane_tilt < 0.0 { near_y = y0 }
+    return leaf.w * g_lens_plane_focal / clamp(lens_depth(near_y), 1.0, 1000000000.0) >= LENS_PLANE_LEAF_MIN
 }
 
 // Flat-map point under the screen point (sx, sy), into g_lens_plane_x/y.
@@ -1677,7 +1730,7 @@ fn lens_depth_gain(y: f64) f64 {
 // Flat when the plane is off, so callers can compare it with canvas y.
 fn lens_plane_screen_y(flat_y: f64) f64 {
     let screen_h = g_lens_screen_h
-    if g_lens_plane_tilt <= 0.0 || screen_h <= 1.0 {
+    if g_lens_plane_tilt == 0.0 || screen_h <= 1.0 {
         return flat_y
     }
     let tilt = g_lens_plane_tilt
@@ -1698,7 +1751,7 @@ fn lens_plane_screen_y(flat_y: f64) f64 {
 
 // Screen pixels per flat pixel at flat_y. Less than 1 where the plane recedes.
 fn lens_screen_per_flat(flat_y: f64) f64 {
-    if g_lens_plane_tilt <= 0.0 || g_lens_screen_h <= 1.0 {
+    if g_lens_plane_tilt == 0.0 || g_lens_screen_h <= 1.0 {
         return 1.0
     }
     let d = lens_plane_screen_y(flat_y + 0.5) - lens_plane_screen_y(flat_y - 0.5)
@@ -1708,48 +1761,76 @@ fn lens_screen_per_flat(flat_y: f64) f64 {
     return d
 }
 
-// Flat y below which a line of `line_flat` canvas pixels is shorter than
-// LENS_PLANE_LINE_FLOOR on screen. The top of the plane is the far edge.
+// Flat y splitting [y0, y1] where a line of `line_flat` canvas pixels gets
+// shorter than LENS_PLANE_LINE_FLOOR on screen. The far side of the cut is
+// the top while the top edge recedes, the bottom while the bottom edge does.
 fn lens_plane_cut(y0: f64, y1: f64, line_flat: f64) f64 {
-    if g_lens_plane_tilt <= 0.0 || line_flat <= 0.0 || y1 <= y0 {
+    let far_top = g_lens_plane_tilt > 0.0
+    let near_edge = y1
+    let far_edge = y0
+    if far_top == false {
+        near_edge = y0
+        far_edge = y1
+    }
+    if g_lens_plane_tilt == 0.0 {
         return y0
     }
-    if line_flat * lens_screen_per_flat(y0) >= LENS_PLANE_LINE_FLOOR {
-        return y0
+    if line_flat <= 0.0 || y1 <= y0 {
+        return far_edge
     }
-    if line_flat * lens_screen_per_flat(y1) < LENS_PLANE_LINE_FLOOR {
-        return y1
+    if line_flat * lens_screen_per_flat(far_edge) >= LENS_PLANE_LINE_FLOOR {
+        return far_edge
     }
-    let lo = y0
-    let hi = y1
+    if line_flat * lens_screen_per_flat(near_edge) < LENS_PLANE_LINE_FLOOR {
+        return near_edge
+    }
+    // `small` stays on the far side of the cut, `tall` on the near side.
+    let small = far_edge
+    let tall = near_edge
     for n in 0 to 12 {
-        let mid = (lo + hi) * 0.5
+        let mid = (small + tall) * 0.5
         if line_flat * lens_screen_per_flat(mid) < LENS_PLANE_LINE_FLOOR {
-            lo = mid
+            small = mid
         } else {
-            hi = mid
+            tall = mid
         }
     }
-    return hi
+    return tall
+}
+
+// The part of `content` whose code lines stay tall enough for glyphs.
+fn lens_near_band(content: lens_leaf_rect, line_flat: f64) lens_leaf_rect {
+    if g_lens_plane_tilt == 0.0 {
+        return content
+    }
+    let bottom = content.y + content.h
+    let cut = lens_plane_cut(content.y, bottom, line_flat)
+    if g_lens_plane_tilt > 0.0 {
+        return lens_leaf_rect(content.x, cut, content.w, bottom - cut, content.distance, content.scale, content.scale_y)
+    }
+    return lens_leaf_rect(content.x, content.y, content.w, cut - content.y, content.distance, content.scale, content.scale_y)
 }
 
 fn lens_line_flat(code_zoom: f64) f64 {
     return g_lens_flow_line_pitch * code_zoom * g_lens_flow_fit
 }
 
-// Bars behind the receding band. Glyphs are still drawn on top; where the
-// perspective shrinks them off a pixel, these bars stay visible.
-fn lens_draw_far_bars(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squash: f64, content: lens_leaf_rect, line_flat: f64) bool {
-    if g_lens_plane_tilt <= 0.0 || lens_mini_ready(index) == false {
+// Bars in the receding band of `content` outside `near`, where glyphs would
+// shrink off a pixel and vanish.
+fn lens_draw_far_bars(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squash: f64, content: lens_leaf_rect, near: lens_leaf_rect) bool {
+    if g_lens_plane_tilt == 0.0 || lens_mini_ready(index) == false {
         return false
     }
-    let bottom = content.y + content.h
-    let cut = lens_plane_cut(content.y, bottom, line_flat)
-    let h = cut - content.y
+    let y0 = content.y
+    let h = near.y - content.y
+    if g_lens_plane_tilt < 0.0 {
+        y0 = near.y + near.h
+        h = content.y + content.h - y0
+    }
     if h < 0.5 || content.w <= 0.0 {
         return false
     }
-    ui_push_clip(r, content.x, content.y, content.w, h)
+    ui_push_clip(r, content.x, y0, content.w, h)
     let drew = lens_mini_draw(r, index, x, y, zoom, squash)
     ui_pop_clip(r)
     return drew
@@ -2487,6 +2568,8 @@ fn lens_pan_input(v: ref view, over_map: bool) {
         g_lens_panning = over_map
     }
     if g_lens_view_mode == LENS_MODE_REF && g_lens_ref_drag >= 0 { g_lens_panning = false }
+    // Three fingers tilt the map instead of dragging it.
+    if g_lens_touch_tilt { g_lens_panning = false }
     // A finger landing or lifting moves the centroid; the drag restarts there.
     if g_lens_panning && v.mouse_down && !v.mouse_pressed && !g_lens_touch_rebase {
         g_lens_target_x = g_lens_target_x - (g_mouse_x - g_lens_drag_x) * g_lens_distance / 800.0
@@ -2500,7 +2583,7 @@ fn lens_pan_input(v: ref view, over_map: bool) {
 }
 
 fn lens_camera_moving(v: ref view) bool {
-    if g_lens_ref_drag >= 0 || g_lens_panning || v.mouse_middle_down || v.scroll_y != 0.0 || view_gesture(v).zoom_factor != 1.0 {
+    if g_lens_ref_drag >= 0 || g_lens_panning || v.mouse_middle_down || g_lens_touch_tilt || v.scroll_y != 0.0 || view_gesture(v).zoom_factor != 1.0 {
         return true
     }
     let dx = g_lens_target_x - g_lens_center_x

@@ -289,6 +289,46 @@ fn main() {
     g_lens_tilt = 0.0
     lens_plane_setup(1280.0, 42.0, 680.0)
     assert lens_plane_cut(10.0, 200.0, 24.0) == 10.0
+    // Tilting the other way mirrors the plane: the bottom edge recedes.
+    g_lens_tilt = -60.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    assert abs(lens_plane_screen_y(g_lens_view_y0) - 42.0) < 0.5
+    assert abs(lens_plane_screen_y(g_lens_view_y1) - 722.0) < 0.5
+    assert lens_screen_per_flat(g_lens_view_y1) < lens_screen_per_flat(g_lens_view_y0)
+    assert lens_depth_gain(60.0) > 1.0 && lens_depth_gain(700.0) < 1.0
+    // Its glyph band is the top of a leaf and the bars take the bottom.
+    let mirror_cut = lens_plane_cut(g_lens_view_y0, g_lens_view_y1, 24.0)
+    assert mirror_cut > g_lens_view_y0 + 10.0 && mirror_cut < g_lens_view_y1 - 10.0
+    let whole = lens_leaf_rect(100.0, g_lens_view_y0, 400.0, g_lens_view_y1 - g_lens_view_y0, 1.0, 1.0, 1.0)
+    let band = lens_near_band(whole, 24.0)
+    assert band.y == whole.y && abs(band.y + band.h - mirror_cut) < 0.001
+    g_lens_tilt = 60.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    let upright = lens_leaf_rect(100.0, g_lens_view_y0, 400.0, g_lens_view_y1 - g_lens_view_y0, 1.0, 1.0, 1.0)
+    band = lens_near_band(upright, 24.0)
+    assert abs(band.y + band.h - (upright.y + upright.h)) < 0.001 && band.y > upright.y
+    // A leaf near the horizon shrinks under a pixel and is skipped; one by
+    // the pivot is drawn.
+    assert lens_leaf_seen(lens_leaf_rect(600.0, 360.0, 80.0, 40.0, 1.0, 1.0, 1.0))
+    assert lens_leaf_seen(lens_leaf_rect(600.0, g_lens_view_y0, 80.0, 1.0, 1.0, 1.0, 1.0)) == false
+    // At the steepest tilt the horizon sits just above the pivot, and the
+    // pointer still lands where the GPU draws it between there and the bottom.
+    g_lens_tilt = 89.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    for sy in [378.0, 400.0, 700.0] {
+        lens_unproject(640.0, sy)
+        assert abs(lens_plane_screen_y(g_lens_plane_y) - sy) < 0.5
+    }
+    // Drags stop at 89 degrees either way; within 5 of level stays flat.
+    lens_tilt_by(1000.0)
+    assert g_lens_tilt == 89.0
+    lens_tilt_by(-2000.0)
+    assert g_lens_tilt == -89.0
+    g_lens_tilt = -4.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    assert g_lens_plane_tilt == 0.0
+    g_lens_tilt = 0.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
     assert visible.w > 0.0 && visible.h > 0.0
     let index = workspace_find("editor.ns")
     assert index >= 0

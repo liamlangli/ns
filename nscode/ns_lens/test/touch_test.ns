@@ -58,6 +58,23 @@ fn main() {
     lens_touch_event(VIEW_INPUT_PHASE_BEGAN, 4, 100.0, 100.0, 6.0)
     lens_touch_event(VIEW_INPUT_PHASE_ENDED, 4, 100.0, 100.0, 6.05)
     assert lens_tap_step(100.0, 100.0, 6.05, false, false)
+    // Three fingers tilt the map by their vertical travel; two do not, and a
+    // finger joining restarts the drag instead of jumping.
+    g_lens_tilt = 0.0
+    g_lens_touch_tilt = false
+    lens_touch_tilt_step(2, 100.0, false)
+    lens_touch_tilt_step(2, 140.0, false)
+    assert g_lens_tilt == 0.0 && !g_lens_touch_tilt
+    lens_touch_tilt_step(3, 300.0, true)
+    assert g_lens_touch_tilt && g_lens_tilt == 0.0
+    lens_touch_tilt_step(3, 340.0, false)
+    assert g_lens_tilt == 10.0
+    lens_touch_tilt_step(3, 220.0, false)
+    assert g_lens_tilt == -20.0
+    lens_touch_tilt_step(2, 100.0, true)
+    assert g_lens_tilt == -20.0
+    g_lens_touch_tilt = false
+    g_lens_tilt = 0.0
     // Only a tap on the code brings the folded keyboard back.
     g_mobile_keyboard_hidden = true
     g_lens_touch_tap = false

@@ -196,7 +196,7 @@ fn panel_state_apply(key: str, value: str) {
             g_lens_target_distance = n
         }
     } else if key == "view.tilt" {
-        g_lens_tilt = clamp(n, 0.0, LENS_MAX_TILT)
+        g_lens_tilt = clamp(n, -LENS_MAX_TILT, LENS_MAX_TILT)
     } else if key == "view.scope" {
         g_lens_scope_path = panel_state_entry_path(value)
         g_lens_scope = -1

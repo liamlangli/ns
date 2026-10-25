@@ -15,7 +15,6 @@ let g_lens_ready_index: i32 = -1
 let g_lens_ready_text = ""
 let g_lens_prefetch_index: i32 = -1
 let g_lens_prefetch_text = ""
-let g_lens_warm_cursor: i32 = 0
 
 fn lens_io_start(index: i32, offset: i64, bytes: i32, mode: i32) {
     let path = os_entry_path(index)
@@ -133,21 +132,36 @@ fn lens_request_near(index: i32) {
     }
 }
 
-fn lens_warm_cache(moving: bool) {
-    // Reading one off-screen file and tessellating its bars blocks the frame
-    // the user is using to read. Resume once no leaf is at glyph size.
-    if moving || g_lens_io_running || g_lens_close_view {
+fn lens_warm_cache() {
+    // Bars keep loading while the camera moves, so a drag across the map
+    // fills it in. Tessellating them would block the frame the user is using
+    // to read code, so loading pauses while any leaf is at glyph size.
+    if g_lens_io_running || g_lens_close_view {
         return
     }
-    for attempt in 0 to g_workspace_count {
-        if g_lens_warm_cursor >= g_workspace_count {
-            g_lens_warm_cursor = 0
+    let index = lens_warm_pick()
+    if index >= 0 {
+        lens_io_start(index, 0 as i64, lens_source_bytes(os_entry_path(index)), 2)
+    }
+}
+
+// The next file whose bars to load: the largest leaf on screen, then the
+// largest anywhere, so most of what the map shows fills in first.
+fn lens_warm_pick() i32 {
+    let best = -1
+    let best_area: f64 = 0.0
+    let best_seen = false
+    for i in 0 to g_workspace_count {
+        if g_lens_files[i] != 1 || g_lens_weight[i] <= 0.0 || g_lens_source_done[i] {
+            continue
         }
-        let index = g_lens_warm_cursor
-        g_lens_warm_cursor = g_lens_warm_cursor + 1
-        if g_lens_files[index] == 1 && !g_lens_source_done[index] {
-            lens_io_start(index, 0 as i64, lens_source_bytes(os_entry_path(index)), 2)
-            break
+        let seen = g_lens_on_screen[i] != 0
+        let area = g_lens_w[i] * g_lens_h[i]
+        if best < 0 || (seen && !best_seen) || (seen == best_seen && area > best_area) {
+            best = i
+            best_area = area
+            best_seen = seen
         }
     }
+    return best
 }

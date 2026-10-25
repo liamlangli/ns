@@ -1,0 +1,37 @@
+// Bars load the largest leaf on screen first, then the largest anywhere, so
+// most of what the map shows fills in first.
+use std
+
+fn main() {
+    g_workspace_count = 4
+    for i in 0 to 4 {
+        g_lens_files[i] = 1
+        g_lens_weight[i] = 1.0
+        g_lens_source_done[i] = false
+        g_lens_on_screen[i] = 0
+    }
+    g_lens_w[0] = 10.0
+    g_lens_h[0] = 10.0
+    g_lens_w[1] = 40.0
+    g_lens_h[1] = 40.0
+    g_lens_w[2] = 20.0
+    g_lens_h[2] = 20.0
+    g_lens_w[3] = 90.0
+    g_lens_h[3] = 90.0
+    // A folder or a hidden file is never read for bars.
+    g_lens_files[3] = 0
+    assert lens_warm_pick() == 1
+    g_lens_source_done[1] = true
+    assert lens_warm_pick() == 2
+    // A smaller leaf on screen goes before a larger one off screen.
+    g_lens_source_done[1] = false
+    g_lens_on_screen[0] = 1
+    assert lens_warm_pick() == 0
+    g_lens_on_screen[2] = 1
+    assert lens_warm_pick() == 2
+    for i in 0 to 3 {
+        g_lens_source_done[i] = true
+    }
+    assert lens_warm_pick() == -1
+    print("warm_test: passed\n")
+}

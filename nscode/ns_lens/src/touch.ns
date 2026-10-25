@@ -17,6 +17,10 @@ let g_lens_touch_multi = false
 // The finger set changed this frame: drags restart from the new pointer
 // rather than jumping to it.
 let g_lens_touch_rebase = false
+// Set once a third finger lands, until every finger has lifted: the fingers'
+// vertical drag tilts the map, and neither pans nor pinches it.
+let g_lens_touch_tilt = false
+let g_lens_touch_tilt_y: f64 = 0.0
 // A one-finger tap: the finger lifted near where it landed, soon after.
 // Left drags pan the map, so on touch the tap does what a desktop right
 // click does there: focus a file or place the text cursor.
@@ -106,6 +110,7 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
         // The system saw a pinch even if no frame held both fingers at once.
         lens_touch_multi_begin()
     }
+    lens_touch_tilt_step(g_lens_touch_count, lens_touch_center_y(), g_lens_touch_rebase)
     if g_lens_touch_multi {
         // Only the first finger's press counts; the rest of the gesture
         // neither presses nor clicks anything.
@@ -121,6 +126,26 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
         g_lens_touch_multi = false
         g_lens_multi_end = now
     }
+    if v.mouse_down == false {
+        g_lens_touch_tilt = false
+    }
+}
+
+// Three or more fingers tilt the map by their centroid's vertical travel. A
+// finger landing or lifting restarts the drag from the new centroid.
+fn lens_touch_tilt_step(count: i32, center_y: f64, rebase: bool) {
+    let restart = rebase
+    if count >= 3 && g_lens_touch_tilt == false {
+        g_lens_touch_tilt = true
+        restart = true
+    }
+    if g_lens_touch_tilt == false || count < 3 {
+        return
+    }
+    if restart == false {
+        lens_tilt_by(center_y - g_lens_touch_tilt_y)
+    }
+    g_lens_touch_tilt_y = center_y
 }
 
 // One finger event. An idle frame can queue a whole quick pinch, both fingers
