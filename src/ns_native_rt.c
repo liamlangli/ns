@@ -1946,6 +1946,13 @@ static void ns_rt_task_put(ns_rt_task *t) {
     if (dead) ns_rt_task_destroy(dead);
 }
 
+// Another reference to a task the caller already holds one on.
+static void ns_rt_task_ref(ns_rt_task *t) {
+    ns_rt_task_table_lock();
+    ns_rt_task_table[t->slot].refs++;
+    ns_rt_task_table_unlock();
+}
+
 // The task a handle names, with a reference the caller puts back, or NULL
 // once its record is gone; then *state and *result hold how it ended.
 static ns_rt_task *ns_rt_task_get(int64_t handle, int32_t *state, int64_t *result) {
@@ -2015,6 +2022,10 @@ static int64_t ns_rt_task_start(int64_t fn, int64_t env, int64_t nargs,
     ns_rt_init_locked();
     ns_rt_hold_add(t);
     ns_rt_heap_unlock();
+    // The registered reference is the thread's, and a quick task drops it
+    // before the thread create call even returns. Starting holds one of its
+    // own, so the record it still writes and reads here is never freed.
+    ns_rt_task_ref(t);
 #ifdef _WIN32
     t->thread = CreateThread(NULL, 0, ns_rt_task_thread, t, 0, NULL);
     t->started = t->thread != NULL;
@@ -2041,6 +2052,7 @@ static int64_t ns_rt_task_start(int64_t fn, int64_t env, int64_t nargs,
         ns_rt_task_finish(t, 0, 1);
         ns_rt_task_put(t);
     }
+    ns_rt_task_put(t);
     return handle;
 }
 
