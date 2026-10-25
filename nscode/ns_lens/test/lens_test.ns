@@ -296,17 +296,11 @@ fn main() {
     assert abs(lens_plane_screen_y(g_lens_view_y1) - 722.0) < 0.5
     assert lens_screen_per_flat(g_lens_view_y1) < lens_screen_per_flat(g_lens_view_y0)
     assert lens_depth_gain(60.0) > 1.0 && lens_depth_gain(700.0) < 1.0
-    // Its glyph band is the top of a leaf and the bars take the bottom.
+    // Its legible lines are near the top and shrink toward the bottom.
     let mirror_cut = lens_plane_cut(g_lens_view_y0, g_lens_view_y1, 24.0)
     assert mirror_cut > g_lens_view_y0 + 10.0 && mirror_cut < g_lens_view_y1 - 10.0
-    let whole = lens_leaf_rect(100.0, g_lens_view_y0, 400.0, g_lens_view_y1 - g_lens_view_y0, 1.0, 1.0, 1.0)
-    let band = lens_near_band(whole, 24.0)
-    assert band.y == whole.y && abs(band.y + band.h - mirror_cut) < 0.001
     g_lens_tilt = 60.0
     lens_plane_setup(1280.0, 42.0, 680.0)
-    let upright = lens_leaf_rect(100.0, g_lens_view_y0, 400.0, g_lens_view_y1 - g_lens_view_y0, 1.0, 1.0, 1.0)
-    band = lens_near_band(upright, 24.0)
-    assert abs(band.y + band.h - (upright.y + upright.h)) < 0.001 && band.y > upright.y
     // A leaf near the horizon shrinks under a pixel and is skipped; one by
     // the pivot is drawn.
     assert lens_leaf_seen(lens_leaf_rect(600.0, 360.0, 80.0, 40.0, 1.0, 1.0, 1.0))

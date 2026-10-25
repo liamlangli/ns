@@ -1433,14 +1433,11 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                     g_code_draw_glyphs = false
                     draw_leaf_code(r, v, code_x, code_y, pw - 2.0, py + ph - code_y - 1.0, resident && lod == 0 && lens_typing() == false)
                     g_code_draw_glyphs = true
-                    // One form per file: glyphs when the batch is on screen,
-                    // otherwise the bars. A tilted plane keeps glyphs to the
-                    // band where lines stay legible and draws bars beyond it.
-                    let near = lens_near_band(content, lens_line_flat(zoom))
-                    if near.h > 0.5 && lens_draw_document_batch(r, i, code_x, code_y, zoom, leaf.scale_y / leaf.scale, near) {
+                    // One form per file, tilted or not: glyphs over the whole
+                    // leaf when the batch is on screen, otherwise the bars.
+                    if lens_draw_document_batch(r, i, code_x, code_y, zoom, leaf.scale_y / leaf.scale, content) {
                         content_drawn = true
                         glyphs = true
-                        lens_draw_far_bars(r, i, code_x, code_y, zoom, leaf.scale_y / leaf.scale, content, near)
                     } else {
                         content_drawn = lens_mini_draw(r, i, code_x, code_y, zoom, leaf.scale_y / leaf.scale)
                     }
@@ -1470,15 +1467,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                             if lod <= 1 {
                                 fit = g_lens_flow_fit
                                 code_y = lens_code_y(leaf, fit)
-                                let near = lens_near_band(content, lens_line_flat(zoom))
-                                if near.h > 0.5 {
-                                    ui_push_clip(r, near.x, near.y, near.w, near.h)
-                                    code = lens_draw_code_batch(r, slot, i, code_x, code_y, zoom * g_lens_flow_fit, leaf.scale_y / leaf.scale, near)
-                                    ui_pop_clip(r)
-                                }
-                                if code && mini {
-                                    lens_draw_far_bars(r, i, code_x, lens_code_y(leaf, g_lens_mini_fit[i]), zoom, leaf.scale_y / leaf.scale, content, near)
-                                }
+                                code = lens_draw_code_batch(r, slot, i, code_x, code_y, zoom * g_lens_flow_fit, leaf.scale_y / leaf.scale, content)
                             }
                             if mini == false || lens_mini_stale(i) {
                                 lens_mini_offer(i, g_lens_cache_text[slot])
@@ -1798,42 +1787,8 @@ fn lens_plane_cut(y0: f64, y1: f64, line_flat: f64) f64 {
     return tall
 }
 
-// The part of `content` whose code lines stay tall enough for glyphs.
-fn lens_near_band(content: lens_leaf_rect, line_flat: f64) lens_leaf_rect {
-    if g_lens_plane_tilt == 0.0 {
-        return content
-    }
-    let bottom = content.y + content.h
-    let cut = lens_plane_cut(content.y, bottom, line_flat)
-    if g_lens_plane_tilt > 0.0 {
-        return lens_leaf_rect(content.x, cut, content.w, bottom - cut, content.distance, content.scale, content.scale_y)
-    }
-    return lens_leaf_rect(content.x, content.y, content.w, cut - content.y, content.distance, content.scale, content.scale_y)
-}
-
 fn lens_line_flat(code_zoom: f64) f64 {
     return g_lens_flow_line_pitch * code_zoom * g_lens_flow_fit
-}
-
-// Bars in the receding band of `content` outside `near`, where glyphs would
-// shrink off a pixel and vanish.
-fn lens_draw_far_bars(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squash: f64, content: lens_leaf_rect, near: lens_leaf_rect) bool {
-    if g_lens_plane_tilt == 0.0 || lens_mini_ready(index) == false {
-        return false
-    }
-    let y0 = content.y
-    let h = near.y - content.y
-    if g_lens_plane_tilt < 0.0 {
-        y0 = near.y + near.h
-        h = content.y + content.h - y0
-    }
-    if h < 0.5 || content.w <= 0.0 {
-        return false
-    }
-    ui_push_clip(r, content.x, y0, content.w, h)
-    let drew = lens_mini_draw(r, index, x, y, zoom, squash)
-    ui_pop_clip(r)
-    return drew
 }
 
 // One affine camera for every entry, so neighbouring rectangles share their
