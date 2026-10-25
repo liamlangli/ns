@@ -1,0 +1,21 @@
+// The dot grid is one retained tile: panning reuses it, a small zoom keeps it,
+// and only a fade step or a larger spacing change rebuilds it.
+use std
+
+fn main() {
+    assert lens_grid_fits(30.0, 30.0)
+    assert lens_grid_fits(30.0, 33.0)
+    assert lens_grid_fits(30.0, 27.0)
+    assert !lens_grid_fits(30.0, 36.0)
+    assert !lens_grid_fits(0.0, 30.0)
+    // Minor dots are absent at the minimum spacing and full at twice it.
+    assert lens_grid_fade(24.0, 24.0) == 0
+    assert lens_grid_fade(36.0, 24.0) == 8
+    assert lens_grid_fade(48.0, 24.0) == 16
+    assert lens_grid_fade(60.0, 24.0) == 16
+    // The tile spans every lattice point the spacing rule lets a view hold.
+    let step = lens_grid_spacing(1.0, 3840.0, 2160.0)
+    assert 3840.0 / step + 3.0 <= LENS_GRID_TILE_COLS as f64
+    assert 2160.0 / step + 3.0 <= LENS_GRID_TILE_ROWS as f64
+    print("grid_test: passed\n")
+}

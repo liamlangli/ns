@@ -12,6 +12,57 @@ fn lens_grid_spacing(scale: f64, width: f64, height: f64) f64 {
     return step
 }
 
+// The dots are one retained batch of a lattice tile in pitch units, drawn
+// scaled by the pitch and offset to the camera every frame. Panning and
+// tilting only move it; it is rebuilt when the spacing or the minor dots' fade
+// step changes, rather than tessellating every dot on every frame.
+lit LENS_GRID_TILE_COLS = 132
+lit LENS_GRID_TILE_ROWS = 100
+// Screen radius of a dot.
+lit LENS_GRID_DOT = 0.9
+let g_lens_grid_batch: i32 = 0
+let g_lens_grid_pitch: f64 = 0.0
+let g_lens_grid_fade: i32 = -1
+
+// Minor dots fade in 16 steps; a step change rebuilds the tile.
+fn lens_grid_fade(pitch: f64, minimum: f64) i32 {
+    return (16.0 * clamp((pitch - minimum) / minimum, 0.0, 1.0)) as i32
+}
+
+// True when the tile built for `built` pitch can be drawn at `pitch`: its
+// dots then stay within 15% of their screen size, which a 1.8 pixel dot does
+// not show, so a zoom rebuilds it only every few frames.
+fn lens_grid_fits(built: f64, pitch: f64) bool {
+    return built > 0.0 && abs(pitch / built - 1.0) < 0.15
+}
+
+fn lens_grid_build(r: ref ui_renderer, pitch: f64, fade: i32) {
+    if g_lens_grid_batch == 0 {
+        g_lens_grid_batch = ui_rect_batch_create(r)
+        if g_lens_grid_batch == 0 {
+            return
+        }
+    }
+    let rgb = col_muted() & 0x00ffffffu
+    let major = rgb | (64u << 24)
+    let minor = rgb | (((fade * 4) as u32) << 24)
+    let size = LENS_GRID_DOT * 2.0 / pitch
+    let half = size * 0.5
+    ui_rect_batch_begin(r, g_lens_grid_batch)
+    for row in 0 to LENS_GRID_TILE_ROWS {
+        for col in 0 to LENS_GRID_TILE_COLS {
+            if row % 2 == 0 && col % 2 == 0 {
+                ui_rect_batch_add_smooth(r, g_lens_grid_batch, (col as f64) - half, (row as f64) - half, size, size, major)
+            } else if fade > 0 {
+                ui_rect_batch_add_smooth(r, g_lens_grid_batch, (col as f64) - half, (row as f64) - half, size, size, minor)
+            }
+        }
+    }
+    ui_rect_batch_end(r, g_lens_grid_batch)
+    g_lens_grid_pitch = pitch
+    g_lens_grid_fade = fade
+}
+
 fn lens_draw_grid(r: ref ui_renderer, w: f64, top: f64, body_h: f64) {
     let scale = 800.0 / clamp(g_lens_distance, 1.0, LENS_DISTANCE_LIMIT)
     let width = g_lens_view_x1 - g_lens_view_x0
@@ -19,21 +70,20 @@ fn lens_draw_grid(r: ref ui_renderer, w: f64, top: f64, body_h: f64) {
     let step = lens_grid_spacing(scale, width, height)
     let pitch = step * scale
     let minimum = clamp(clamp(width / 128.0, height / 96.0, 1000000.0), 24.0, 1000000.0)
-    let minor_alpha = (64.0 * clamp((pitch - minimum) / minimum, 0.0, 1.0)) as u32
-    let rgb = col_muted() & 0x00ffffffu
+    let fade = lens_grid_fade(pitch, minimum)
+    if g_lens_grid_batch == 0 || fade != g_lens_grid_fade || !lens_grid_fits(g_lens_grid_pitch, pitch) {
+        lens_grid_build(r, pitch, fade)
+    }
+    let count = ui_rect_batch_vertex_count(r, g_lens_grid_batch)
+    if g_lens_grid_batch == 0 || count <= 0 {
+        return
+    }
     let ox = w * 0.5 - g_lens_center_x * scale
     let oy = top + body_h * 0.5 - g_lens_center_y * scale
+    // The tile starts on an even lattice point so its major dots stay major.
     let c0 = lens_floor_i((g_lens_view_x0 - ox) / pitch)
-    let c1 = lens_ceil_i((g_lens_view_x1 - ox) / pitch)
     let r0 = lens_floor_i((g_lens_view_y0 - oy) / pitch)
-    let r1 = lens_ceil_i((g_lens_view_y1 - oy) / pitch)
-    for row in r0 to r1 + 1 {
-        for col in c0 to c1 + 1 {
-            let alpha = minor_alpha
-            if row % 2 == 0 && col % 2 == 0 { alpha = 64u }
-            if alpha > 0u {
-                ui_fill_circle(r, ox + (col as f64) * pitch, oy + (row as f64) * pitch, 0.9, rgb | (alpha << 24), 0.5)
-            }
-        }
-    }
+    c0 = c0 - ((c0 % 2) + 2) % 2
+    r0 = r0 - ((r0 % 2) + 2) % 2
+    ui_rect_batch_draw_range(r, g_lens_grid_batch, 0, count, ox + (c0 as f64) * pitch, oy + (r0 as f64) * pitch, pitch, pitch)
 }
