@@ -431,6 +431,10 @@ typedef struct ui_renderer {
     ui_clip plane_scissors[UI_MAX_PLANES];
     i32 plane_count;
     i32 current_plane;
+    // Defocus the next ui_begin_plane takes (ui_set_plane_focus): blur in ui
+    // units, the sharp band and the fade. A plane keeps it in its matrix's z
+    // row, which a plane never uses: the vertex stage sets z from w.
+    f32 plane_focus[3];
     // 3D panel (ui_set_panel). panel_clip maps the canvas's (u, v, 0, 1), with
     // u and v in -1..1, to clip space; the world frame serves touch tests.
     ns_bool panel;
@@ -557,7 +561,7 @@ static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
 "struct UiRoot { float screen_width; float screen_height; float offset_x; float offset_y; uint clip_offset; uint projection_offset; uint batch_meta; uint quad_origin; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4 vertex_scale; float4 batch_clip; float4 font_faces[2]; float4 projection[5]; };\n"
-"struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; uint meta [[flat]]; };\n"
+"struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; float4 dof; uint meta [[flat]]; };\n"
 "static inline float ui_word(device const uint *s, uint i) { return as_type<float>(s[i]); }\n"
 "vertex VOut ui_vs(uint vertex_id [[vertex_id]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
 "  device const uint *s = ns_storage_buffer;\n"
@@ -591,7 +595,7 @@ static const char *ui_shader_src =
 "  }\n"
 "  float2 screen = float2(ns_root.screen_width, ns_root.screen_height);\n"
 "  float2 ndc = float2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
-"  float4 pos = float4(ndc, 1.0, 1.0);\n"
+"  float4 pos = float4(ndc, 1.0, 1.0); float4 dof = float4(1.0, 0.0, 0.0, 0.0);\n"
 "  uint projection = (meta >> 8u) & 15u;\n"
 "  if (projection > 0u) {\n"
 "    uint p = ns_root.projection_offset / 4u + (projection - 1u) * 20u;\n"
@@ -602,7 +606,8 @@ static const char *ui_shader_src =
 "    // A retained draw's storage is its own vertices; the root carries its projection.\n"
 "    if (ns_root.vertex_scale.z > 0.5) { m = float4x4(ns_root.projection[0], ns_root.projection[1], ns_root.projection[2], ns_root.projection[3]); }\n"
 "    pos = m * float4(ndc, 0.0, 1.0);\n"
-"    if (projection != 9u) { pos.z = pos.w; }\n"
+"    // A plane's z row holds its focus (blur px, band, fade); w is its depth.\n"
+"    if (projection != 9u) { dof = float4(pos.w, m[0].z, m[1].z, m[2].z); pos.z = pos.w; }\n"
 "  }\n"
 "  if (ns_root.hud_center_enable.w > 0.5) {\n"
 "    float3 view = ns_root.hud_center_enable.xyz + ns_root.hud_right_hw.xyz * (ndc.x * ns_root.hud_right_hw.w) + ns_root.hud_up_hh.xyz * (ndc.y * ns_root.hud_up_hh.w);\n"
@@ -614,7 +619,7 @@ static const char *ui_shader_src =
 "  }\n"
 "  VOut o; o.pos = pos; o.pixel = pixel; o.uv = uv;\n"
 "  o.col = float4(float((color >> 0u) & 255u), float((color >> 8u) & 255u), float((color >> 16u) & 255u), float((color >> 24u) & 255u)) / 255.0;\n"
-"  o.params = params; o.meta = meta; return o;\n"
+"  o.params = params; o.dof = dof; o.meta = meta; return o;\n"
 "}\n"
 "static inline half ui_median3(half r, half g, half b) { return max(min(r, g), min(max(r, g), b)); }\n"
 "static inline bool ui_clip_discard(VOut in, constant UiRoot &ns_root, device const uint *s) {\n"
@@ -630,6 +635,13 @@ static const char *ui_shader_src =
 "  uint base = ns_root.clip_offset / 4u + (clip_idx - 1u) * 4u;\n"
 "  float4 c = float4(ui_word(s, base), ui_word(s, base + 1u), ui_word(s, base + 2u), ui_word(s, base + 3u));\n"
 "  return in.pixel.x < c.x || in.pixel.y < c.y || in.pixel.x >= c.z || in.pixel.y >= c.w;\n"
+"}\n"
+"// Defocus in framebuffer pixels: none within the band around the plane's\n"
+"// pivot line, growing to the plane's blur toward its horizon and its near edge.\n"
+"static inline float ui_defocus(float4 dof) {\n"
+"  if (dof.y <= 0.0) { return 0.0; }\n"
+"  float off = abs(1.0 - 1.0 / max(dof.x, 1e-4));\n"
+"  return dof.y * clamp((off - dof.z) / max(1.0 - dof.z, 1e-3), 0.0, 1.0);\n"
 "}\n"
 "static inline float ui_arc_distance(VOut in) {\n"
 "  float radius = max(abs(in.params.x), 0.0001); float half_width = max(in.params.y, 0.0);\n"
@@ -648,17 +660,22 @@ static const char *ui_shader_src =
 "  float2 pixel_fw = max(fwidth(in.pixel), float2(1e-6));\n"
 "  if (ui_clip_discard(in, ns_root, ns_storage_buffer)) { discard_fragment(); }\n"
 "  uint kind = in.meta & 15u;\n"
+"  // Out of focus: softer edges over coc pixels and alpha faded toward the map.\n"
+"  float coc = ui_defocus(in.dof); float4 col = in.col;\n"
+"  col.a *= 1.0 - in.dof.w * clamp(coc / max(in.dof.y, 1e-3), 0.0, 1.0);\n"
 "  if (kind == 5u) {\n"
 "    // The share of this pixel's footprint the box covers, per filtered axis.\n"
-"    float2 cover = clamp((min(in.pixel + pixel_fw * 0.5, in.uv) - max(in.pixel - pixel_fw * 0.5, in.params.xy)) / pixel_fw, 0.0, 1.0);\n"
-"    return float4(in.col.rgb, in.col.a * min(in.params.z * cover.x * cover.y, 1.0));\n"
+"    float2 foot = pixel_fw * (1.0 + coc);\n"
+"    float2 cover = clamp((min(in.pixel + foot * 0.5, in.uv) - max(in.pixel - foot * 0.5, in.params.xy)) / foot, 0.0, 1.0);\n"
+"    return float4(col.rgb, col.a * min(in.params.z * cover.x * cover.y, 1.0));\n"
 "  }\n"
 "  if (kind == 2u) {\n"
-"    float opacity = 1.0 - smoothstep(-arc_aa, arc_aa, arc_distance);\n"
-"    if (in.params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
-"    return float4(in.col.rgb, in.col.a * opacity);\n"
+"    float aa = arc_aa * (1.0 + coc);\n"
+"    float opacity = 1.0 - smoothstep(-aa, aa, arc_distance);\n"
+"    if (in.params.x < 0.0 && coc <= 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
+"    return float4(col.rgb, col.a * opacity);\n"
 "  }\n"
-"  if (kind == 4u) { return in.col; }\n"
+"  if (kind == 4u) { return col; }\n"
 "  constexpr sampler samp(mag_filter::linear, min_filter::linear, address::clamp_to_edge);\n"
 "  if (kind == 1u) {\n"
 "    // The glyph's face-local uv, moved into the font pack.\n"
@@ -668,15 +685,19 @@ static const char *ui_shader_src =
 "    float2 tex_size = float2(ns_texture_table_msdf.get_width(), ns_texture_table_msdf.get_height()) * face.zw; float range = max(in.params.x, 0.5);\n"
 "    float2 unit_range = float2(range) / tex_size; float2 screen_texel = max(abs(uv_dx) + abs(uv_dy), float2(1e-6));\n"
 "    float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
-"    float opacity = clamp(((float(sd) - 0.5) * px_range + in.params.y) / max(in.params.z, 1.0) + 0.5, 0.0, 1.0);\n"
-"    return float4(in.col.rgb, in.col.a * opacity);\n"
+"    // The blur widens the edge no further than the field's range reaches,\n"
+"    // or the glyph's quad would show.\n"
+"    float soft = min(max(in.params.z, 1.0) + coc, max(px_range, max(in.params.z, 1.0)));\n"
+"    float opacity = clamp(((float(sd) - 0.5) * px_range + in.params.y) / soft + 0.5, 0.0, 1.0);\n"
+"    return float4(col.rgb, col.a * opacity);\n"
 "  }\n"
 "  if (kind == 3u) {\n"
 "    constexpr sampler point_samp(mag_filter::nearest, min_filter::nearest, mip_filter::none, address::clamp_to_edge);\n"
 "    float4 texel = ns_texture_table_rgba.sample(point_samp, in.uv, level(0.0)); float coverage = min(texel.r, texel.a);\n"
-"    return float4(in.col.rgb, in.col.a * coverage);\n"
+"    return float4(col.rgb, col.a * coverage);\n"
 "  }\n"
-"  return ns_texture_table_rgba.sample(samp, in.uv, gradient2d(uv_dx, uv_dy)) * in.col;\n"
+"  // A mipmapped image blurs by sampling a coarser level.\n"
+"  return ns_texture_table_rgba.sample(samp, in.uv, gradient2d(uv_dx * (1.0 + coc), uv_dy * (1.0 + coc))) * col;\n"
 "}\n";
 
 // Vulkan/GLSL 450 form of the same renderer. The backend compiles each stage
@@ -716,6 +737,7 @@ static const char *ui_shader_glsl_vs_body =
     "layout(location = 2) out vec4 ns_col;\n"
     "layout(location = 3) out vec4 ns_params;\n"
     "layout(location = 4) flat out uint ns_meta;\n"
+    "layout(location = 5) out vec4 ns_dof;\n"
     "void main() {\n"
     "    uint base = uint(gl_VertexIndex) * 10u;\n"
     "    vec2 pixel = vec2(ui_word(base), ui_word(base + 1u)) * ns_root.vertex_scale.xy + vec2(ns_root.offset_x, ns_root.offset_y);\n"
@@ -746,6 +768,7 @@ static const char *ui_shader_glsl_vs_body =
     "    vec2 screen = vec2(ns_root.screen_width, ns_root.screen_height);\n"
     "    vec2 ndc = vec2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
     "    vec4 pos = vec4(ndc, 1.0, 1.0);\n"
+    "    vec4 dof = vec4(1.0, 0.0, 0.0, 0.0);\n"
     "    uint projection = (meta >> 8u) & 15u;\n"
     "    if (projection > 0u) {\n"
     "        uint p = ns_root.projection_offset / 4u + (projection - 1u) * 20u;\n"
@@ -755,7 +778,7 @@ static const char *ui_shader_glsl_vs_body =
     "                      vec4(ui_word(p + 12u), ui_word(p + 13u), ui_word(p + 14u), ui_word(p + 15u)));\n"
     "        if (ns_root.vertex_scale.z > 0.5) { m = mat4(ns_root.projection[0], ns_root.projection[1], ns_root.projection[2], ns_root.projection[3]); }\n"
     "        pos = m * vec4(ndc, 0.0, 1.0);\n"
-    "        if (projection != 9u) { pos.z = pos.w; }\n"
+    "        if (projection != 9u) { dof = vec4(pos.w, m[0].z, m[1].z, m[2].z); pos.z = pos.w; }\n"
     "    }\n"
     "    if (ns_root.hud_center_enable.w > 0.5) {\n"
     "        vec3 view = ns_root.hud_center_enable.xyz + ns_root.hud_right_hw.xyz * (ndc.x * ns_root.hud_right_hw.w) + ns_root.hud_up_hh.xyz * (ndc.y * ns_root.hud_up_hh.w);\n"
@@ -770,6 +793,7 @@ static const char *ui_shader_glsl_vs_body =
     "    ns_col = vec4(float((color >> 0u) & 255u), float((color >> 8u) & 255u), float((color >> 16u) & 255u), float((color >> 24u) & 255u)) / 255.0;\n"
     "    ns_params = params;\n"
     "    ns_meta = meta;\n"
+    "    ns_dof = dof;\n"
     "    gl_Position = pos;\n"
     "}\n";
 
@@ -780,6 +804,7 @@ static const char *ui_shader_glsl_fs_prelude =
     "layout(location = 2) in vec4 ns_col;\n"
     "layout(location = 3) in vec4 ns_params;\n"
     "layout(location = 4) flat in uint ns_meta;\n"
+    "layout(location = 5) in vec4 ns_dof;\n"
     "layout(location = 0) out vec4 ns_frag_color;\n";
 
 static const char *ui_shader_glsl_fs_body =
@@ -796,6 +821,11 @@ static const char *ui_shader_glsl_fs_body =
     "    uint base = ns_root.clip_offset / 4u + (clip_idx - 1u) * 4u;\n"
     "    vec4 c = vec4(ui_word(base), ui_word(base + 1u), ui_word(base + 2u), ui_word(base + 3u));\n"
     "    return ns_pixel.x < c.x || ns_pixel.y < c.y || ns_pixel.x >= c.z || ns_pixel.y >= c.w;\n"
+    "}\n"
+    "float ui_defocus() {\n"
+    "    if (ns_dof.y <= 0.0) { return 0.0; }\n"
+    "    float off = abs(1.0 - 1.0 / max(ns_dof.x, 1e-4));\n"
+    "    return ns_dof.y * clamp((off - ns_dof.z) / max(1.0 - ns_dof.z, 1e-3), 0.0, 1.0);\n"
     "}\n"
     "float ui_arc_distance() {\n"
     "    float radius = max(abs(ns_params.x), 0.0001);\n"
@@ -819,19 +849,25 @@ static const char *ui_shader_glsl_fs_body =
     "    vec2 pixel_fw = max(fwidth(ns_pixel), vec2(1e-6));\n"
     "    if (ui_clip_discard()) { discard; }\n"
     "    uint kind = ns_meta & 15u;\n"
+    "    // Defocus: see the Metal source.\n"
+    "    float coc = ui_defocus();\n"
+    "    vec4 col = ns_col;\n"
+    "    col.a *= 1.0 - ns_dof.w * clamp(coc / max(ns_dof.y, 1e-3), 0.0, 1.0);\n"
     "    if (kind == 5u) {\n"
-    "        vec2 cover = clamp((min(ns_pixel + pixel_fw * 0.5, ns_uv) - max(ns_pixel - pixel_fw * 0.5, ns_params.xy)) / pixel_fw, 0.0, 1.0);\n"
-    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * min(ns_params.z * cover.x * cover.y, 1.0));\n"
+    "        vec2 foot = pixel_fw * (1.0 + coc);\n"
+    "        vec2 cover = clamp((min(ns_pixel + foot * 0.5, ns_uv) - max(ns_pixel - foot * 0.5, ns_params.xy)) / foot, 0.0, 1.0);\n"
+    "        ns_frag_color = vec4(col.rgb, col.a * min(ns_params.z * cover.x * cover.y, 1.0));\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 2u) {\n"
-    "        float opacity = 1.0 - smoothstep(-arc_aa, arc_aa, arc_distance);\n"
-    "        if (ns_params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
-    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
+    "        float aa = arc_aa * (1.0 + coc);\n"
+    "        float opacity = 1.0 - smoothstep(-aa, aa, arc_distance);\n"
+    "        if (ns_params.x < 0.0 && coc <= 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
+    "        ns_frag_color = vec4(col.rgb, col.a * opacity);\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 4u) {\n"
-    "        ns_frag_color = ns_col;\n"
+    "        ns_frag_color = col;\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 1u) {\n"
@@ -843,18 +879,19 @@ static const char *ui_shader_glsl_fs_body =
     "        vec2 unit_range = vec2(range) / (vec2(textureSize(ns_texture_table[0], 0)) * face.zw);\n"
     "        vec2 screen_texel = max(abs(uv_dx) + abs(uv_dy), vec2(1e-6));\n"
     "        float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
-    "        float opacity = clamp(((sd - 0.5) * px_range + ns_params.y) / max(ns_params.z, 1.0) + 0.5, 0.0, 1.0);\n"
-    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
+    "        float soft = min(max(ns_params.z, 1.0) + coc, max(px_range, max(ns_params.z, 1.0)));\n"
+    "        float opacity = clamp(((sd - 0.5) * px_range + ns_params.y) / soft + 0.5, 0.0, 1.0);\n"
+    "        ns_frag_color = vec4(col.rgb, col.a * opacity);\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 3u) {\n"
     "        ivec2 size = textureSize(ns_texture_table[1], 0);\n"
     "        ivec2 pixel = clamp(ivec2(ns_uv * vec2(size)), ivec2(0), size - ivec2(1));\n"
     "        vec4 texel = texelFetch(ns_texture_table[1], pixel, 0);\n"
-    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * min(texel.r, texel.a));\n"
+    "        ns_frag_color = vec4(col.rgb, col.a * min(texel.r, texel.a));\n"
     "        return;\n"
     "    }\n"
-    "    ns_frag_color = textureGrad(ns_texture_table[1], ns_uv, uv_dx, uv_dy) * ns_col;\n"
+    "    ns_frag_color = textureGrad(ns_texture_table[1], ns_uv, uv_dx * (1.0 + coc), uv_dy * (1.0 + coc)) * col;\n"
     "}\n";
 
 static void ui_glsl_append(char *out, size_t capacity, size_t *used, const char *format, ...) {
@@ -2366,6 +2403,7 @@ void ui_begin_frame(ui_renderer *r) {
     r->current_texture_id = UI_WHITE_TEXTURE;
     r->plane_count = 0;
     r->current_plane = 0;
+    r->plane_focus[0] = r->plane_focus[1] = r->plane_focus[2] = 0.0f;
     r->overlay = false;
 }
 
@@ -2869,6 +2907,9 @@ void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 fo
     m[12] = (f32)(-ncx * k * ncy);
     m[13] = (f32)(ncy - ncy * ncy * k - c * ncy);
     m[15] = (f32)(1.0 - k * ncy);
+    m[2] = r->plane_focus[0];
+    m[6] = r->plane_focus[1];
+    m[10] = r->plane_focus[2];
     r->plane_scissors[r->plane_count] = (ui_clip){x + r->safe_rect.x, y + r->safe_rect.y, w, h};
     r->plane_count++;
     r->current_plane = r->plane_count;
@@ -2877,6 +2918,19 @@ void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 fo
     if (r->clip_count < UI_MAX_CLIPS) {
         r->clips[r->clip_count++] = (ui_clip){-1.0e7, -1.0e7, 2.0e7, 2.0e7};
     }
+}
+
+// Depth of field for the planes begun after this call in the frame. Depth on
+// a plane is w, 1 on the line it turns about. A fragment whose |1 - 1/w| is
+// past `band` defocuses: up to `blur` ui units of softened edges on MSDF
+// text, arcs and filtered rectangles, a mip-biased image, and its alpha
+// scaled down by up to `fade` (0..1). It costs a few instructions per
+// fragment and no extra pass. ui_begin_frame returns it to sharp.
+void ui_set_plane_focus(ui_renderer *r, f64 blur, f64 band, f64 fade) {
+    if (!r) return;
+    r->plane_focus[0] = (f32)(blur > 0.0 ? blur : 0.0);
+    r->plane_focus[1] = (f32)(band < 0.0 ? 0.0 : (band > 0.95 ? 0.95 : band));
+    r->plane_focus[2] = (f32)(fade < 0.0 ? 0.0 : (fade > 1.0 ? 1.0 : fade));
 }
 
 void ui_end_plane(ui_renderer *r) {
@@ -2994,6 +3048,7 @@ static void ui_upload_projections(ui_renderer *r, f64 sx, f64 sy, f32 *words) {
         f32 *out = words + i * UI_PROJECTION_WORDS;
         const ui_clip c = r->plane_scissors[i];
         memcpy(out, r->planes[i], 16 * sizeof(f32));
+        out[2] = (f32)(out[2] * sx);
         out[16] = (f32)floor(c.x * sx);
         out[17] = (f32)floor(c.y * sy);
         out[18] = (f32)ceil((c.x + c.w) * sx);

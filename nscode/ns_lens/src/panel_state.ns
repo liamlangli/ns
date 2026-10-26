@@ -75,6 +75,10 @@ fn panel_state_view_text() str {
     text = text + "view.y=" + ftos(y) + "\n"
     text = text + "view.distance=" + ftos(distance) + "\n"
     text = text + "view.tilt=" + ftos(g_lens_tilt) + "\n"
+    text = text + "render.dof=" + panel_state_flag(g_render_dof) + "\n"
+    text = text + "render.blur=" + ftos(g_render_blur) + "\n"
+    text = text + "render.band=" + ftos(g_render_band) + "\n"
+    text = text + "render.fade=" + ftos(g_render_fade) + "\n"
     text = text + "view.scope=" + panel_state_relative(g_lens_scope_path) + "\n"
     text = text + "view.selected=" + panel_state_relative(g_lens_selected_path) + "\n"
     if mode == LENS_MODE_REF {
@@ -197,6 +201,14 @@ fn panel_state_apply(key: str, value: str) {
         }
     } else if key == "view.tilt" {
         g_lens_tilt = clamp(n, -LENS_MAX_TILT, LENS_MAX_TILT)
+    } else if key == "render.dof" {
+        g_render_dof = value == "1"
+    } else if key == "render.blur" {
+        g_render_blur = clamp(n, 0.0, RENDER_BLUR_MAX)
+    } else if key == "render.band" {
+        g_render_band = clamp(n, 0.0, RENDER_BAND_MAX)
+    } else if key == "render.fade" {
+        g_render_fade = clamp(n, 0.0, 1.0)
     } else if key == "view.scope" {
         g_lens_scope_path = panel_state_entry_path(value)
         g_lens_scope = -1

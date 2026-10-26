@@ -39,8 +39,11 @@ lit LENS_RECENT_CLEAR = -2
 // The top bar reads File, View, then the map mode menu.
 lit LENS_VIEW_X = LENS_FILE_X + LENS_FILE_W + 8.0
 lit LENS_VIEW_W = 64.0
-lit LENS_VIEW_MENU_W = 150.0
-lit LENS_VIEW_ITEMS = 2
+lit LENS_VIEW_MENU_W = 190.0
+lit LENS_VIEW_ITEMS = 3
+lit LENS_VIEW_OUTLINE = 0
+lit LENS_VIEW_TERMINAL = 1
+lit LENS_VIEW_RENDER = 2
 lit LENS_SEARCH_W = 560.0
 lit LENS_SEARCH_INPUT_H = 30.0
 lit LENS_SEARCH_ROWS = 12
@@ -63,7 +66,7 @@ lit LENS_COMMIT_ARROW_W = 24.0
 lit LENS_COMMIT_BUTTON_H = 26.0
 lit LENS_COMMIT_MENU_W = 190.0
 lit LENS_HINT_LINE_H = 15.0
-lit LENS_HINT_COUNT = 8
+lit LENS_HINT_COUNT = 9
 // The hints fold into a "?" button; a tap toggles them. They start folded on
 // a phone, where they would cover much of the map.
 lit LENS_HINT_BUTTON = 22.0
@@ -171,26 +174,43 @@ fn lens_recent_row_at(y: f64) i32 {
 }
 
 // iOS has no local shell, so its View menu lists the outline alone.
+// A phone has no terminal: its menu reads Outline, Render Settings.
 fn lens_view_items() i32 {
     if lens_mobile() {
-        return 1
+        return LENS_VIEW_ITEMS - 1
     }
     return LENS_VIEW_ITEMS
 }
 
+// The item on menu row `i`.
+fn lens_view_item(i: i32) i32 {
+    if lens_mobile() && i >= LENS_VIEW_TERMINAL {
+        return i + 1
+    }
+    return i
+}
+
 fn lens_view_item_label(i: i32) str {
-    if i == 0 {
+    let item = lens_view_item(i)
+    if item == LENS_VIEW_OUTLINE {
         return "Outline"
     }
-    return "Terminal"
+    if item == LENS_VIEW_TERMINAL {
+        return "Terminal"
+    }
+    return "Render Settings"
 }
 
 // A panel's toggle state, shown on the right of its menu row.
 fn lens_view_item_on(i: i32) bool {
-    if i == 0 {
+    let item = lens_view_item(i)
+    if item == LENS_VIEW_OUTLINE {
         return outline_open()
     }
-    return terminal_open()
+    if item == LENS_VIEW_TERMINAL {
+        return terminal_open()
+    }
+    return g_render_settings_open
 }
 
 fn lens_view_action(i: i32) {
@@ -199,10 +219,13 @@ fn lens_view_action(i: i32) {
         g_lens_message = "Open or clone a repository first"
         return
     }
-    if i == 0 {
+    let item = lens_view_item(i)
+    if item == LENS_VIEW_OUTLINE {
         outline_toggle()
-    } else {
+    } else if item == LENS_VIEW_TERMINAL {
         terminal_toggle()
+    } else {
+        render_settings_toggle()
     }
 }
 
@@ -215,7 +238,9 @@ fn lens_hint_keys(i: i32) str {
     if i == 4 { return "middle drag" }
     if i == 5 { return lens_file_item_keys(LENS_FILE_OPEN) }
     if i == 6 { return lens_file_item_keys(LENS_FILE_SEARCH) }
-    return lens_file_item_keys(LENS_FILE_COMMIT)
+    if i == 7 { return lens_file_item_keys(LENS_FILE_COMMIT) }
+    if lens_mobile() { return "4-finger tap" }
+    return "~"
 }
 
 fn lens_hint_action(i: i32) str {
@@ -228,7 +253,8 @@ fn lens_hint_action(i: i32) str {
     if i == 4 { return "tilt" }
     if i == 5 { return "open" }
     if i == 6 { return "search" }
-    return "commit"
+    if i == 7 { return "commit" }
+    return "hide ui"
 }
 
 // Keys belong to the search box, the commit dialog, the branch dialogs, the
@@ -240,7 +266,7 @@ fn lens_typing() bool {
 // Pointer input the map must not also take this frame. Floating panels block
 // their own rectangles with their hit tests, so only popups belong here.
 fn lens_menu_blocks() bool {
-    return g_lens_edit_menu_open || g_lens_repo_menu_open || g_lens_ignore_open || g_lens_commit_open || g_lens_branch_create_open || g_lens_file_block || g_lens_recent_block || g_lens_view_open || g_lens_view_block || g_lens_search_block || g_lens_branch_block || g_lens_remote_block
+    return g_lens_edit_menu_open || g_lens_repo_menu_open || g_lens_ignore_open || g_lens_commit_open || g_lens_branch_create_open || g_lens_file_block || g_lens_recent_block || g_lens_view_open || g_lens_view_block || g_lens_search_block || g_lens_branch_block || g_lens_remote_block || g_render_settings_block
 }
 
 fn cmd_down(v: ref view) bool {
@@ -976,7 +1002,7 @@ fn lens_draw_view_menu(r: ref ui_renderer, v: ref view) {
             lens_draw_menu_row_hi(r, LENS_VIEW_X, iy, LENS_VIEW_MENU_W)
         }
         let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
-        draw_text_clipped(r, LENS_VIEW_X + 10.0, row_ty, 100.0, LENS_MODE_ITEM, lens_view_item_label(i), small_px(), col_text())
+        draw_text_clipped(r, LENS_VIEW_X + 10.0, row_ty, 140.0, LENS_MODE_ITEM, lens_view_item_label(i), small_px(), col_text())
         if lens_view_item_on(i) {
             let state = "on"
             let sw = ui_text_width(r, state, small_px(), FONT_MONO())
@@ -1368,6 +1394,8 @@ fn lens_draw_overlay(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
 // Menu buttons and every popup, drawn after the panels so an open menu is
 // always on top.
 fn lens_draw_menus(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    // Under the View popup, which opens over the same corner.
+    render_settings_draw(r, v)
     lens_draw_file_menu(r, v)
     lens_draw_view_menu(r, v)
     lens_draw_edit_menu(r, v)

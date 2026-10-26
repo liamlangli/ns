@@ -34,6 +34,18 @@ let g_lens_tap_x: f64 = 0.0
 let g_lens_tap_y: f64 = 0.0
 let g_lens_tap_time: f64 = 0.0
 let g_lens_tap_moved = false
+// Four fingers tapped together toggle every control but the map: the gesture
+// peaked at four or more fingers, lifted soon after the first landed, and its
+// centroid barely moved. The tilt the passing three-finger stage applied is
+// undone.
+lit LENS_FOUR_TAP_TIME = 0.5
+lit LENS_FOUR_TAP_SLOP = 24.0
+let g_lens_touch_peak: i32 = 0
+let g_lens_touch_begin: f64 = 0.0
+let g_lens_touch_begin_tilt: f64 = 0.0
+let g_lens_touch_travel: f64 = 0.0
+let g_lens_touch_last_x: f64 = 0.0
+let g_lens_touch_last_y: f64 = 0.0
 // When the last multi-finger gesture lifted.
 let g_lens_multi_end: f64 = -1.0
 // Set on the frame a tap ends, with g_mouse_x/y at the release point.
@@ -110,6 +122,15 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
         // The system saw a pinch even if no frame held both fingers at once.
         lens_touch_multi_begin()
     }
+    if g_lens_touch_count > 0 {
+        let cx = lens_touch_center_x()
+        let cy = lens_touch_center_y()
+        if g_lens_touch_rebase == false {
+            g_lens_touch_travel = g_lens_touch_travel + abs(cx - g_lens_touch_last_x) + abs(cy - g_lens_touch_last_y)
+        }
+        g_lens_touch_last_x = cx
+        g_lens_touch_last_y = cy
+    }
     lens_touch_tilt_step(g_lens_touch_count, lens_touch_center_y(), g_lens_touch_rebase)
     if g_lens_touch_multi {
         // Only the first finger's press counts; the rest of the gesture
@@ -123,6 +144,10 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
     }
     g_lens_touch_tap = lens_tap_step(g_mouse_x, g_mouse_y, now, v.mouse_down, g_lens_touch_multi)
     if v.mouse_down == false && g_lens_touch_multi {
+        if lens_four_tap(g_lens_touch_peak, now - g_lens_touch_begin, g_lens_touch_travel) {
+            g_lens_tilt = g_lens_touch_begin_tilt
+            lens_ui_toggle()
+        }
         g_lens_touch_multi = false
         g_lens_multi_end = now
     }
@@ -154,13 +179,22 @@ fn lens_touch_tilt_step(count: i32, center_y: f64, rebase: bool) {
 fn lens_touch_event(phase: i32, id: i32, x: f64, y: f64, now: f64) bool {
     if phase == VIEW_INPUT_PHASE_BEGAN && g_lens_touch_count == 0 {
         lens_tap_begin(x, y, now)
+        g_lens_touch_peak = 0
+        g_lens_touch_begin = now
+        g_lens_touch_begin_tilt = g_lens_tilt
+        g_lens_touch_travel = 0.0
         if g_lens_multi_end >= 0.0 && now - g_lens_multi_end < LENS_TAP_AFTER_MULTI {
             g_lens_tap_moved = true
         }
     }
     let changed = lens_touch_apply(phase, id, x, y)
+    if g_lens_touch_count > g_lens_touch_peak { g_lens_touch_peak = g_lens_touch_count }
     if g_lens_touch_count >= 2 { lens_touch_multi_begin() }
     return changed
+}
+
+fn lens_four_tap(peak: i32, held: f64, travel: f64) bool {
+    return peak >= 4 && held <= LENS_FOUR_TAP_TIME && travel <= LENS_FOUR_TAP_SLOP
 }
 
 fn lens_touch_multi_begin() {

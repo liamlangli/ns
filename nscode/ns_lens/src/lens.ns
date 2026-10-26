@@ -1094,6 +1094,9 @@ let g_lens_empty_recent_poll: f64 = 0.0
 // recent projects listed below it; the button and Cmd+O pick a folder, a row
 // maps that project. A folder that failed to open says so below the button.
 fn lens_render_empty(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    // Hidden controls belong to a map; the empty window always shows its own.
+    g_lens_ui_hidden = false
+    g_render_settings_block = false
     g_lens_view_w = w
     g_lens_canvas_h = h
     lens_menu_mouse(v, w, h)
@@ -1270,12 +1273,21 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     // The surface, not the safe rect: the notch, home indicator and rounded
     // corners show the map's background rather than the clear colour.
     ui_fill_surface(r, col_editor_bg())
+    lens_ui_keys(v)
+    render_settings_keys(v)
     lens_menu_keys(v)
-    lens_menu_mouse(v, w, h)
-    lens_mode_handle(v, w)
+    lens_ui_reveal()
+    // With the controls hidden (lens_ui_toggle) the map is all there is: it
+    // takes the whole window, and no hidden control takes the pointer.
+    let shown = lens_ui_shown()
+    if shown {
+        lens_menu_mouse(v, w, h)
+        lens_mode_handle(v, w)
+        render_settings_mouse(v)
+    }
     // Floating panels take pointer input before the map. The terminal is drawn
     // above the outline, so it also wins when their rectangles overlap.
-    if lens_menu_blocks() == false {
+    if shown && lens_menu_blocks() == false {
         terminal_mouse(v, w, h)
         outline_mouse(v, w, h)
         // The history panels sit under the outline and the terminal.
@@ -1283,14 +1295,21 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
             lens_history_mouse(v, w, h)
         }
     }
-    view_set_cursor(v, lens_pointer_cursor(v))
+    if shown {
+        view_set_cursor(v, lens_pointer_cursor(v))
+    } else {
+        view_set_cursor(v, VIEW_CURSOR_ARROW)
+    }
     if g_lens_view_mode == LENS_MODE_REF { lens_ref_tick() }
     // The map is laid out flat and seen through the plane camera: every map
     // interaction runs on the flat plane, under the unprojected pointer.
     let screen_x = g_mouse_x
     let screen_y = g_mouse_y
-    let over_panel = outline_blocks_pointer(v) || terminal_blocks_pointer(v) || lens_history_blocks_pointer(v, w)
-    let over_map = g_lens_mode_block == false && lens_menu_blocks() == false && over_panel == false && !lens_ref_depth_hit(v, w) && hit(v, 0.0, bar_bottom, map_w, h - STATUS_BAR_H - bar_bottom)
+    let over_map = hit(v, 0.0, 0.0, map_w, h)
+    if shown {
+        let over_panel = outline_blocks_pointer(v) || terminal_blocks_pointer(v) || lens_history_blocks_pointer(v, w)
+        over_map = g_lens_mode_block == false && lens_menu_blocks() == false && over_panel == false && !lens_ref_depth_hit(v, w) && hit(v, 0.0, bar_bottom, map_w, h - STATUS_BAR_H - bar_bottom)
+    }
     if over_map && v.mouse_middle_down {
         lens_tilt_by(screen_y - g_lens_screen_drag_y)
     }
@@ -1347,7 +1366,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     g_code_view_y0 = vy0
     g_code_view_y1 = vy1
     if g_lens_plane_tilt != 0.0 {
+        render_settings_plane_focus(r)
         ui_begin_plane(r, g_lens_plane_cx, g_lens_plane_cy, g_lens_plane_tilt, g_lens_plane_focal, 0.0, top, w, body_h)
+        ui_set_plane_focus(r, 0.0, 0.0, 0.0)
     }
     ui_push_clip(r, vx0, vy0, vx1 - vx0, vy1 - vy0)
     lens_draw_grid(r, w, top, body_h)
@@ -1557,6 +1578,34 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     ui_end_plane(r)
     g_mouse_x = screen_x
     g_mouse_y = screen_y
+    if shown {
+        lens_draw_controls(r, v, w, h, top, body_h, code_ready, code_total, bars_ready, bars_total)
+    }
+    if g_workspace_count >= 4096 {
+        g_lens_message = "Filesystem snapshot limit reached: 4096 entries"
+    }
+
+    lens_warm_cache()
+    if moving || lens_animating() {
+        // The display paces a moving camera and every animation (progress
+        // bars, the caret fade). A timer started after the frame would add
+        // its delay to the frame's own cost.
+        g_lens_frame_delay = 0
+    } else if g_lens_input_dirty {
+        // A panel action or terminal chunk changed what this frame should show.
+        g_lens_input_dirty = false
+        g_lens_frame_delay = 1
+    } else if read_budget == 0 || g_lens_io_running || g_lens_change_running || lens_history_busy() || g_lens_close_view {
+        g_lens_frame_delay = 16
+    } else {
+        // Idle polling keeps file watching alive without drawing 60 empty frames.
+        g_lens_frame_delay = LENS_IDLE_POLL_MS
+    }
+}
+
+// Everything drawn over the map: the bars, notes, panels and menus. None of it
+// shows while the controls are hidden.
+fn lens_draw_controls(r: ref ui_renderer, v: ref view, w: f64, h: f64, top: f64, body_h: f64, code_ready: i32, code_total: i32, bars_ready: i32, bars_total: i32) {
     lens_draw_top_bar(r, top)
     if lens_history_active() {
         lens_history_note(r, w, top, body_h)
@@ -1574,9 +1623,6 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
             subject = g_lens_scope_path
         }
         draw_centered_text(r, 0.0, top, w, body_h, note + subject + "  ·  File > Open (cmd+O)", small_px(), col_muted())
-    }
-    if g_workspace_count >= 4096 {
-        g_lens_message = "Filesystem snapshot limit reached: 4096 entries"
     }
     if g_lens_reading && g_lens_selected >= 0 && g_lens_editing == false {
         if hit(v, w - 160.0, h - 68.0, 70.0, 28.0) && v.mouse_pressed {
@@ -1604,23 +1650,6 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     terminal_draw(r, v, w, h)
     lens_draw_mode_menu(r, v, w)
     lens_draw_menus(r, v, w, h)
-
-    lens_warm_cache()
-    if moving || lens_animating() {
-        // The display paces a moving camera and every animation (progress
-        // bars, the caret fade). A timer started after the frame would add
-        // its delay to the frame's own cost.
-        g_lens_frame_delay = 0
-    } else if g_lens_input_dirty {
-        // A panel action or terminal chunk changed what this frame should show.
-        g_lens_input_dirty = false
-        g_lens_frame_delay = 1
-    } else if read_budget == 0 || g_lens_io_running || g_lens_change_running || lens_history_busy() || g_lens_close_view {
-        g_lens_frame_delay = 16
-    } else {
-        // Idle polling keeps file watching alive without drawing 60 empty frames.
-        g_lens_frame_delay = LENS_IDLE_POLL_MS
-    }
 }
 
 let g_lens_last_time: f64 = 0.0

@@ -1,0 +1,303 @@
+// View > Render Settings: a small floating panel under the top bar with the
+// tilted map's depth of field (on/off, blur, the sharp band around the middle
+// and how far defocused code fades) and the tilt itself. The values are kept
+// with the window state (panel_state.ns).
+//
+// `~` (a four-finger tap on a phone) hides every control but the map and shows
+// them again. That state is never saved: a fresh launch always shows the
+// controls, so nobody who missed the shortcut is left without them.
+use std
+use view
+use ui
+
+lit RENDER_PANEL_W = 270.0
+lit RENDER_ROW_H = 26.0
+// Title, depth of field, blur, focus band, fade, tilt, then reset.
+lit RENDER_ROWS = 7
+lit RENDER_ROW_DOF = 1
+lit RENDER_ROW_BLUR = 2
+lit RENDER_ROW_BAND = 3
+lit RENDER_ROW_FADE = 4
+lit RENDER_ROW_TILT = 5
+lit RENDER_ROW_RESET = 6
+lit RENDER_LABEL_W = 92.0
+lit RENDER_VALUE_W = 52.0
+lit RENDER_BLUR_MAX = 16.0
+lit RENDER_BAND_MAX = 0.6
+// Defaults: a few points of blur, the middle sixth of the depth range kept
+// sharp, and defocused code faded part way into the map.
+lit RENDER_DOF_DEFAULT = true
+lit RENDER_BLUR_DEFAULT = 6.0
+lit RENDER_BAND_DEFAULT = 0.15
+lit RENDER_FADE_DEFAULT = 0.4
+
+let g_render_settings_open = false
+// The pointer is over the panel, or a slider is held: the map takes no input.
+let g_render_settings_block = false
+// The row whose slider the pointer is dragging, -1 for none.
+let g_render_drag: i32 = -1
+let g_render_dof = RENDER_DOF_DEFAULT
+// Blur in points at the far and near edges of the tilted map.
+let g_render_blur: f64 = RENDER_BLUR_DEFAULT
+// Share of the depth range around the middle of the map that stays sharp.
+let g_render_band: f64 = RENDER_BAND_DEFAULT
+// How much of its alpha the most defocused code loses, 0..1.
+let g_render_fade: f64 = RENDER_FADE_DEFAULT
+// Every control but the map is hidden. Deliberately not persisted.
+let g_lens_ui_hidden = false
+
+fn render_settings_toggle() {
+    g_render_settings_open = g_render_settings_open == false
+    g_render_drag = -1
+}
+
+fn render_settings_reset() {
+    g_render_dof = RENDER_DOF_DEFAULT
+    g_render_blur = RENDER_BLUR_DEFAULT
+    g_render_band = RENDER_BAND_DEFAULT
+    g_render_fade = RENDER_FADE_DEFAULT
+}
+
+fn render_settings_x() f64 { return LENS_VIEW_X }
+
+fn render_settings_y() f64 { return lens_mode_popup_y() }
+
+fn render_settings_width() f64 { return lens_dialog_width(RENDER_PANEL_W) }
+
+fn render_settings_h() f64 { return RENDER_ROW_H * (RENDER_ROWS as f64) }
+
+fn render_row_y(row: i32) f64 { return render_settings_y() + (row as f64) * RENDER_ROW_H }
+
+fn render_track_x() f64 { return render_settings_x() + 10.0 + RENDER_LABEL_W }
+
+fn render_track_w() f64 { return render_settings_width() - 20.0 - RENDER_LABEL_W - RENDER_VALUE_W }
+
+fn render_row_label(row: i32) str {
+    if row == RENDER_ROW_DOF { return "Depth of field" }
+    if row == RENDER_ROW_BLUR { return "Blur" }
+    if row == RENDER_ROW_BAND { return "Focus band" }
+    if row == RENDER_ROW_FADE { return "Fade" }
+    if row == RENDER_ROW_TILT { return "Tilt" }
+    return ""
+}
+
+// A slider row's value as a 0..1 position along its track.
+fn render_slider_get(row: i32) f64 {
+    if row == RENDER_ROW_BLUR { return g_render_blur / RENDER_BLUR_MAX }
+    if row == RENDER_ROW_BAND { return g_render_band / RENDER_BAND_MAX }
+    if row == RENDER_ROW_FADE { return g_render_fade }
+    return (g_lens_tilt + LENS_MAX_TILT) / (LENS_MAX_TILT * 2.0)
+}
+
+fn render_slider_set(row: i32, t: f64) {
+    let at = clamp(t, 0.0, 1.0)
+    if row == RENDER_ROW_BLUR {
+        g_render_blur = at * RENDER_BLUR_MAX
+    } else if row == RENDER_ROW_BAND {
+        g_render_band = at * RENDER_BAND_MAX
+    } else if row == RENDER_ROW_FADE {
+        g_render_fade = at
+    } else if row == RENDER_ROW_TILT {
+        g_lens_tilt = at * LENS_MAX_TILT * 2.0 - LENS_MAX_TILT
+    }
+}
+
+fn render_slider_text(row: i32) str {
+    if row == RENDER_ROW_BLUR { return itos((g_render_blur + 0.5) as i32) + " pt" }
+    if row == RENDER_ROW_BAND { return itos((g_render_band * 100.0 + 0.5) as i32) + "%" }
+    if row == RENDER_ROW_FADE { return itos((g_render_fade * 100.0 + 0.5) as i32) + "%" }
+    let sign = ""
+    let deg = g_lens_tilt
+    if deg < 0.0 {
+        sign = "-"
+        deg = 0.0 - deg
+    }
+    return sign + itos((deg + 0.5) as i32) + " deg"
+}
+
+fn render_row_slider(row: i32) bool {
+    return row >= RENDER_ROW_BLUR && row <= RENDER_ROW_TILT
+}
+
+// The panel row under the pointer, -1 off the panel.
+fn render_row_at(v: ref view) i32 {
+    if raw_hit(v, render_settings_x(), render_settings_y(), render_settings_width(), render_settings_h()) == false {
+        return -1
+    }
+    return clamp_i(((g_mouse_y - render_settings_y()) / RENDER_ROW_H) as i32, 0, RENDER_ROWS - 1)
+}
+
+// Pointer input for the open panel, after the menus took theirs: a press on a
+// slider's row jumps its knob there and drags it until release, the depth of
+// field row toggles, Reset restores the defaults and the title's x closes.
+fn render_settings_mouse(v: ref view) {
+    g_render_settings_block = false
+    if g_render_settings_open == false || g_lens_ui_hidden {
+        g_render_drag = -1
+        return
+    }
+    if g_render_drag >= 0 {
+        if v.mouse_down {
+            render_slider_set(g_render_drag, (g_mouse_x - render_track_x()) / render_track_w())
+            g_render_settings_block = true
+            g_lens_input_dirty = true
+            return
+        }
+        g_render_drag = -1
+        panel_state_save()
+    }
+    let row = render_row_at(v)
+    if row < 0 {
+        return
+    }
+    g_render_settings_block = true
+    if v.mouse_pressed == false {
+        return
+    }
+    v.mouse_pressed = false
+    g_lens_input_dirty = true
+    if row == 0 {
+        if g_mouse_x >= render_settings_x() + render_settings_width() - RENDER_ROW_H {
+            render_settings_toggle()
+        }
+    } else if row == RENDER_ROW_DOF {
+        g_render_dof = g_render_dof == false
+        panel_state_save()
+    } else if row == RENDER_ROW_RESET {
+        if g_mouse_x < render_settings_x() + 10.0 + RENDER_LABEL_W {
+            render_settings_reset()
+            panel_state_save()
+        }
+    } else if render_row_slider(row) {
+        g_render_drag = row
+        render_slider_set(row, (g_mouse_x - render_track_x()) / render_track_w())
+    }
+}
+
+fn render_settings_keys(v: ref view) {
+    if g_render_settings_open && key_edge(v, 256) {
+        render_settings_toggle()
+    }
+}
+
+fn render_settings_draw(r: ref ui_renderer, v: ref view) {
+    if g_render_settings_open == false {
+        return
+    }
+    let x = render_settings_x()
+    let w = render_settings_width()
+    lens_draw_menu_popup(r, x, render_settings_y(), w, render_settings_h())
+    for row in 0 to RENDER_ROWS {
+        let y = render_row_y(row)
+        let ty = ui_text_v_center_y(r, y, RENDER_ROW_H, small_px(), FONT_MONO())
+        if row == 0 {
+            draw_text_clipped(r, x + 10.0, ty, w - 40.0, RENDER_ROW_H, "Render Settings", small_px(), col_text())
+            let close = col_muted()
+            if raw_hit(v, x + w - RENDER_ROW_H, y, RENDER_ROW_H, RENDER_ROW_H) { close = col_accent() }
+            draw_centered_text(r, x + w - RENDER_ROW_H, y, RENDER_ROW_H, RENDER_ROW_H, "x", small_px(), close)
+        } else if row == RENDER_ROW_DOF {
+            if raw_hit(v, x, y, w, RENDER_ROW_H) { lens_draw_menu_row_hi(r, x, y, w) }
+            draw_text_clipped(r, x + 10.0, ty, w - 70.0, RENDER_ROW_H, render_row_label(row), small_px(), col_text())
+            let state = "off"
+            let color = col_muted()
+            if g_render_dof {
+                state = "on"
+                color = col_accent()
+            }
+            let sw = ui_text_width(r, state, small_px(), FONT_MONO())
+            draw_text_clipped(r, x + w - 10.0 - sw, ty, sw, RENDER_ROW_H, state, small_px(), color)
+        } else if row == RENDER_ROW_RESET {
+            lens_draw_button(r, v, x + 10.0, y + 3.0, RENDER_LABEL_W - 12.0, RENDER_ROW_H - 6.0, "Reset", false)
+            let hint = "~ hides the ui"
+            if lens_mobile() { hint = "4-finger tap hides the ui" }
+            draw_text_clipped(r, render_track_x(), ty, w - RENDER_LABEL_W - 20.0, RENDER_ROW_H, hint, small_px(), col_muted())
+        } else {
+            render_draw_slider(r, row, ty)
+        }
+    }
+}
+
+// The label, a track filled up to the knob, and the value on the right. The
+// depth of field sliders dim while it is off.
+fn render_draw_slider(r: ref ui_renderer, row: i32, ty: f64) {
+    let x = render_settings_x()
+    let y = render_row_y(row)
+    let label = col_text()
+    let fill = col_accent()
+    if row != RENDER_ROW_TILT && g_render_dof == false {
+        label = col_muted()
+        fill = col_muted()
+    }
+    draw_text_clipped(r, x + 10.0, ty, RENDER_LABEL_W - 4.0, RENDER_ROW_H, render_row_label(row), small_px(), label)
+    let tx = render_track_x()
+    let tw = render_track_w()
+    let cy = y + RENDER_ROW_H * 0.5
+    let at = clamp(render_slider_get(row), 0.0, 1.0)
+    ui_fill_round_rect(r, tx, cy - 2.0, tw, 4.0, 2.0, col_editor_panel_hi(), 0.0)
+    ui_fill_round_rect(r, tx, cy - 2.0, tw * at, 4.0, 2.0, fill, 0.0)
+    let knob = col_text()
+    if g_render_drag == row { knob = col_accent() }
+    ui_fill_circle(r, tx + tw * at, cy, 5.0, knob, 0.0)
+    let text = render_slider_text(row)
+    let vw = ui_text_width(r, text, small_px(), FONT_MONO())
+    draw_text_clipped(r, x + render_settings_width() - 10.0 - vw, ty, vw, RENDER_ROW_H, text, small_px(), col_muted())
+}
+
+// The tilted map's focus for this frame: sharp around the line it turns
+// about, which is the middle of the map, and defocused toward both ends.
+fn render_settings_plane_focus(r: ref ui_renderer) {
+    if g_render_dof && g_render_blur > 0.0 {
+        ui_set_plane_focus(r, g_render_blur, g_render_band, g_render_fade)
+    }
+}
+
+// Every control but the map is shown.
+fn lens_ui_shown() bool {
+    return g_lens_ui_hidden == false
+}
+
+// Hide or show every control but the map. Hiding closes the menus and takes
+// the keyboard from the terminal; it is refused while a dialog or prompt has
+// the keyboard, since its text would then go nowhere visible.
+fn lens_ui_toggle() {
+    g_lens_input_dirty = true
+    if g_lens_ui_hidden {
+        g_lens_ui_hidden = false
+        return
+    }
+    g_lens_file_open = false
+    g_lens_recent_open = false
+    g_lens_view_open = false
+    g_lens_mode_open = false
+    g_lens_edit_menu_open = false
+    lens_repo_menu_close()
+    g_lens_branch_open = false
+    g_terminal_focus = false
+    g_render_drag = -1
+    if lens_typing() {
+        return
+    }
+    g_lens_ui_hidden = true
+}
+
+// `~` toggles the controls. In the file being edited the key types instead,
+// except that it always brings hidden controls back.
+fn lens_ui_keys(v: ref view) {
+    if lens_typing() {
+        return
+    }
+    if g_lens_editing && g_lens_ui_hidden == false {
+        return
+    }
+    if key_edge(v, 96) {
+        lens_ui_toggle()
+    }
+}
+
+// A menu, dialog or prompt opened by a shortcut while the controls are hidden
+// shows them again, so it is never invisible.
+fn lens_ui_reveal() {
+    if g_lens_ui_hidden && (lens_typing() || g_lens_search_open || g_lens_commit_open || g_lens_branch_open || g_lens_remote_open) {
+        g_lens_ui_hidden = false
+    }
+}

@@ -1,0 +1,57 @@
+// View > Render Settings and the hidden-controls toggle: sliders map onto
+// their values, four fingers tapped together count, and hiding the controls
+// is never written to the window state.
+use std
+
+fn main() {
+    // Sliders run from their minimum at the left of the track to the maximum.
+    render_slider_set(RENDER_ROW_BLUR, 0.5)
+    assert g_render_blur == RENDER_BLUR_MAX * 0.5
+    render_slider_set(RENDER_ROW_FADE, 2.0)
+    assert g_render_fade == 1.0
+    render_slider_set(RENDER_ROW_TILT, 0.5)
+    assert g_lens_tilt == 0.0
+    assert render_slider_get(RENDER_ROW_TILT) == 0.5
+    render_slider_set(RENDER_ROW_TILT, 0.0)
+    assert g_lens_tilt == -LENS_MAX_TILT
+    assert render_slider_text(RENDER_ROW_TILT) == "-89 deg"
+    g_lens_tilt = 0.0
+    render_settings_reset()
+    assert g_render_dof && g_render_blur == RENDER_BLUR_DEFAULT && g_render_fade == RENDER_FADE_DEFAULT
+
+    // The desktop View menu reads Outline, Terminal, Render Settings.
+    assert lens_view_items() == 3
+    assert lens_view_item_label(2) == "Render Settings"
+
+    // Four quick, still fingers toggle; three, a slow hold or a swipe do not.
+    assert lens_four_tap(4, 0.2, 3.0)
+    assert lens_four_tap(5, 0.2, 3.0)
+    assert !lens_four_tap(3, 0.2, 3.0)
+    assert !lens_four_tap(4, 0.9, 3.0)
+    assert !lens_four_tap(4, 0.2, 80.0)
+
+    // Hiding closes the menus; showing again needs no other state.
+    g_lens_view_open = true
+    lens_ui_toggle()
+    assert g_lens_ui_hidden && !g_lens_view_open && !lens_ui_shown()
+    // A dialog opened while hidden brings the controls back.
+    g_lens_search_open = true
+    lens_ui_reveal()
+    assert lens_ui_shown()
+    g_lens_search_open = false
+    // The hidden state is not part of the saved view; the render values are.
+    lens_ui_toggle()
+    let saved = panel_state_view_text()
+    assert has_text(saved, "render.blur=")
+    assert !has_text(saved, "hidden")
+    lens_ui_toggle()
+    assert lens_ui_shown()
+}
+
+fn has_text(text: str, part: str) bool {
+    if part.len > text.len { return false }
+    for i in 0 to text.len - part.len + 1 {
+        if substr(text, i, part.len) == part { return true }
+    }
+    return false
+}

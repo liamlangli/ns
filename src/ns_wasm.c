@@ -2434,7 +2434,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "ui_rect_batch_create|ui_rect_batch_destroy|ui_rect_batch_begin|"
             "ui_rect_batch_add|ui_rect_batch_add_smooth|ui_rect_batch_add_text|ui_rect_batch_end|ui_rect_batch_draw|"
             "ui_rect_batch_draw_at|ui_rect_batch_draw_scaled|ui_rect_batch_vertex_count|"
-            "ui_rect_batch_draw_range|ui_begin_plane|ui_end_plane|"
+            "ui_rect_batch_draw_range|ui_begin_plane|ui_end_plane|ui_set_plane_focus|"
             // text
             "ui_draw_text|ui_draw_text_scaled|ui_draw_text_arc|ui_draw_text_wrapped|ui_draw_text_vertical|"
             "ui_text_line_height|ui_text_v_center_y|ui_text_width|ui_text_index_at_x|"
