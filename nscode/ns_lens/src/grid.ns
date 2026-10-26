@@ -64,7 +64,7 @@ fn lens_grid_build(r: ref ui_renderer, pitch: f64, fade: i32) {
 }
 
 fn lens_draw_grid(r: ref ui_renderer, w: f64, top: f64, body_h: f64) {
-    let scale = 800.0 / clamp(g_lens_distance, 1.0, LENS_DISTANCE_LIMIT)
+    let scale = 800.0 / clamp(g_lens_distance, LENS_DISTANCE_MIN, LENS_DISTANCE_LIMIT)
     let width = g_lens_view_x1 - g_lens_view_x0
     let height = g_lens_view_y1 - g_lens_view_y0
     let step = lens_grid_spacing(scale, width, height)

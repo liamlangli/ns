@@ -19,6 +19,9 @@ fn main() {
     render_settings_reset()
     assert g_render_dof && g_render_blur == RENDER_BLUR_DEFAULT && g_render_band == RENDER_BAND_DEFAULT
 
+    // The hint names the chord that hides the controls.
+    assert lens_hint_keys(8) == "cmd+\\"
+
     // The desktop View menu reads Outline, Terminal, Render Settings.
     assert lens_view_items() == 3
     assert lens_view_item_label(2) == "Render Settings"

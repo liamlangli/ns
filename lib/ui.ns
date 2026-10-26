@@ -389,10 +389,11 @@ ref fn ui_end_overlay(r: ref ui_renderer)
 // Tilted plane. Draws between ui_begin_plane and ui_end_plane are laid out on
 // the flat canvas as usual, then seen in perspective: the canvas plane turns
 // `tilt` radians about the horizontal line through (center_x, center_y), top
-// edge away from a pinhole `focal` canvas units in front of the screen. Clips
-// pushed meanwhile apply on the plane; the screen rectangle (x, y, w, h)
+// edge away from a pinhole `focal` canvas units in front of the screen. Before
+// it tilts, the canvas spins `spin` radians counterclockwise about that point.
+// Clips pushed meanwhile apply on the plane; the screen rectangle (x, y, w, h)
 // bounds what the plane covers. Up to 8 planes per frame.
-ref fn ui_begin_plane(r: ref ui_renderer, center_x: f64, center_y: f64, tilt: f64, focal: f64, x: f64, y: f64, w: f64, h: f64)
+ref fn ui_begin_plane(r: ref ui_renderer, center_x: f64, center_y: f64, tilt: f64, spin: f64, focal: f64, x: f64, y: f64, w: f64, h: f64)
 ref fn ui_end_plane(r: ref ui_renderer)
 // Depth of field for the planes begun after this call in the frame, as a
 // camera focused on the plane's pivot line sees it: no blur within `band`

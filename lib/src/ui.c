@@ -2873,12 +2873,15 @@ void ui_end_overlay(ui_renderer *r) {
 // Tilt the canvas plane away from the viewer about the horizontal line
 // through (center_x, center_y): a pinhole camera `focal` canvas units in front
 // of the screen sees the plane turned by `tilt` radians, top edge receding.
-// Everything drawn until ui_end_plane is laid out flat as usual and projected
-// on the GPU; clips stay in plane space and the screen rectangle (x, y, w, h)
-// bounds the result. A tilt of 0 is the ordinary flat canvas.
+// Before it tilts, the canvas spins `spin` radians counterclockwise about the
+// same point, so the receding direction stays the screen's vertical and the
+// depth of field keeps its per-row defocus. Everything drawn until
+// ui_end_plane is laid out flat as usual and projected on the GPU; clips stay
+// in plane space and the screen rectangle (x, y, w, h) bounds the result. A
+// tilt and spin of 0 are the ordinary flat canvas.
 void ui_pop_clip(ui_renderer *r);
 
-void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 focal,
+void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 spin, f64 focal,
                     f64 x, f64 y, f64 w, f64 h) {
     if (!r || r->plane_count >= UI_MAX_PLANES || focal <= 0.0 || r->rect.w <= 0.0 || r->rect.h <= 0.0) return;
     const f64 screen_w = r->rect.w;
@@ -2897,6 +2900,29 @@ void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 fo
     m[12] = (f32)(-ncx * k * ncy);
     m[13] = (f32)(ncy - ncy * ncy * k - c * ncy);
     m[15] = (f32)(1.0 - k * ncy);
+    if (spin != 0.0) {
+        // The spin turns NDC about the pivot in pixels, whose units differ
+        // across and down: m = tilt * spin.
+        const f64 sn = sin(spin);
+        const f64 cs = cos(spin);
+        const f64 sx = sn * screen_w / screen_h;
+        const f64 sy = sn * screen_h / screen_w;
+        const f64 spin_m[16] = {
+            cs, sx, 0.0, 0.0,
+            -sy, cs, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            ncx - cs * ncx + sy * ncy, ncy - sx * ncx - cs * ncy, 0.0, 1.0,
+        };
+        f64 tilt_m[16];
+        for (i32 i = 0; i < 16; i++) tilt_m[i] = m[i];
+        for (i32 column = 0; column < 4; column++) {
+            for (i32 row = 0; row < 4; row++) {
+                f64 sum = 0.0;
+                for (i32 j = 0; j < 4; j++) sum += tilt_m[j * 4 + row] * spin_m[column * 4 + j];
+                m[column * 4 + row] = (f32)sum;
+            }
+        }
+    }
     r->plane_scissors[r->plane_count] = (ui_clip){x + r->safe_rect.x, y + r->safe_rect.y, w, h};
     // On screen, 1 - 1/w of the plane is linear in y: tan(tilt) / focal per
     // ui unit from the pivot line. The composite pass derives each pixel's

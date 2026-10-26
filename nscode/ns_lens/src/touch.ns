@@ -21,6 +21,13 @@ let g_lens_touch_rebase = false
 // vertical drag tilts the map, and neither pans nor pinches it.
 let g_lens_touch_tilt = false
 let g_lens_touch_tilt_y: f64 = 0.0
+// A touch event arrived this frame or a finger is still held: a turn comes
+// from fingers on the screen rather than a trackpad.
+let g_lens_touch_held = false
+// The fingers' turn so far in this gesture, and whether it has passed
+// LENS_SPIN_ENGAGE and now spins the map.
+let g_lens_touch_turned: f64 = 0.0
+let g_lens_touch_spin = false
 // A one-finger tap: the finger lifted near where it landed, soon after.
 // Left drags pan the map, so on touch the tap does what a desktop right
 // click does there: focus a file or place the text cursor.
@@ -36,16 +43,26 @@ let g_lens_tap_time: f64 = 0.0
 let g_lens_tap_moved = false
 // Four fingers tapped together toggle every control but the map: the gesture
 // peaked at four or more fingers, lifted soon after the first landed, and its
-// centroid barely moved. The tilt the passing three-finger stage applied is
-// undone.
+// centroid barely moved. The tilt the passing three-finger stage applied and
+// any turn are undone.
 lit LENS_FOUR_TAP_TIME = 0.5
 lit LENS_FOUR_TAP_SLOP = 24.0
 let g_lens_touch_peak: i32 = 0
 let g_lens_touch_begin: f64 = 0.0
 let g_lens_touch_begin_tilt: f64 = 0.0
+let g_lens_touch_begin_spin: f64 = 0.0
 let g_lens_touch_travel: f64 = 0.0
 let g_lens_touch_last_x: f64 = 0.0
 let g_lens_touch_last_y: f64 = 0.0
+// A Mac trackpad's fingers. Three or more resting on it tilt the map, and the
+// left drag Accessibility's three-finger drag makes of them pans nothing until
+// the button lifts. A four-finger tap toggles the controls like four fingers on
+// a screen, undoing what the passing three-finger stage tilted.
+lit LENS_PAD_TAP_FINGERS = 4
+let g_lens_pad_many = false
+let g_lens_pad_down = false
+let g_lens_pad_begin_tilt: f64 = 0.0
+let g_lens_pad_begin_spin: f64 = 0.0
 // When the last multi-finger gesture lifted.
 let g_lens_multi_end: f64 = -1.0
 // Set on the frame a tap ends, with g_mouse_x/y at the release point.
@@ -105,10 +122,12 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
     g_lens_touch_rebase = false
     g_lens_touch_tap = false
     let now = os_time()
+    g_lens_touch_held = g_lens_touch_count > 0
     let n = view_input_count(v)
     for i in 0 to n {
         let e = view_input_at(v, i)
         if e.device == VIEW_INPUT_DEVICE_TOUCH {
+            g_lens_touch_held = true
             if lens_touch_event(e.phase, e.pointer_id, ui_content_x(r, e.x), ui_content_y(r, e.y), now) {
                 g_lens_touch_rebase = true
             }
@@ -118,8 +137,9 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
         // The view saw every finger lift; nothing can still be held.
         g_lens_touch_count = 0
     }
-    if view_gesture(v).zoom_factor != 1.0 {
-        // The system saw a pinch even if no frame held both fingers at once.
+    if view_gesture(v).zoom_factor != 1.0 || (g_lens_touch_held && view_gesture(v).rotation != 0.0) {
+        // The system saw a pinch or a turn even if no frame held both fingers
+        // at once.
         lens_touch_multi_begin()
     }
     if g_lens_touch_count > 0 {
@@ -146,6 +166,7 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
     if v.mouse_down == false && g_lens_touch_multi {
         if lens_four_tap(g_lens_touch_peak, now - g_lens_touch_begin, g_lens_touch_travel) {
             g_lens_tilt = g_lens_touch_begin_tilt
+            g_lens_spin = g_lens_touch_begin_spin
             lens_ui_toggle()
         }
         g_lens_touch_multi = false
@@ -154,6 +175,39 @@ fn lens_touch_update(r: ref ui_renderer, v: ref view) {
     if v.mouse_down == false {
         g_lens_touch_tilt = false
     }
+    let pad = view_gesture(v)
+    if lens_pad_step(pad.fingers, pad.tap_fingers, v.mouse_down) {
+        lens_ui_toggle()
+    }
+    if g_lens_pad_many {
+        // The system's drag neither presses nor clicks anything on the map.
+        v.mouse_pressed = false
+        v.mouse_released = false
+    }
+}
+
+// One frame of trackpad fingers: `fingers` resting now, `tap` the fingers of a
+// tap that ended since the last frame. True when the controls should toggle.
+fn lens_pad_step(fingers: i32, tap: i32, mouse_down: bool) bool {
+    if fingers > 0 && g_lens_pad_down == false {
+        g_lens_pad_down = true
+        g_lens_pad_begin_tilt = g_lens_tilt
+        g_lens_pad_begin_spin = g_lens_spin
+    }
+    if fingers >= 3 {
+        g_lens_pad_many = true
+    } else if mouse_down == false {
+        g_lens_pad_many = false
+    }
+    let toggle = tap >= LENS_PAD_TAP_FINGERS
+    if toggle && g_lens_pad_down {
+        g_lens_tilt = g_lens_pad_begin_tilt
+        g_lens_spin = g_lens_pad_begin_spin
+    }
+    if fingers == 0 {
+        g_lens_pad_down = false
+    }
+    return toggle
 }
 
 // Three or more fingers tilt the map by their centroid's vertical travel. A
@@ -182,6 +236,9 @@ fn lens_touch_event(phase: i32, id: i32, x: f64, y: f64, now: f64) bool {
         g_lens_touch_peak = 0
         g_lens_touch_begin = now
         g_lens_touch_begin_tilt = g_lens_tilt
+        g_lens_touch_begin_spin = g_lens_spin
+        g_lens_touch_turned = 0.0
+        g_lens_touch_spin = false
         g_lens_touch_travel = 0.0
         if g_lens_multi_end >= 0.0 && now - g_lens_multi_end < LENS_TAP_AFTER_MULTI {
             g_lens_tap_moved = true
@@ -191,6 +248,22 @@ fn lens_touch_event(phase: i32, id: i32, x: f64, y: f64, now: f64) bool {
     if g_lens_touch_count > g_lens_touch_peak { g_lens_touch_peak = g_lens_touch_count }
     if g_lens_touch_count >= 2 { lens_touch_multi_begin() }
     return changed
+}
+
+// The part of this frame's two-finger turn that spins the map. A trackpad's
+// turn spins it at once; the system has already told it from a pinch. A turn
+// on the screen is held back until the fingers have turned LENS_SPIN_ENGAGE,
+// then released whole, so the map catches up and turns with them.
+fn lens_touch_turn(turn: f64) f64 {
+    if g_lens_touch_held == false || g_lens_touch_spin {
+        return turn
+    }
+    g_lens_touch_turned = g_lens_touch_turned + turn
+    if abs(g_lens_touch_turned) < LENS_SPIN_ENGAGE {
+        return 0.0
+    }
+    g_lens_touch_spin = true
+    return g_lens_touch_turned
 }
 
 fn lens_four_tap(peak: i32, held: f64, travel: f64) bool {

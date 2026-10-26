@@ -118,14 +118,20 @@ struct view_input_event {
 // zoom from a pinch, rotation from a two-finger turn, and orbit from a
 // three-finger drag; their one and two finger travel stays with the mouse
 // position and the scroll fields. A browser fills zoom from a two-finger touch
-// pinch and from the ctrl-held wheel a trackpad pinch arrives as.
+// pinch and from the ctrl-held wheel a trackpad pinch arrives as. A macOS
+// trackpad also reports the fingers resting on it now, which persist across
+// resets, and the fingers of a tap on it: every finger lifted soon after the
+// first landed, none of them having travelled, and the system took none of it.
+// While three or more fingers rest, the trackpad scrolls nothing.
 struct view_gesture_state {
     pan_x: f64,
     pan_y: f64,
     zoom_factor: f64,
     rotation: f64,
     orbit_x: f64,
-    orbit_y: f64
+    orbit_y: f64,
+    fingers: i32,
+    tap_fingers: i32
 }
 
 // On a Wasm project this returns the generated HTML canvas's view record. The

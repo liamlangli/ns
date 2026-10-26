@@ -221,6 +221,10 @@ typedef struct view_gesture_state {
     f64 zoom_factor;
     f64 rotation;
     f64 orbit_x, orbit_y;
+    // Fingers resting on a trackpad now, and the fingers of a tap on it that
+    // ended since the last reset (0 when none). Only macOS fills them.
+    i32 fingers;
+    i32 tap_fingers;
 } view_gesture_state;
 
 typedef struct view {
@@ -376,6 +380,8 @@ void view_on_pointer_event(view *v, i32 device, i32 phase, i32 pointer_id,
 void view_on_tool_action(view *v, i32 action, f64 timestamp);
 void view_on_gesture(view *v, f64 pan_x, f64 pan_y, f64 zoom_factor, f64 rotation);
 void view_on_orbit_gesture(view *v, f64 orbit_x, f64 orbit_y);
+void view_on_trackpad_fingers(view *v, i32 fingers);
+void view_on_trackpad_tap(view *v, i32 fingers);
 i32 view_input_count(view *v);
 view_input_event *view_input_at(view *v, i32 index);
 view_gesture_state *view_gesture(view *v);

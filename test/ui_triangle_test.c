@@ -200,6 +200,44 @@ static u32 meta(i32 kind, u32 face, u32 projection) {
     return (u32)kind | (face << UI_META_FACE_SHIFT) | (projection << UI_META_PROJECTION_SHIFT);
 }
 
+// Screen point of the plane point (x, y) through plane `index`'s matrix.
+static void plane_screen(ui_renderer *r, i32 index, f64 x, f64 y, f64 *sx, f64 *sy) {
+    const f32 *m = r->planes[index];
+    const f64 nx = 2.0 * x / r->rect.w - 1.0;
+    const f64 ny = 1.0 - 2.0 * y / r->rect.h;
+    const f64 cx = m[0] * nx + m[4] * ny + m[12];
+    const f64 cy = m[1] * nx + m[5] * ny + m[13];
+    const f64 cw = m[3] * nx + m[7] * ny + m[15];
+    *sx = (cx / cw + 1.0) * 0.5 * r->rect.w;
+    *sy = (1.0 - cy / cw) * 0.5 * r->rect.h;
+}
+
+// A spin turns the plane counterclockwise about its pivot in pixels, the
+// screen's aspect notwithstanding, and before the tilt: the pivot row stays
+// at depth 1 and points above it still recede.
+static void test_plane_spin(void) {
+    ui_renderer *r = calloc(1, sizeof(*r));
+    assert(r);
+    r->rect = r->safe_rect = (ui_rect){0, 0, 200, 100};
+    ui_begin_frame(r);
+    ui_begin_plane(r, 100, 50, 0.0, M_PI / 2, 400, 0, 0, 200, 100);
+    ui_end_plane(r);
+    f64 sx = 0.0, sy = 0.0;
+    plane_screen(r, 0, 130, 50, &sx, &sy);
+    assert(fabs(sx - 100.0) < 1e-3 && fabs(sy - 20.0) < 1e-3);
+    plane_screen(r, 0, 100, 60, &sx, &sy);
+    assert(fabs(sx - 110.0) < 1e-3 && fabs(sy - 50.0) < 1e-3);
+    ui_begin_plane(r, 100, 50, 0.4, M_PI / 2, 400, 0, 0, 200, 100);
+    ui_end_plane(r);
+    // Right of the pivot spins up the screen, where the tilt pushes it away.
+    plane_screen(r, 1, 130, 50, &sx, &sy);
+    assert(fabs(sx - 100.0) < 1e-3 && sy > 20.0 && sy < 50.0);
+    // Below the pivot spins onto the pivot row, which the tilt leaves alone.
+    plane_screen(r, 1, 100, 60, &sx, &sy);
+    assert(fabs(sx - 110.0) < 1e-3 && fabs(sy - 50.0) < 1e-3);
+    free(r);
+}
+
 // Rectangles, arcs, an image under a clip, a tilted plane and a screen
 // overlay recorded in one frame are one draw, and every vertex carries the
 // kind, MSDF face and projection the one shader needs; solid shapes sample
@@ -216,7 +254,7 @@ static void test_one_draw(void) {
     r->current_texture_id = 3;
     ui_push_quad_ex(r, 0, 0, 10, 10, 0, 0, 1, 1, 0xffffffffu, UI_KIND_IMAGE, 0, 0, 0);
     ui_pop_clip(r);
-    ui_begin_plane(r, 100, 50, 0.3, 400, 0, 0, 200, 100);
+    ui_begin_plane(r, 100, 50, 0.3, 0.0, 400, 0, 0, 200, 100);
     ui_fill_rect(r, 20, 20, 10, 10, 0xffffffffu, 0.0);
     ui_end_plane(r);
     ui_begin_overlay(r);
@@ -451,6 +489,7 @@ static void test_preview(void) {
 
 int main(void) {
     test_preview();
+    test_plane_spin();
     test_mixed_faces_share_a_middle();
     test_batch_gpu_pressure();
     test_one_draw();

@@ -917,7 +917,7 @@ fn lens_history_nearest(mx: f64, my: f64, w: f64, top: f64, body_h: f64) f64 {
 }
 
 fn lens_history_project(f: i32, w: f64, top: f64, body_h: f64) lens_leaf_rect {
-    let scale: f64 = 800.0 / clamp(g_lens_distance, 0.001, LENS_DISTANCE_LIMIT)
+    let scale: f64 = 800.0 / clamp(g_lens_distance, LENS_DISTANCE_MIN, LENS_DISTANCE_LIMIT)
     let px: f64 = w * 0.5 + (g_lens_history_x[f] - g_lens_center_x) * scale
     let py: f64 = top + body_h * 0.5 + (g_lens_history_y[f] - g_lens_center_y) * scale
     return lens_leaf_rect(px, py, g_lens_history_w[f] * scale, g_lens_history_h[f] * scale, g_lens_distance, scale, scale)
@@ -966,7 +966,7 @@ fn lens_history_draw_map(r: ref ui_renderer, v: ref view, w: f64, top: f64, body
             stroke = 2.0
         }
         lens_leaf_frame(r, leaf, vx0, vy0, vx1, vy1, stroke, border)
-        let row_px = g_lens_history_fit[f] * leaf.scale * lens_depth_gain(clamp(leaf.y + leaf.h * 0.5, vy0, vy1))
+        let row_px = g_lens_history_fit[f] * leaf.scale * lens_depth_gain(clamp(leaf.x + leaf.w * 0.5, vx0, vx1), clamp(leaf.y + leaf.h * 0.5, vy0, vy1))
         let state = g_lens_history_state[f]
         let inner = lens_leaf_code_clip(leaf, vx0, vy0, vx1, vy1, stroke)
         ui_push_clip(r, inner.x, inner.y, inner.w, inner.h)

@@ -75,6 +75,44 @@ fn main() {
     assert g_lens_tilt == -20.0
     g_lens_touch_tilt = false
     g_lens_tilt = 0.0
+    // A trackpad's turn spins the map at once. Fingers on the screen spin
+    // it only past LENS_SPIN_ENGAGE, then with the whole turn so far.
+    g_lens_touch_held = false
+    assert lens_touch_turn(0.0625) == 0.0625
+    g_lens_touch_held = true
+    g_lens_touch_turned = 0.0
+    g_lens_touch_spin = false
+    assert lens_touch_turn(0.125) == 0.0
+    assert lens_touch_turn(-0.0625) == 0.0
+    assert lens_touch_turn(0.125) == 0.1875
+    assert g_lens_touch_spin
+    assert lens_touch_turn(-0.0625) == -0.0625
+    g_lens_touch_held = false
+    g_lens_touch_turned = 0.0
+    g_lens_touch_spin = false
+    // Three trackpad fingers hold off the left drag until the button lifts.
+    // A four-finger tap toggles and undoes the tilt it passed through; a
+    // smaller tap does not.
+    g_lens_tilt = 0.0
+    g_lens_spin = 0.0
+    assert !lens_pad_step(3, 0, true)
+    assert g_lens_pad_many
+    g_lens_tilt = 12.0
+    assert !lens_pad_step(0, 0, true)
+    assert g_lens_pad_many
+    assert !lens_pad_step(0, 0, false)
+    assert !g_lens_pad_many
+    assert !lens_pad_step(4, 0, false)
+    g_lens_tilt = 20.0
+    assert lens_pad_step(0, 4, false)
+    assert g_lens_tilt == 12.0
+    assert !lens_pad_step(0, 3, false)
+    // A tap over between two frames changes nothing it must undo.
+    g_lens_tilt = 7.0
+    assert lens_pad_step(0, 4, false)
+    assert g_lens_tilt == 7.0
+    g_lens_tilt = 0.0
+
     // Only a tap on the code brings the folded keyboard back.
     g_mobile_keyboard_hidden = true
     g_lens_touch_tap = false

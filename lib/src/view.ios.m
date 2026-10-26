@@ -294,8 +294,10 @@ static void view_ios_pinch(UIPinchGestureRecognizer *gesture) {
     gesture.scale = 1.0;
 }
 
+// UIKit turns clockwise for a positive rotation, its y axis pointing down; the
+// gesture state is counterclockwise positive, as AppKit reports it.
 static void view_ios_rotate(UIRotationGestureRecognizer *gesture) {
-    view_on_gesture(&view_ios_state, 0.0, 0.0, 1.0, gesture.rotation);
+    view_on_gesture(&view_ios_state, 0.0, 0.0, 1.0, -gesture.rotation);
     gesture.rotation = 0.0;
 }
 

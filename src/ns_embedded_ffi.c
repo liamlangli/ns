@@ -118,7 +118,7 @@ extern void ui_set_panel(void *, void *, f64, f64, f64, f64, f64, f64, f64, f64,
 extern void ui_clear_panel(void *);
 extern void ui_begin_overlay(void *);
 extern void ui_end_overlay(void *);
-extern void ui_begin_plane(void *, f64, f64, f64, f64, f64, f64, f64, f64);
+extern void ui_begin_plane(void *, f64, f64, f64, f64, f64, f64, f64, f64, f64);
 extern void ui_end_plane(void *);
 extern void ui_set_plane_focus(void *, f64, f64);
 extern void * ui_panel_touch_update(void *, i32, ns_bool, f64, f64, f64);
@@ -1472,7 +1472,7 @@ static ns_return_bool ns_embedded_sig136(ns_vm *vm, void *target) {
 }
 
 static ns_return_bool ns_embedded_sig137(ns_vm *vm, void *target) {
-    ((void (*)(void *, f64, f64, f64, f64, f64, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 6)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 7)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 8)));
+    ((void (*)(void *, f64, f64, f64, f64, f64, f64, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 6)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 7)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 8)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 9)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
@@ -2513,7 +2513,7 @@ static u64 ns_embedded_cpu136(void *target, const u64 *a) {
 }
 
 static u64 ns_embedded_cpu137(void *target, const u64 *a) {
-    ((void (*)(void *, f64, f64, f64, f64, f64, f64, f64, f64))target)((void *)(uintptr_t)a[0], ns_cpu_shim_f64(a[1]), ns_cpu_shim_f64(a[2]), ns_cpu_shim_f64(a[3]), ns_cpu_shim_f64(a[4]), ns_cpu_shim_f64(a[5]), ns_cpu_shim_f64(a[6]), ns_cpu_shim_f64(a[7]), ns_cpu_shim_f64(a[8]));
+    ((void (*)(void *, f64, f64, f64, f64, f64, f64, f64, f64, f64))target)((void *)(uintptr_t)a[0], ns_cpu_shim_f64(a[1]), ns_cpu_shim_f64(a[2]), ns_cpu_shim_f64(a[3]), ns_cpu_shim_f64(a[4]), ns_cpu_shim_f64(a[5]), ns_cpu_shim_f64(a[6]), ns_cpu_shim_f64(a[7]), ns_cpu_shim_f64(a[8]), ns_cpu_shim_f64(a[9]));
     return 0;
 }
 

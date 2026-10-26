@@ -193,6 +193,18 @@ void view_on_orbit_gesture(view *v, f64 orbit_x, f64 orbit_y) {
     view_request_frame(v, 1);
 }
 
+void view_on_trackpad_fingers(view *v, i32 fingers) {
+    if (!v || fingers == view_gestures.fingers) return;
+    view_gestures.fingers = fingers < 0 ? 0 : fingers;
+    view_request_frame(v, 1);
+}
+
+void view_on_trackpad_tap(view *v, i32 fingers) {
+    if (!v || fingers <= 0) return;
+    view_gestures.tap_fingers = fingers;
+    view_request_frame(v, 1);
+}
+
 i32 view_input_count(view *v) {
     return v ? view_event_count : 0;
 }
@@ -214,7 +226,8 @@ ns_bool view_input_pending(view *v) {
         v->mouse_middle_pressed || v->mouse_middle_released ||
         view_gestures.pan_x != 0.0 || view_gestures.pan_y != 0.0 ||
         view_gestures.zoom_factor != 1.0 || view_gestures.rotation != 0.0 ||
-        view_gestures.orbit_x != 0.0 || view_gestures.orbit_y != 0.0) return true;
+        view_gestures.orbit_x != 0.0 || view_gestures.orbit_y != 0.0 ||
+        view_gestures.tap_fingers != 0) return true;
     for (i32 key = 0; key <= VIEW_KEY_MENU; key++) {
         if (view_key_presses[key] != 0) return true;
     }
@@ -237,7 +250,8 @@ void view_input_reset(view *v) {
     v->scroll_x = 0.0;
     v->scroll_y = 0.0;
     view_event_count = 0;
-    view_gestures = (view_gesture_state){.zoom_factor = 1.0};
+    // The resting fingers are state, not travel since the last frame.
+    view_gestures = (view_gesture_state){.zoom_factor = 1.0, .fingers = view_gestures.fingers};
     view_text_len = 0;
     if (view_text) view_text[0] = 0;
     view_clear_key_presses(v);

@@ -240,7 +240,7 @@ fn lens_hint_keys(i: i32) str {
     if i == 6 { return lens_file_item_keys(LENS_FILE_SEARCH) }
     if i == 7 { return lens_file_item_keys(LENS_FILE_COMMIT) }
     if lens_mobile() { return "4-finger tap" }
-    return "~"
+    return "cmd+\\"
 }
 
 fn lens_hint_action(i: i32) str {

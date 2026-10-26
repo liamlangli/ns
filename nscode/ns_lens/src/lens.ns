@@ -16,7 +16,10 @@ lit LENS_CACHE_SLOTS = 48
 // metrics at zoom 1) and drawn scaled by the camera. The zoom picks one of
 // two forms: glyphs or persistent minimap bars; close enough, the resident
 // file becomes the editor at the same scale.
-lit LENS_MAX_ZOOM = 2.5
+lit LENS_MAX_ZOOM = 50.0
+// The camera distance's range. A large project's code sits small in the
+// map, so its closest zoom reaches well under one unit.
+lit LENS_DISTANCE_MIN = 0.001
 lit LENS_DISTANCE_LIMIT = 1000000000.0
 // Wheel zoom per scroll unit: fast with the camera down at the code, slow
 // high above the map, easing between with the square root of the distance.
@@ -24,6 +27,16 @@ lit LENS_WHEEL_NEAR = 0.05
 lit LENS_WHEEL_FAR = 0.012
 lit LENS_ORTHO_SNAP = 5.0
 lit LENS_MAX_TILT = 89.0
+// A touch turn spins the map only once the fingers have turned this many
+// radians, so a pinch or a two-finger drag does not twist it. A turned map
+// released within LENS_SPIN_SNAP (5 degrees) of upright settles there.
+lit LENS_SPIN_ENGAGE = 0.17
+lit LENS_SPIN_SNAP = 0.08726646259971647
+// A trackpad gesture arrives as deltas with no end. A turn or a three-finger
+// tilt counts as held until none has arrived for this many seconds; only
+// then does a map near level or upright settle.
+lit LENS_PAD_HOLD = 0.3
+lit LENS_PI = 3.141592653589793
 lit LENS_EDIT_ZOOM = 0.5
 lit LENS_GLYPH_ZOOM: f64 = 0.18
 // On a tilted plane the far edge compresses many lines into a few screen
@@ -173,12 +186,20 @@ let g_lens_target_y: f64 = 0.0
 // plane in perspective.
 let g_lens_tilt: f64 = 0.0
 let g_lens_screen_drag_y: f64 = 0.0
+// Map spin in radians, counterclockwise on screen: the flat map turns about
+// the plane's pivot before it tilts, so the tilt always recedes up the screen.
+let g_lens_spin: f64 = 0.0
+// When the trackpad last reported a three-finger drag and a turn.
+let g_lens_pad_tilt_time: f64 = -1.0
+let g_lens_pad_spin_time: f64 = -1.0
 // Plane camera for this frame: the pivot, the pinhole distance, the tilt in
 // radians, and the part of the flat map the screen can see.
 let g_lens_plane_cx: f64 = 0.0
 let g_lens_plane_cy: f64 = 0.0
 let g_lens_plane_focal: f64 = 1.0
 let g_lens_plane_tilt: f64 = 0.0
+let g_lens_plane_sin: f64 = 0.0
+let g_lens_plane_cos: f64 = 1.0
 let g_lens_view_x0: f64 = 0.0
 let g_lens_view_y0: f64 = 0.0
 let g_lens_view_x1: f64 = 0.0
@@ -1310,10 +1331,21 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         let over_panel = outline_blocks_pointer(v) || terminal_blocks_pointer(v) || lens_history_blocks_pointer(v, w)
         over_map = g_lens_mode_block == false && lens_menu_blocks() == false && over_panel == false && !lens_ref_depth_hit(v, w) && hit(v, 0.0, bar_bottom, map_w, h - STATUS_BAR_H - bar_bottom)
     }
+    let now = os_time()
     if over_map && v.mouse_middle_down {
         lens_tilt_by(screen_y - g_lens_screen_drag_y)
     }
-    if v.mouse_middle_down == false && g_lens_touch_tilt == false && abs(g_lens_tilt) < LENS_ORTHO_SNAP {
+    // A trackpad has no touches of its own: its three-finger drag arrives as
+    // the orbit gesture, travel in points with down positive, and tilts the
+    // map like three fingers on a screen. A touch screen's one-finger drag
+    // fills the orbit too, so it counts only while no finger is on the screen.
+    let orbit_y = view_gesture(v).orbit_y
+    if over_map && g_lens_touch_held == false && orbit_y != 0.0 {
+        lens_tilt_by(orbit_y)
+        g_lens_pad_tilt_time = now
+    }
+    let pad_tilt = lens_pad_held(g_lens_pad_tilt_time, now)
+    if v.mouse_middle_down == false && g_lens_touch_tilt == false && pad_tilt == false && abs(g_lens_tilt) < LENS_ORTHO_SNAP {
         g_lens_tilt = 0.0
     }
     g_lens_screen_drag_y = screen_y
@@ -1322,6 +1354,14 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     g_mouse_x = g_lens_plane_x
     g_mouse_y = g_lens_plane_y
     lens_touch_tap_click(v, over_map)
+    let turn = view_gesture(v).rotation
+    if over_map && g_lens_touch_tilt == false && pad_tilt == false {
+        lens_spin_at(g_mouse_x, g_mouse_y, lens_touch_turn(turn))
+    }
+    if turn != 0.0 && g_lens_touch_held == false {
+        g_lens_pad_spin_time = now
+    }
+    lens_spin_settle(g_lens_touch_held || lens_pad_held(g_lens_pad_spin_time, now))
     if over_map {
         if shift_down(v) == false && v.scroll_y != 0.0 {
             lens_zoom_at(g_mouse_x, g_mouse_y, w, top, body_h, v.scroll_y)
@@ -1365,9 +1405,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     g_code_view_x1 = vx1
     g_code_view_y0 = vy0
     g_code_view_y1 = vy1
-    if g_lens_plane_tilt != 0.0 {
+    if g_lens_plane_tilt != 0.0 || g_lens_spin != 0.0 {
         render_settings_plane_focus(r)
-        ui_begin_plane(r, g_lens_plane_cx, g_lens_plane_cy, g_lens_plane_tilt, g_lens_plane_focal, 0.0, top, w, body_h)
+        ui_begin_plane(r, g_lens_plane_cx, g_lens_plane_cy, g_lens_plane_tilt, g_lens_spin, g_lens_plane_focal, 0.0, top, w, body_h)
         ui_set_plane_focus(r, 0.0, 0.0)
     }
     ui_push_clip(r, vx0, vy0, vx1 - vx0, vy1 - vy0)
@@ -1408,7 +1448,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                 let zoom = lens_code_zoom(leaf)
                 // Detail follows the size on screen: a leaf far up the tilted
                 // plane is smaller than its flat layout.
-                let gain = lens_depth_gain(clamp(py + ph * 0.5, vy0, vy1))
+                let gain = lens_depth_gain(clamp(px + pw * 0.5, vx0, vx1), clamp(py + ph * 0.5, vy0, vy1))
                 let hovered = over_map && hit(v, px, py, pw, ph)
                 let resident = g_lens_view_mode != LENS_MODE_REF && g_lens_editing && g_workspace_active == i
                 let paged = g_lens_view_mode != LENS_MODE_REF && g_lens_reading && g_lens_selected == i
@@ -1545,7 +1585,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                         let lines = g_lens_source_rows[i]
                         if lens_mini_ready(i) { lines = g_lens_mini_lines[i] }
                         lens_code_flow(i, lines)
-                        let distance = clamp(800.0 * g_lens_code_world * g_lens_flow_fit, 1.0, 6000.0)
+                        let distance = clamp(800.0 * g_lens_code_world * g_lens_flow_fit, LENS_DISTANCE_MIN, 6000.0)
                         let view = distance / 800.0
                         g_lens_target_x = g_lens_x[i] + clamp(g_lens_w[i] * 0.5, 0.0, (w * 0.5 - 24.0) * view)
                         g_lens_target_y = g_lens_y[i] + clamp(g_lens_h[i] * 0.5, 0.0, (body_h * 0.5 - LENS_TOP_BAR_H - 24.0) * view)
@@ -1671,14 +1711,76 @@ fn lens_tilt_by(dy: f64) {
     g_lens_tilt = clamp(g_lens_tilt + dy * 0.25, -LENS_MAX_TILT, LENS_MAX_TILT)
 }
 
+// Turn the map by `turn` radians counterclockwise about the flat point
+// (mx, my), which keeps its place on screen. Every flat point moves by the
+// same offset, so the pointer and the drag anchor follow it and a pan or
+// pinch in the same frame still holds the world point under the fingers.
+fn lens_spin_at(mx: f64, my: f64, turn: f64) {
+    if turn == 0.0 {
+        return
+    }
+    let spin = g_lens_spin + turn
+    if spin > LENS_PI { spin = spin - 2.0 * LENS_PI }
+    if spin < -LENS_PI { spin = spin + 2.0 * LENS_PI }
+    g_lens_spin = spin
+    let s = sin(turn)
+    let c = cos(turn)
+    let ux = mx - g_lens_plane_cx
+    let uy = my - g_lens_plane_cy
+    let dx = ux * c - uy * s - ux
+    let dy = ux * s + uy * c - uy
+    let units = clamp(g_lens_distance, LENS_DISTANCE_MIN, LENS_DISTANCE_LIMIT) / 800.0
+    g_lens_center_x = g_lens_center_x - dx * units
+    g_lens_center_y = g_lens_center_y - dy * units
+    g_lens_target_x = g_lens_target_x - dx * units
+    g_lens_target_y = g_lens_target_y - dy * units
+    g_mouse_x = mx + dx
+    g_mouse_y = my + dy
+    g_lens_drag_x = g_lens_drag_x + dx
+    g_lens_drag_y = g_lens_drag_y + dy
+}
+
+// True while a trackpad gesture last reported at `last` may still be held.
+fn lens_pad_held(last: f64, now: f64) bool {
+    return last >= 0.0 && now - last < LENS_PAD_HOLD
+}
+
+// Once no turn is held, a map within LENS_SPIN_SNAP of upright settles there.
+fn lens_spin_settle(held: bool) {
+    if held == false && abs(g_lens_spin) < LENS_SPIN_SNAP {
+        g_lens_spin = 0.0
+    }
+}
+
+// Across and down the spun plane: the flat offset (x, y) from the pivot as
+// the tilt sees it, and back.
+fn lens_spin_x(x: f64, y: f64) f64 {
+    return x * g_lens_plane_cos + y * g_lens_plane_sin
+}
+
+fn lens_spin_y(x: f64, y: f64) f64 {
+    return y * g_lens_plane_cos - x * g_lens_plane_sin
+}
+
+fn lens_unspin_x(x: f64, y: f64) f64 {
+    return x * g_lens_plane_cos - y * g_lens_plane_sin
+}
+
+fn lens_unspin_y(x: f64, y: f64) f64 {
+    return x * g_lens_plane_sin + y * g_lens_plane_cos
+}
+
 // The plane camera for this frame. Near level it is orthographic:
-// the flat map is the screen. Past it, the map plane turns about the
-// horizontal line through the map's centre, seen from a pinhole in front of
-// the screen, and the visible part of the flat map grows toward the horizon.
+// the flat map is the screen, spun about its centre. Past it, the map plane
+// turns about the horizontal line through the map's centre, seen from a
+// pinhole in front of the screen, and the visible part of the flat map grows
+// toward the horizon.
 fn lens_plane_setup(w: f64, top: f64, body_h: f64) {
     g_lens_plane_cx = w * 0.5
     g_lens_plane_cy = top + body_h * 0.5
     g_lens_plane_focal = body_h * 1.3
+    g_lens_plane_sin = sin(g_lens_spin)
+    g_lens_plane_cos = cos(g_lens_spin)
     g_lens_plane_tilt = 0.0
     if abs(g_lens_tilt) >= LENS_ORTHO_SNAP {
         g_lens_plane_tilt = clamp(g_lens_tilt, -LENS_MAX_TILT, LENS_MAX_TILT) * 0.017453292519943295
@@ -1693,10 +1795,17 @@ fn lens_plane_setup(w: f64, top: f64, body_h: f64) {
     let far_half: f64 = w * 0.5 * lens_depth(far) / g_lens_plane_focal
     let near_half: f64 = w * 0.5 * lens_depth(near) / g_lens_plane_focal
     let half: f64 = clamp(far_half, near_half, 1000000.0)
-    g_lens_view_x0 = g_lens_plane_cx - half
-    g_lens_view_x1 = g_lens_plane_cx + half
-    g_lens_view_y0 = g_lens_plane_cy + far
-    g_lens_view_y1 = g_lens_plane_cy + near
+    // The screen sees a band of the spun plane; the flat map's view holds
+    // that band's corners turned back.
+    let across: f64 = abs(half * g_lens_plane_cos) + abs((near - far) * 0.5 * g_lens_plane_sin)
+    let down: f64 = abs(half * g_lens_plane_sin) + abs((near - far) * 0.5 * g_lens_plane_cos)
+    let mid = (far + near) * 0.5
+    let mid_x = lens_unspin_x(0.0, mid)
+    let mid_y = lens_unspin_y(0.0, mid)
+    g_lens_view_x0 = g_lens_plane_cx + mid_x - across
+    g_lens_view_x1 = g_lens_plane_cx + mid_x + across
+    g_lens_view_y0 = g_lens_plane_cy + mid_y - down
+    g_lens_view_y1 = g_lens_plane_cy + mid_y + down
 }
 
 // Distance from the pinhole to the plane point `y` below the pivot.
@@ -1724,26 +1833,31 @@ fn lens_leaf_seen(leaf: lens_leaf_rect) bool {
     if g_lens_plane_tilt == 0.0 {
         return true
     }
-    let y0 = leaf.y - g_lens_plane_cy
-    let y1 = y0 + leaf.h
+    // The leaf's bounds across and down the spun plane.
+    let mid = lens_spin_y(leaf.x + leaf.w * 0.5 - g_lens_plane_cx, leaf.y + leaf.h * 0.5 - g_lens_plane_cy)
+    let half_down = (abs(leaf.h * g_lens_plane_cos) + abs(leaf.w * g_lens_plane_sin)) * 0.5
+    let across = abs(leaf.w * g_lens_plane_cos) + abs(leaf.h * g_lens_plane_sin)
+    let y0 = mid - half_down
+    let y1 = mid + half_down
     if abs(lens_project_y(y1) - lens_project_y(y0)) < LENS_PLANE_LEAF_MIN {
         return false
     }
     let near_y = y1
     if g_lens_plane_tilt < 0.0 { near_y = y0 }
-    return leaf.w * g_lens_plane_focal / clamp(lens_depth(near_y), 1.0, 1000000000.0) >= LENS_PLANE_LEAF_MIN
+    return across * g_lens_plane_focal / clamp(lens_depth(near_y), 1.0, 1000000000.0) >= LENS_PLANE_LEAF_MIN
 }
 
 // Flat-map point under the screen point (sx, sy), into g_lens_plane_x/y.
 fn lens_unproject(sx: f64, sy: f64) {
     let y: f64 = lens_unproject_y(sy - g_lens_plane_cy)
-    g_lens_plane_x = g_lens_plane_cx + (sx - g_lens_plane_cx) * lens_depth(y) / g_lens_plane_focal
-    g_lens_plane_y = g_lens_plane_cy + y
+    let x: f64 = (sx - g_lens_plane_cx) * lens_depth(y) / g_lens_plane_focal
+    g_lens_plane_x = g_lens_plane_cx + lens_unspin_x(x, y)
+    g_lens_plane_y = g_lens_plane_cy + lens_unspin_y(x, y)
 }
 
-// Screen size over flat size at flat-map height `y`.
-fn lens_depth_gain(y: f64) f64 {
-    return g_lens_plane_focal / clamp(lens_depth(y - g_lens_plane_cy), 1.0, 1000000000.0)
+// Screen size over flat size at the flat-map point (x, y).
+fn lens_depth_gain(x: f64, y: f64) f64 {
+    return g_lens_plane_focal / clamp(lens_depth(lens_spin_y(x - g_lens_plane_cx, y - g_lens_plane_cy)), 1.0, 1000000000.0)
 }
 
 // Screen y of a flat canvas point, using the same plane matrix as ui_begin_plane.
@@ -1825,7 +1939,7 @@ fn lens_line_flat(code_zoom: f64) f64 {
 // One affine camera for every entry, so neighbouring rectangles share their
 // edges exactly on screen: the map tiles without overlaps or gaps.
 fn lens_project_leaf(i: i32, w: f64, top: f64, body_h: f64) lens_leaf_rect {
-    let scale: f64 = 800.0 / clamp(g_lens_distance, 1.0, LENS_DISTANCE_LIMIT)
+    let scale: f64 = 800.0 / clamp(g_lens_distance, LENS_DISTANCE_MIN, LENS_DISTANCE_LIMIT)
     let scale_y: f64 = scale
     let px: f64 = w * 0.5 + (g_lens_x[i] - g_lens_center_x) * scale
     let py: f64 = top + body_h * 0.5 + (g_lens_y[i] - g_lens_center_y) * scale_y
@@ -1866,7 +1980,7 @@ fn lens_focus_row(i: i32, row: i32) {
     }
     lens_code_flow(i, rows)
     let fit = g_lens_flow_fit
-    let distance = clamp(800.0 * g_lens_code_world * fit, 1.0, 6000.0)
+    let distance = clamp(800.0 * g_lens_code_world * fit, LENS_DISTANCE_MIN, 6000.0)
     let view = distance / 800.0
     // World units per code layout pixel.
     let unit = g_lens_code_world * fit
@@ -2109,7 +2223,7 @@ fn lens_zoom_nearest(mx: f64, my: f64, w: f64, top: f64, body_h: f64) f64 {
             }
         }
     }
-    return clamp(800.0 * g_lens_code_world * fit / LENS_MAX_ZOOM, 1.0, 6000.0)
+    return clamp(800.0 * g_lens_code_world * fit / LENS_MAX_ZOOM, LENS_DISTANCE_MIN, 6000.0)
 }
 
 fn lens_zoom_at(mx: f64, my: f64, w: f64, top: f64, body_h: f64, wheel: f64) {
@@ -2554,8 +2668,9 @@ fn lens_pan_input(v: ref view, over_map: bool) {
         g_lens_panning = over_map
     }
     if g_lens_view_mode == LENS_MODE_REF && g_lens_ref_drag >= 0 { g_lens_panning = false }
-    // Three fingers tilt the map instead of dragging it.
-    if g_lens_touch_tilt { g_lens_panning = false }
+    // Three fingers tilt the map instead of dragging it, on a screen or a
+    // trackpad.
+    if g_lens_touch_tilt || g_lens_pad_many { g_lens_panning = false }
     // A finger landing or lifting moves the centroid; the drag restarts there.
     if g_lens_panning && v.mouse_down && !v.mouse_pressed && !g_lens_touch_rebase {
         g_lens_target_x = g_lens_target_x - (g_mouse_x - g_lens_drag_x) * g_lens_distance / 800.0
@@ -2569,7 +2684,7 @@ fn lens_pan_input(v: ref view, over_map: bool) {
 }
 
 fn lens_camera_moving(v: ref view) bool {
-    if g_lens_ref_drag >= 0 || g_lens_panning || v.mouse_middle_down || g_lens_touch_tilt || v.scroll_y != 0.0 || view_gesture(v).zoom_factor != 1.0 {
+    if g_lens_ref_drag >= 0 || g_lens_panning || v.mouse_middle_down || g_lens_touch_tilt || v.scroll_y != 0.0 || view_gesture(v).zoom_factor != 1.0 || view_gesture(v).rotation != 0.0 || view_gesture(v).orbit_y != 0.0 {
         return true
     }
     let dx = g_lens_target_x - g_lens_center_x

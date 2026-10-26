@@ -241,7 +241,7 @@ fn main() {
     let world_x = (pointer_x - 640.0) * 2.0
     let world_y = (pointer_y - 382.0) * 2.0
     // The wheel zooms faster with the camera low over the code than high above.
-    let nearest = clamp(800.0 * g_lens_code_world / LENS_MAX_ZOOM, 1.0, 6000.0)
+    let nearest = clamp(800.0 * g_lens_code_world / LENS_MAX_ZOOM, LENS_DISTANCE_MIN, 6000.0)
     let high = lens_wheel_rate(nearest)
     g_lens_target_distance = nearest * 2.0
     let low = lens_wheel_rate(nearest)
@@ -271,7 +271,7 @@ fn main() {
     assert g_lens_plane_y > 381.999 && g_lens_plane_y < 382.001
     lens_unproject(100.0, 60.0)
     assert g_lens_plane_y < 60.0 && g_lens_plane_x < 100.0
-    assert lens_depth_gain(60.0) < 1.0 && lens_depth_gain(700.0) > 1.0
+    assert lens_depth_gain(640.0, 60.0) < 1.0 && lens_depth_gain(640.0, 700.0) > 1.0
     // The far edge of a 60 degree plane compresses lines; bars take over
     // there and the near edge stays tall enough for glyphs.
     g_lens_screen_h = 800.0
@@ -295,7 +295,7 @@ fn main() {
     assert abs(lens_plane_screen_y(g_lens_view_y0) - 42.0) < 0.5
     assert abs(lens_plane_screen_y(g_lens_view_y1) - 722.0) < 0.5
     assert lens_screen_per_flat(g_lens_view_y1) < lens_screen_per_flat(g_lens_view_y0)
-    assert lens_depth_gain(60.0) > 1.0 && lens_depth_gain(700.0) < 1.0
+    assert lens_depth_gain(640.0, 60.0) > 1.0 && lens_depth_gain(640.0, 700.0) < 1.0
     // Its legible lines are near the top and shrink toward the bottom.
     let mirror_cut = lens_plane_cut(g_lens_view_y0, g_lens_view_y1, 24.0)
     assert mirror_cut > g_lens_view_y0 + 10.0 && mirror_cut < g_lens_view_y1 - 10.0

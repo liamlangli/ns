@@ -271,16 +271,11 @@ fn lens_ui_toggle() {
     g_lens_ui_hidden = true
 }
 
-// `~` toggles the controls. In the file being edited the key types instead,
-// except that it always brings hidden controls back.
+// Cmd+\ (Ctrl+\ off the Mac) toggles the controls. A chord never types, so it
+// works while the code, the terminal or a dialog has the keyboard;
+// lens_ui_toggle still keeps the controls of a dialog or prompt shown.
 fn lens_ui_keys(v: ref view) {
-    if lens_typing() {
-        return
-    }
-    if g_lens_editing && g_lens_ui_hidden == false {
-        return
-    }
-    if key_edge(v, 96) {
+    if cmd_down(v) && key_edge(v, 92) {
         lens_ui_toggle()
     }
 }

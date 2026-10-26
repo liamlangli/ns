@@ -1,0 +1,59 @@
+// A two-finger turn spins the map about the plane's pivot before it tilts.
+// The pointer unprojects through the spin and the turn holds the world
+// point under the fingers.
+use std
+
+fn main() {
+    // A map spun a quarter turn counterclockwise shows its part below the
+    // pivot to the right, and its view holds the whole turned screen.
+    g_lens_spin = LENS_PI * 0.5
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    lens_unproject(740.0, 382.0)
+    assert abs(g_lens_plane_x - 640.0) < 0.001 && abs(g_lens_plane_y - 482.0) < 0.001
+    assert abs(g_lens_view_x0 - 300.0) < 0.001 && abs(g_lens_view_x1 - 980.0) < 0.001
+    assert abs(g_lens_view_y0 + 258.0) < 0.001 && abs(g_lens_view_y1 - 1022.0) < 0.001
+    // Tilted as well, the pivot's row still unprojects through the spin, and
+    // the flat map's left half, spun down the screen, comes nearer.
+    g_lens_tilt = 45.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    lens_unproject(740.0, 382.0)
+    assert abs(g_lens_plane_x - 640.0) < 0.001 && abs(g_lens_plane_y - 482.0) < 0.001
+    assert lens_depth_gain(540.0, 382.0) > 1.0 && lens_depth_gain(740.0, 382.0) < 1.0
+    assert abs(lens_depth_gain(640.0, 282.0) - 1.0) < 0.000001
+    // A turn about the pointer keeps the world point under it in place:
+    // the flat map shifts with it, and so do the pointer and drag anchor.
+    g_lens_tilt = 0.0
+    g_lens_spin = 0.0
+    g_lens_distance = 800.0
+    g_lens_center_x = 0.0
+    g_lens_center_y = 0.0
+    g_lens_target_x = 0.0
+    g_lens_target_y = 0.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    lens_spin_at(740.0, 382.0, LENS_PI * 0.5)
+    assert abs(g_lens_spin - LENS_PI * 0.5) < 0.000001
+    assert abs(g_lens_center_x - 100.0) < 0.001 && abs(g_lens_center_y + 100.0) < 0.001
+    assert abs(g_mouse_x - 640.0) < 0.001 && abs(g_mouse_y - 482.0) < 0.001
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    lens_unproject(740.0, 382.0)
+    assert abs(g_lens_plane_x - g_mouse_x) < 0.001 && abs(g_lens_plane_y - g_mouse_y) < 0.001
+    // Past half a turn the spin wraps the short way round.
+    lens_spin_at(640.0, 382.0, LENS_PI)
+    assert abs(g_lens_spin + LENS_PI * 0.5) < 0.000001
+    // A trackpad turn or tilt counts as held for LENS_PAD_HOLD after its last
+    // report; once nothing holds it, a map within 5 degrees of upright
+    // settles there and one turned further stays.
+    assert lens_pad_held(-1.0, 0.1) == false
+    assert lens_pad_held(10.0, 10.2)
+    assert lens_pad_held(10.0, 10.4) == false
+    g_lens_spin = 0.08
+    lens_spin_settle(true)
+    assert g_lens_spin == 0.08
+    lens_spin_settle(false)
+    assert g_lens_spin == 0.0
+    g_lens_spin = -0.09
+    lens_spin_settle(false)
+    assert g_lens_spin == -0.09
+    g_lens_spin = 0.0
+    print("spin_test: passed\n")
+}

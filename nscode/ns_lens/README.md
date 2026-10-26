@@ -52,8 +52,19 @@ snaps back to orthographic.
   rows keep the editor's green and red backgrounds. A worker diffs every changed file against HEAD
   after file changes, after a commit, and every 30 seconds.
 - Wheel or trackpad pinch: zoom toward the pointer with camera smoothing.
+- Two-finger turn (trackpad or touch screen): spin the map about the fingers.
+  On a touch screen the map starts turning once the fingers have turned about
+  ten degrees, so a pinch does not twist it. A map let go within five degrees
+  of upright settles there. A tilt recedes up the screen whatever the spin.
 - Left drag: pan. Right click: select a leaf; right drag selects text in its editor.
-  Middle drag: tilt the map into perspective.
+  Middle drag, or a three-finger drag on a trackpad or touch screen: tilt the
+  map into perspective. Within five degrees of level it settles flat. On a Mac
+  the trackpad's three-finger swipes must not be taken by Mission Control or
+  Accessibility's three-finger drag (System Settings > Trackpad > More
+  Gestures).
+- Cmd+\ (Ctrl+\ on Linux and Windows), or a four-finger tap on a Mac trackpad
+  or a touch screen: hide every control but the map, and bring them back. It
+  works while code is being edited.
 - Zoom close to a leaf: its code becomes a syntax-highlighted, editable surface
   inside that leaf. The map keeps the entire canvas; no separate editor opens.
 - Shift+wheel: scroll code inside the leaf.
@@ -235,7 +246,7 @@ snaps back to orthographic.
   click copies it to the clipboard. While a leaf shows minimap bars, its file
   name sits in small bright text at the leaf's top left instead.
 - Right-clicking a leaf focuses it at a readable code size, framing its top. Zoom
-  stops once code reaches 2.5 times its editor size.
+  stops once code reaches 50 times its editor size.
 - The status bar progress bar is the precision still loading: minimap bars across
   the project, or code for the leaves in view once the camera is that close.
 - The status bar starts with a down arrow counting upstream commits not pulled

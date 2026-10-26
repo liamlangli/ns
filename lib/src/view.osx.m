@@ -405,7 +405,17 @@ static void view_osx_update_mouse(NSEvent *event) {
 // other size ends the tracking instead of publishing an orbit.
 #define VIEW_OSX_ORBIT_TOUCHES 3
 
+// A tap is every finger lifted within VIEW_OSX_TAP_TIME of the first landing,
+// none of them farther than VIEW_OSX_TAP_SLOP of the trackpad from where it
+// landed. A cancelled touch means the system took the gesture: no tap.
+#define VIEW_OSX_TAP_TIME 0.5
+#define VIEW_OSX_TAP_SLOP 0.04
+
 static ns_bool view_osx_orbit_tracking;
+static NSMutableDictionary *view_osx_tap_start;
+static f64 view_osx_tap_begin;
+static i32 view_osx_tap_peak;
+static ns_bool view_osx_tap_spoiled;
 static f64 view_osx_orbit_last_x;
 static f64 view_osx_orbit_last_y;
 
@@ -436,6 +446,41 @@ static void view_osx_touch_orbit(NSSet<NSTouch*> *touches, ns_bool publish) {
     view_osx_orbit_last_x = x;
     view_osx_orbit_last_y = y;
     view_osx_orbit_tracking = true;
+}
+
+// Counts the fingers resting on the trackpad for the gesture state and
+// recognizes a tap: the gesture runs from the first finger landing to the last
+// lifting, each touch is remembered where it landed, and the tap reports the
+// most fingers that rested together.
+static void view_osx_touch_tap(NSView *view, NSEvent *event, NSSet<NSTouch*> *touching, ns_bool cancelled) {
+    const i32 count = (i32)[touching count];
+    const f64 now = [event timestamp];
+    if (!view_osx_tap_start) view_osx_tap_start = [[NSMutableDictionary alloc] init];
+    if (view_osx_tap_peak == 0 && count > 0) {
+        [view_osx_tap_start removeAllObjects];
+        view_osx_tap_begin = now;
+        view_osx_tap_spoiled = false;
+    }
+    if (cancelled || now - view_osx_tap_begin > VIEW_OSX_TAP_TIME) view_osx_tap_spoiled = true;
+    for (NSTouch *touch in [event touchesMatchingPhase:NSTouchPhaseAny inView:view]) {
+        const NSPoint position = [touch normalizedPosition];
+        NSValue *start = view_osx_tap_start[[touch identity]];
+        if (!start) {
+            view_osx_tap_start[[touch identity]] = [NSValue valueWithPoint:position];
+            continue;
+        }
+        const NSPoint from = [start pointValue];
+        if (fabs(position.x - from.x) > VIEW_OSX_TAP_SLOP || fabs(position.y - from.y) > VIEW_OSX_TAP_SLOP) {
+            view_osx_tap_spoiled = true;
+        }
+    }
+    if (count > view_osx_tap_peak) view_osx_tap_peak = count;
+    view_on_trackpad_fingers(&_view, count);
+    if (count == 0 && view_osx_tap_peak > 0) {
+        if (!view_osx_tap_spoiled) view_on_trackpad_tap(&_view, view_osx_tap_peak);
+        view_osx_tap_peak = 0;
+        [view_osx_tap_start removeAllObjects];
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -557,6 +602,9 @@ static void view_osx_touch_orbit(NSSet<NSTouch*> *touches, ns_bool publish) {
 }
 
 - (void)scrollWheel:(NSEvent*)event {
+    // Three or more resting fingers drive the orbit (and the system's own
+    // swipes); the scroll their first two fingers began is not theirs.
+    if (view_gesture(&_view)->fingers >= VIEW_OSX_ORBIT_TOUCHES) return;
     const f64 dx = [event scrollingDeltaX];
     const f64 dy = [event scrollingDeltaY];
     view_osx_update_mouse(event);
@@ -579,21 +627,25 @@ static void view_osx_touch_orbit(NSSet<NSTouch*> *touches, ns_bool publish) {
 }
 
 - (void)touchesBeganWithEvent:(NSEvent*)event {
-    view_osx_touch_orbit([event touchesMatchingPhase:NSTouchPhaseTouching inView:self], false);
+    NSSet<NSTouch*> *touching = [event touchesMatchingPhase:NSTouchPhaseTouching inView:self];
+    view_osx_touch_orbit(touching, false);
+    view_osx_touch_tap(self, event, touching, false);
 }
 
 - (void)touchesMovedWithEvent:(NSEvent*)event {
-    view_osx_touch_orbit([event touchesMatchingPhase:NSTouchPhaseTouching inView:self], true);
+    NSSet<NSTouch*> *touching = [event touchesMatchingPhase:NSTouchPhaseTouching inView:self];
+    view_osx_touch_orbit(touching, true);
+    view_osx_touch_tap(self, event, touching, false);
 }
 
 - (void)touchesEndedWithEvent:(NSEvent*)event {
-    (void)event;
     view_osx_orbit_tracking = false;
+    view_osx_touch_tap(self, event, [event touchesMatchingPhase:NSTouchPhaseTouching inView:self], false);
 }
 
 - (void)touchesCancelledWithEvent:(NSEvent*)event {
-    (void)event;
     view_osx_orbit_tracking = false;
+    view_osx_touch_tap(self, event, [event touchesMatchingPhase:NSTouchPhaseTouching inView:self], true);
 }
 
 - (BOOL)acceptsFirstResponder {
