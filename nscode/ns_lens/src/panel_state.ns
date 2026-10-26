@@ -78,7 +78,6 @@ fn panel_state_view_text() str {
     text = text + "render.dof=" + panel_state_flag(g_render_dof) + "\n"
     text = text + "render.blur=" + ftos(g_render_blur) + "\n"
     text = text + "render.band=" + ftos(g_render_band) + "\n"
-    text = text + "render.fade=" + ftos(g_render_fade) + "\n"
     text = text + "view.scope=" + panel_state_relative(g_lens_scope_path) + "\n"
     text = text + "view.selected=" + panel_state_relative(g_lens_selected_path) + "\n"
     if mode == LENS_MODE_REF {
@@ -207,8 +206,6 @@ fn panel_state_apply(key: str, value: str) {
         g_render_blur = clamp(n, 0.0, RENDER_BLUR_MAX)
     } else if key == "render.band" {
         g_render_band = clamp(n, 0.0, RENDER_BAND_MAX)
-    } else if key == "render.fade" {
-        g_render_fade = clamp(n, 0.0, 1.0)
     } else if key == "view.scope" {
         g_lens_scope_path = panel_state_entry_path(value)
         g_lens_scope = -1

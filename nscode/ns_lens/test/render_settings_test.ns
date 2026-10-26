@@ -7,8 +7,8 @@ fn main() {
     // Sliders run from their minimum at the left of the track to the maximum.
     render_slider_set(RENDER_ROW_BLUR, 0.5)
     assert g_render_blur == RENDER_BLUR_MAX * 0.5
-    render_slider_set(RENDER_ROW_FADE, 2.0)
-    assert g_render_fade == 1.0
+    render_slider_set(RENDER_ROW_BAND, 2.0)
+    assert g_render_band == RENDER_BAND_MAX
     render_slider_set(RENDER_ROW_TILT, 0.5)
     assert g_lens_tilt == 0.0
     assert render_slider_get(RENDER_ROW_TILT) == 0.5
@@ -17,7 +17,7 @@ fn main() {
     assert render_slider_text(RENDER_ROW_TILT) == "-89 deg"
     g_lens_tilt = 0.0
     render_settings_reset()
-    assert g_render_dof && g_render_blur == RENDER_BLUR_DEFAULT && g_render_fade == RENDER_FADE_DEFAULT
+    assert g_render_dof && g_render_blur == RENDER_BLUR_DEFAULT && g_render_band == RENDER_BAND_DEFAULT
 
     // The desktop View menu reads Outline, Terminal, Render Settings.
     assert lens_view_items() == 3

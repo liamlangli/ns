@@ -1,6 +1,6 @@
 // View > Render Settings: a small floating panel under the top bar with the
-// tilted map's depth of field (on/off, blur, the sharp band around the middle
-// and how far defocused code fades) and the tilt itself. The values are kept
+// tilted map's depth of field (on/off, the lens blur and the sharp band around
+// the middle) and the tilt itself. The values are kept
 // with the window state (panel_state.ns).
 //
 // `~` (a four-finger tap on a phone) hides every control but the map and shows
@@ -12,24 +12,22 @@ use ui
 
 lit RENDER_PANEL_W = 270.0
 lit RENDER_ROW_H = 26.0
-// Title, depth of field, blur, focus band, fade, tilt, then reset.
-lit RENDER_ROWS = 7
+// Title, depth of field, blur, focus band, tilt, then reset.
+lit RENDER_ROWS = 6
 lit RENDER_ROW_DOF = 1
 lit RENDER_ROW_BLUR = 2
 lit RENDER_ROW_BAND = 3
-lit RENDER_ROW_FADE = 4
-lit RENDER_ROW_TILT = 5
-lit RENDER_ROW_RESET = 6
+lit RENDER_ROW_TILT = 4
+lit RENDER_ROW_RESET = 5
 lit RENDER_LABEL_W = 92.0
 lit RENDER_VALUE_W = 52.0
 lit RENDER_BLUR_MAX = 16.0
 lit RENDER_BAND_MAX = 0.6
-// Defaults: a few points of blur, the middle sixth of the depth range kept
-// sharp, and defocused code faded part way into the map.
+// Defaults: a few points of lens blur and the middle sixth of the depth range
+// kept sharp.
 lit RENDER_DOF_DEFAULT = true
 lit RENDER_BLUR_DEFAULT = 6.0
 lit RENDER_BAND_DEFAULT = 0.15
-lit RENDER_FADE_DEFAULT = 0.4
 
 let g_render_settings_open = false
 // The pointer is over the panel, or a slider is held: the map takes no input.
@@ -37,12 +35,11 @@ let g_render_settings_block = false
 // The row whose slider the pointer is dragging, -1 for none.
 let g_render_drag: i32 = -1
 let g_render_dof = RENDER_DOF_DEFAULT
-// Blur in points at the far and near edges of the tilted map.
+// Radius in points of the lens blur at the far and near edges of the tilted
+// map, applied to the rendered map in screen space.
 let g_render_blur: f64 = RENDER_BLUR_DEFAULT
 // Share of the depth range around the middle of the map that stays sharp.
 let g_render_band: f64 = RENDER_BAND_DEFAULT
-// How much of its alpha the most defocused code loses, 0..1.
-let g_render_fade: f64 = RENDER_FADE_DEFAULT
 // Every control but the map is hidden. Deliberately not persisted.
 let g_lens_ui_hidden = false
 
@@ -55,7 +52,6 @@ fn render_settings_reset() {
     g_render_dof = RENDER_DOF_DEFAULT
     g_render_blur = RENDER_BLUR_DEFAULT
     g_render_band = RENDER_BAND_DEFAULT
-    g_render_fade = RENDER_FADE_DEFAULT
 }
 
 fn render_settings_x() f64 { return LENS_VIEW_X }
@@ -76,7 +72,6 @@ fn render_row_label(row: i32) str {
     if row == RENDER_ROW_DOF { return "Depth of field" }
     if row == RENDER_ROW_BLUR { return "Blur" }
     if row == RENDER_ROW_BAND { return "Focus band" }
-    if row == RENDER_ROW_FADE { return "Fade" }
     if row == RENDER_ROW_TILT { return "Tilt" }
     return ""
 }
@@ -85,7 +80,6 @@ fn render_row_label(row: i32) str {
 fn render_slider_get(row: i32) f64 {
     if row == RENDER_ROW_BLUR { return g_render_blur / RENDER_BLUR_MAX }
     if row == RENDER_ROW_BAND { return g_render_band / RENDER_BAND_MAX }
-    if row == RENDER_ROW_FADE { return g_render_fade }
     return (g_lens_tilt + LENS_MAX_TILT) / (LENS_MAX_TILT * 2.0)
 }
 
@@ -95,8 +89,6 @@ fn render_slider_set(row: i32, t: f64) {
         g_render_blur = at * RENDER_BLUR_MAX
     } else if row == RENDER_ROW_BAND {
         g_render_band = at * RENDER_BAND_MAX
-    } else if row == RENDER_ROW_FADE {
-        g_render_fade = at
     } else if row == RENDER_ROW_TILT {
         g_lens_tilt = at * LENS_MAX_TILT * 2.0 - LENS_MAX_TILT
     }
@@ -105,7 +97,6 @@ fn render_slider_set(row: i32, t: f64) {
 fn render_slider_text(row: i32) str {
     if row == RENDER_ROW_BLUR { return itos((g_render_blur + 0.5) as i32) + " pt" }
     if row == RENDER_ROW_BAND { return itos((g_render_band * 100.0 + 0.5) as i32) + "%" }
-    if row == RENDER_ROW_FADE { return itos((g_render_fade * 100.0 + 0.5) as i32) + "%" }
     let sign = ""
     let deg = g_lens_tilt
     if deg < 0.0 {
@@ -247,7 +238,7 @@ fn render_draw_slider(r: ref ui_renderer, row: i32, ty: f64) {
 // about, which is the middle of the map, and defocused toward both ends.
 fn render_settings_plane_focus(r: ref ui_renderer) {
     if g_render_dof && g_render_blur > 0.0 {
-        ui_set_plane_focus(r, g_render_blur, g_render_band, g_render_fade)
+        ui_set_plane_focus(r, g_render_blur, g_render_band)
     }
 }
 

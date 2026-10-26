@@ -394,14 +394,14 @@ ref fn ui_end_overlay(r: ref ui_renderer)
 // bounds what the plane covers. Up to 8 planes per frame.
 ref fn ui_begin_plane(r: ref ui_renderer, center_x: f64, center_y: f64, tilt: f64, focal: f64, x: f64, y: f64, w: f64, h: f64)
 ref fn ui_end_plane(r: ref ui_renderer)
-// Depth of field for the planes begun after this call in the frame. A
-// fragment whose depth leaves `band` around the plane's pivot line (as
-// |1 - 1/w|, w being 1 on that line) defocuses toward the horizon and the near
-// edge: up to `blur` ui units of softened edges on text, arcs and smooth
-// rectangles, and alpha scaled down by up to `fade` (0..1). It is evaluated
-// per fragment in the one ui pass, with no extra render target.
+// Depth of field for the planes begun after this call in the frame, as a
+// camera focused on the plane's pivot line sees it: no blur within `band`
+// around that line (as |1 - 1/w|, w being 1 on it), growing to a lens blur of
+// `blur` ui units toward the horizon and the near edge. The plane renders
+// offscreen and a screen-space pass gathers it back through a lens disc
+// turned per pixel by blue noise. An untilted plane stays sharp.
 // ui_begin_frame returns it to sharp.
-ref fn ui_set_plane_focus(r: ref ui_renderer, blur: f64, band: f64, fade: f64)
+ref fn ui_set_plane_focus(r: ref ui_renderer, blur: f64, band: f64)
 
 // A fingertip against the panel, in canvas units like view.mouse_x after
 // ui_content_x. depth is its distance in front of the panel, toward the

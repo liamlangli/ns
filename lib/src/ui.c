@@ -334,6 +334,8 @@ typedef struct ui_draw {
     u32 batch_meta;       // a retained command's meta; its vertices carry none
     u32 rgba;             // the RGBA texture its images and bitmap glyphs sample, 0 for none
     ns_bool msdf;         // it draws MSDF text from the font pack
+    ns_bool focus;        // it draws on a plane with depth of field
+    u32 planes;           // those planes, one bit per plane index
 } ui_draw;
 
 typedef struct ui_renderer {
@@ -431,10 +433,23 @@ typedef struct ui_renderer {
     ui_clip plane_scissors[UI_MAX_PLANES];
     i32 plane_count;
     i32 current_plane;
-    // Defocus the next ui_begin_plane takes (ui_set_plane_focus): blur in ui
-    // units, the sharp band and the fade. A plane keeps it in its matrix's z
-    // row, which a plane never uses: the vertex stage sets z from w.
-    f32 plane_focus[3];
+    // Depth of field (ui_set_plane_focus): the blur radius in ui units and the
+    // sharp band the next ui_begin_plane takes, and per plane its blur, band,
+    // pivot line (drawable y) and defocus per ui unit away from that line.
+    f32 plane_focus[2];
+    f32 plane_dof[UI_MAX_PLANES][4];
+    // A plane with depth of field draws into dof_scene, and a screen-space
+    // pass gathers it back onto the screen through a blue-noise lens. A
+    // resized scene may still be read by a frame in flight.
+    u32 dof_shader;
+    u32 dof_state;
+    u32 dof_scene;
+    i32 dof_width;
+    i32 dof_height;
+    u32 dof_noise;
+    ns_bool dof_failed;
+    u32 dof_retired;
+    i32 dof_retired_frames;
     // 3D panel (ui_set_panel). panel_clip maps the canvas's (u, v, 0, 1), with
     // u and v in -1..1, to clip space; the world frame serves touch tests.
     ns_bool panel;
@@ -561,7 +576,7 @@ static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
 "struct UiRoot { float screen_width; float screen_height; float offset_x; float offset_y; uint clip_offset; uint projection_offset; uint batch_meta; uint quad_origin; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4 vertex_scale; float4 batch_clip; float4 font_faces[2]; float4 projection[5]; };\n"
-"struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; float4 dof; uint meta [[flat]]; };\n"
+"struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; uint meta [[flat]]; };\n"
 "static inline float ui_word(device const uint *s, uint i) { return as_type<float>(s[i]); }\n"
 "vertex VOut ui_vs(uint vertex_id [[vertex_id]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
 "  device const uint *s = ns_storage_buffer;\n"
@@ -595,7 +610,7 @@ static const char *ui_shader_src =
 "  }\n"
 "  float2 screen = float2(ns_root.screen_width, ns_root.screen_height);\n"
 "  float2 ndc = float2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
-"  float4 pos = float4(ndc, 1.0, 1.0); float4 dof = float4(1.0, 0.0, 0.0, 0.0);\n"
+"  float4 pos = float4(ndc, 1.0, 1.0);\n"
 "  uint projection = (meta >> 8u) & 15u;\n"
 "  if (projection > 0u) {\n"
 "    uint p = ns_root.projection_offset / 4u + (projection - 1u) * 20u;\n"
@@ -606,8 +621,7 @@ static const char *ui_shader_src =
 "    // A retained draw's storage is its own vertices; the root carries its projection.\n"
 "    if (ns_root.vertex_scale.z > 0.5) { m = float4x4(ns_root.projection[0], ns_root.projection[1], ns_root.projection[2], ns_root.projection[3]); }\n"
 "    pos = m * float4(ndc, 0.0, 1.0);\n"
-"    // A plane's z row holds its focus (blur px, band, fade); w is its depth.\n"
-"    if (projection != 9u) { dof = float4(pos.w, m[0].z, m[1].z, m[2].z); pos.z = pos.w; }\n"
+"    if (projection != 9u) { pos.z = pos.w; }\n"
 "  }\n"
 "  if (ns_root.hud_center_enable.w > 0.5) {\n"
 "    float3 view = ns_root.hud_center_enable.xyz + ns_root.hud_right_hw.xyz * (ndc.x * ns_root.hud_right_hw.w) + ns_root.hud_up_hh.xyz * (ndc.y * ns_root.hud_up_hh.w);\n"
@@ -619,7 +633,7 @@ static const char *ui_shader_src =
 "  }\n"
 "  VOut o; o.pos = pos; o.pixel = pixel; o.uv = uv;\n"
 "  o.col = float4(float((color >> 0u) & 255u), float((color >> 8u) & 255u), float((color >> 16u) & 255u), float((color >> 24u) & 255u)) / 255.0;\n"
-"  o.params = params; o.dof = dof; o.meta = meta; return o;\n"
+"  o.params = params; o.meta = meta; return o;\n"
 "}\n"
 "static inline half ui_median3(half r, half g, half b) { return max(min(r, g), min(max(r, g), b)); }\n"
 "static inline bool ui_clip_discard(VOut in, constant UiRoot &ns_root, device const uint *s) {\n"
@@ -635,13 +649,6 @@ static const char *ui_shader_src =
 "  uint base = ns_root.clip_offset / 4u + (clip_idx - 1u) * 4u;\n"
 "  float4 c = float4(ui_word(s, base), ui_word(s, base + 1u), ui_word(s, base + 2u), ui_word(s, base + 3u));\n"
 "  return in.pixel.x < c.x || in.pixel.y < c.y || in.pixel.x >= c.z || in.pixel.y >= c.w;\n"
-"}\n"
-"// Defocus in framebuffer pixels: none within the band around the plane's\n"
-"// pivot line, growing to the plane's blur toward its horizon and its near edge.\n"
-"static inline float ui_defocus(float4 dof) {\n"
-"  if (dof.y <= 0.0) { return 0.0; }\n"
-"  float off = abs(1.0 - 1.0 / max(dof.x, 1e-4));\n"
-"  return dof.y * clamp((off - dof.z) / max(1.0 - dof.z, 1e-3), 0.0, 1.0);\n"
 "}\n"
 "static inline float ui_arc_distance(VOut in) {\n"
 "  float radius = max(abs(in.params.x), 0.0001); float half_width = max(in.params.y, 0.0);\n"
@@ -660,22 +667,17 @@ static const char *ui_shader_src =
 "  float2 pixel_fw = max(fwidth(in.pixel), float2(1e-6));\n"
 "  if (ui_clip_discard(in, ns_root, ns_storage_buffer)) { discard_fragment(); }\n"
 "  uint kind = in.meta & 15u;\n"
-"  // Out of focus: softer edges over coc pixels and alpha faded toward the map.\n"
-"  float coc = ui_defocus(in.dof); float4 col = in.col;\n"
-"  col.a *= 1.0 - in.dof.w * clamp(coc / max(in.dof.y, 1e-3), 0.0, 1.0);\n"
 "  if (kind == 5u) {\n"
 "    // The share of this pixel's footprint the box covers, per filtered axis.\n"
-"    float2 foot = pixel_fw * (1.0 + coc);\n"
-"    float2 cover = clamp((min(in.pixel + foot * 0.5, in.uv) - max(in.pixel - foot * 0.5, in.params.xy)) / foot, 0.0, 1.0);\n"
-"    return float4(col.rgb, col.a * min(in.params.z * cover.x * cover.y, 1.0));\n"
+"    float2 cover = clamp((min(in.pixel + pixel_fw * 0.5, in.uv) - max(in.pixel - pixel_fw * 0.5, in.params.xy)) / pixel_fw, 0.0, 1.0);\n"
+"    return float4(in.col.rgb, in.col.a * min(in.params.z * cover.x * cover.y, 1.0));\n"
 "  }\n"
 "  if (kind == 2u) {\n"
-"    float aa = arc_aa * (1.0 + coc);\n"
-"    float opacity = 1.0 - smoothstep(-aa, aa, arc_distance);\n"
-"    if (in.params.x < 0.0 && coc <= 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
-"    return float4(col.rgb, col.a * opacity);\n"
+"    float opacity = 1.0 - smoothstep(-arc_aa, arc_aa, arc_distance);\n"
+"    if (in.params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
+"    return float4(in.col.rgb, in.col.a * opacity);\n"
 "  }\n"
-"  if (kind == 4u) { return col; }\n"
+"  if (kind == 4u) { return in.col; }\n"
 "  constexpr sampler samp(mag_filter::linear, min_filter::linear, address::clamp_to_edge);\n"
 "  if (kind == 1u) {\n"
 "    // The glyph's face-local uv, moved into the font pack.\n"
@@ -685,19 +687,15 @@ static const char *ui_shader_src =
 "    float2 tex_size = float2(ns_texture_table_msdf.get_width(), ns_texture_table_msdf.get_height()) * face.zw; float range = max(in.params.x, 0.5);\n"
 "    float2 unit_range = float2(range) / tex_size; float2 screen_texel = max(abs(uv_dx) + abs(uv_dy), float2(1e-6));\n"
 "    float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
-"    // The blur widens the edge no further than the field's range reaches,\n"
-"    // or the glyph's quad would show.\n"
-"    float soft = min(max(in.params.z, 1.0) + coc, max(px_range, max(in.params.z, 1.0)));\n"
-"    float opacity = clamp(((float(sd) - 0.5) * px_range + in.params.y) / soft + 0.5, 0.0, 1.0);\n"
-"    return float4(col.rgb, col.a * opacity);\n"
+"    float opacity = clamp(((float(sd) - 0.5) * px_range + in.params.y) / max(in.params.z, 1.0) + 0.5, 0.0, 1.0);\n"
+"    return float4(in.col.rgb, in.col.a * opacity);\n"
 "  }\n"
 "  if (kind == 3u) {\n"
 "    constexpr sampler point_samp(mag_filter::nearest, min_filter::nearest, mip_filter::none, address::clamp_to_edge);\n"
 "    float4 texel = ns_texture_table_rgba.sample(point_samp, in.uv, level(0.0)); float coverage = min(texel.r, texel.a);\n"
-"    return float4(col.rgb, col.a * coverage);\n"
+"    return float4(in.col.rgb, in.col.a * coverage);\n"
 "  }\n"
-"  // A mipmapped image blurs by sampling a coarser level.\n"
-"  return ns_texture_table_rgba.sample(samp, in.uv, gradient2d(uv_dx * (1.0 + coc), uv_dy * (1.0 + coc))) * col;\n"
+"  return ns_texture_table_rgba.sample(samp, in.uv, gradient2d(uv_dx, uv_dy)) * in.col;\n"
 "}\n";
 
 // Vulkan/GLSL 450 form of the same renderer. The backend compiles each stage
@@ -737,7 +735,6 @@ static const char *ui_shader_glsl_vs_body =
     "layout(location = 2) out vec4 ns_col;\n"
     "layout(location = 3) out vec4 ns_params;\n"
     "layout(location = 4) flat out uint ns_meta;\n"
-    "layout(location = 5) out vec4 ns_dof;\n"
     "void main() {\n"
     "    uint base = uint(gl_VertexIndex) * 10u;\n"
     "    vec2 pixel = vec2(ui_word(base), ui_word(base + 1u)) * ns_root.vertex_scale.xy + vec2(ns_root.offset_x, ns_root.offset_y);\n"
@@ -768,7 +765,6 @@ static const char *ui_shader_glsl_vs_body =
     "    vec2 screen = vec2(ns_root.screen_width, ns_root.screen_height);\n"
     "    vec2 ndc = vec2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
     "    vec4 pos = vec4(ndc, 1.0, 1.0);\n"
-    "    vec4 dof = vec4(1.0, 0.0, 0.0, 0.0);\n"
     "    uint projection = (meta >> 8u) & 15u;\n"
     "    if (projection > 0u) {\n"
     "        uint p = ns_root.projection_offset / 4u + (projection - 1u) * 20u;\n"
@@ -778,7 +774,7 @@ static const char *ui_shader_glsl_vs_body =
     "                      vec4(ui_word(p + 12u), ui_word(p + 13u), ui_word(p + 14u), ui_word(p + 15u)));\n"
     "        if (ns_root.vertex_scale.z > 0.5) { m = mat4(ns_root.projection[0], ns_root.projection[1], ns_root.projection[2], ns_root.projection[3]); }\n"
     "        pos = m * vec4(ndc, 0.0, 1.0);\n"
-    "        if (projection != 9u) { dof = vec4(pos.w, m[0].z, m[1].z, m[2].z); pos.z = pos.w; }\n"
+    "        if (projection != 9u) { pos.z = pos.w; }\n"
     "    }\n"
     "    if (ns_root.hud_center_enable.w > 0.5) {\n"
     "        vec3 view = ns_root.hud_center_enable.xyz + ns_root.hud_right_hw.xyz * (ndc.x * ns_root.hud_right_hw.w) + ns_root.hud_up_hh.xyz * (ndc.y * ns_root.hud_up_hh.w);\n"
@@ -793,7 +789,6 @@ static const char *ui_shader_glsl_vs_body =
     "    ns_col = vec4(float((color >> 0u) & 255u), float((color >> 8u) & 255u), float((color >> 16u) & 255u), float((color >> 24u) & 255u)) / 255.0;\n"
     "    ns_params = params;\n"
     "    ns_meta = meta;\n"
-    "    ns_dof = dof;\n"
     "    gl_Position = pos;\n"
     "}\n";
 
@@ -804,7 +799,6 @@ static const char *ui_shader_glsl_fs_prelude =
     "layout(location = 2) in vec4 ns_col;\n"
     "layout(location = 3) in vec4 ns_params;\n"
     "layout(location = 4) flat in uint ns_meta;\n"
-    "layout(location = 5) in vec4 ns_dof;\n"
     "layout(location = 0) out vec4 ns_frag_color;\n";
 
 static const char *ui_shader_glsl_fs_body =
@@ -821,11 +815,6 @@ static const char *ui_shader_glsl_fs_body =
     "    uint base = ns_root.clip_offset / 4u + (clip_idx - 1u) * 4u;\n"
     "    vec4 c = vec4(ui_word(base), ui_word(base + 1u), ui_word(base + 2u), ui_word(base + 3u));\n"
     "    return ns_pixel.x < c.x || ns_pixel.y < c.y || ns_pixel.x >= c.z || ns_pixel.y >= c.w;\n"
-    "}\n"
-    "float ui_defocus() {\n"
-    "    if (ns_dof.y <= 0.0) { return 0.0; }\n"
-    "    float off = abs(1.0 - 1.0 / max(ns_dof.x, 1e-4));\n"
-    "    return ns_dof.y * clamp((off - ns_dof.z) / max(1.0 - ns_dof.z, 1e-3), 0.0, 1.0);\n"
     "}\n"
     "float ui_arc_distance() {\n"
     "    float radius = max(abs(ns_params.x), 0.0001);\n"
@@ -849,25 +838,19 @@ static const char *ui_shader_glsl_fs_body =
     "    vec2 pixel_fw = max(fwidth(ns_pixel), vec2(1e-6));\n"
     "    if (ui_clip_discard()) { discard; }\n"
     "    uint kind = ns_meta & 15u;\n"
-    "    // Defocus: see the Metal source.\n"
-    "    float coc = ui_defocus();\n"
-    "    vec4 col = ns_col;\n"
-    "    col.a *= 1.0 - ns_dof.w * clamp(coc / max(ns_dof.y, 1e-3), 0.0, 1.0);\n"
     "    if (kind == 5u) {\n"
-    "        vec2 foot = pixel_fw * (1.0 + coc);\n"
-    "        vec2 cover = clamp((min(ns_pixel + foot * 0.5, ns_uv) - max(ns_pixel - foot * 0.5, ns_params.xy)) / foot, 0.0, 1.0);\n"
-    "        ns_frag_color = vec4(col.rgb, col.a * min(ns_params.z * cover.x * cover.y, 1.0));\n"
+    "        vec2 cover = clamp((min(ns_pixel + pixel_fw * 0.5, ns_uv) - max(ns_pixel - pixel_fw * 0.5, ns_params.xy)) / pixel_fw, 0.0, 1.0);\n"
+    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * min(ns_params.z * cover.x * cover.y, 1.0));\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 2u) {\n"
-    "        float aa = arc_aa * (1.0 + coc);\n"
-    "        float opacity = 1.0 - smoothstep(-aa, aa, arc_distance);\n"
-    "        if (ns_params.x < 0.0 && coc <= 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
-    "        ns_frag_color = vec4(col.rgb, col.a * opacity);\n"
+    "        float opacity = 1.0 - smoothstep(-arc_aa, arc_aa, arc_distance);\n"
+    "        if (ns_params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
+    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 4u) {\n"
-    "        ns_frag_color = col;\n"
+    "        ns_frag_color = ns_col;\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 1u) {\n"
@@ -879,19 +862,18 @@ static const char *ui_shader_glsl_fs_body =
     "        vec2 unit_range = vec2(range) / (vec2(textureSize(ns_texture_table[0], 0)) * face.zw);\n"
     "        vec2 screen_texel = max(abs(uv_dx) + abs(uv_dy), vec2(1e-6));\n"
     "        float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
-    "        float soft = min(max(ns_params.z, 1.0) + coc, max(px_range, max(ns_params.z, 1.0)));\n"
-    "        float opacity = clamp(((sd - 0.5) * px_range + ns_params.y) / soft + 0.5, 0.0, 1.0);\n"
-    "        ns_frag_color = vec4(col.rgb, col.a * opacity);\n"
+    "        float opacity = clamp(((sd - 0.5) * px_range + ns_params.y) / max(ns_params.z, 1.0) + 0.5, 0.0, 1.0);\n"
+    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 3u) {\n"
     "        ivec2 size = textureSize(ns_texture_table[1], 0);\n"
     "        ivec2 pixel = clamp(ivec2(ns_uv * vec2(size)), ivec2(0), size - ivec2(1));\n"
     "        vec4 texel = texelFetch(ns_texture_table[1], pixel, 0);\n"
-    "        ns_frag_color = vec4(col.rgb, col.a * min(texel.r, texel.a));\n"
+    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * min(texel.r, texel.a));\n"
     "        return;\n"
     "    }\n"
-    "    ns_frag_color = textureGrad(ns_texture_table[1], ns_uv, uv_dx * (1.0 + coc), uv_dy * (1.0 + coc)) * col;\n"
+    "    ns_frag_color = textureGrad(ns_texture_table[1], ns_uv, uv_dx, uv_dy) * ns_col;\n"
     "}\n";
 
 static void ui_glsl_append(char *out, size_t capacity, size_t *used, const char *format, ...) {
@@ -1951,6 +1933,10 @@ void ui_renderer_destroy(ui_renderer *r) {
     if (r->font_bitmap_texture) gpu_texture_destroy(r->font_bitmap_texture);
     if (r->font_bitmap_zh_texture) gpu_texture_destroy(r->font_bitmap_zh_texture);
     if (r->shader) gpu_shader_destroy(r->shader);
+    if (r->dof_shader) gpu_shader_destroy(r->dof_shader);
+    if (r->dof_scene) gpu_texture_destroy(r->dof_scene);
+    if (r->dof_retired) gpu_texture_destroy(r->dof_retired);
+    if (r->dof_noise) gpu_texture_destroy(r->dof_noise);
     if (r->storage) gpu_free(r->storage);
     for (i32 i = 0; i < UI_FONT_COUNT; i++) free(r->fonts[i].glyphs);
     free(r->vertices);
@@ -1996,6 +1982,10 @@ static void ui_age_retired_buffers(ui_renderer *r) {
             gpu_free(r->retired[i].addr);
             r->retired[i].addr = 0;
         }
+    }
+    if (r->dof_retired && --r->dof_retired_frames <= 0) {
+        gpu_texture_destroy(r->dof_retired);
+        r->dof_retired = 0;
     }
     if (r->font_pack_retired && --r->font_pack_retired_frames <= 0) {
         gpu_texture_destroy(r->font_pack_retired);
@@ -2403,7 +2393,7 @@ void ui_begin_frame(ui_renderer *r) {
     r->current_texture_id = UI_WHITE_TEXTURE;
     r->plane_count = 0;
     r->current_plane = 0;
-    r->plane_focus[0] = r->plane_focus[1] = r->plane_focus[2] = 0.0f;
+    r->plane_focus[0] = r->plane_focus[1] = 0.0f;
     r->overlay = false;
 }
 
@@ -2907,10 +2897,16 @@ void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 fo
     m[12] = (f32)(-ncx * k * ncy);
     m[13] = (f32)(ncy - ncy * ncy * k - c * ncy);
     m[15] = (f32)(1.0 - k * ncy);
-    m[2] = r->plane_focus[0];
-    m[6] = r->plane_focus[1];
-    m[10] = r->plane_focus[2];
     r->plane_scissors[r->plane_count] = (ui_clip){x + r->safe_rect.x, y + r->safe_rect.y, w, h};
+    // On screen, 1 - 1/w of the plane is linear in y: tan(tilt) / focal per
+    // ui unit from the pivot line. The composite pass derives each pixel's
+    // defocus from it, so the scene needs no depth target.
+    f32 *dof = r->plane_dof[r->plane_count];
+    dof[0] = r->plane_focus[0];
+    dof[1] = r->plane_focus[1];
+    dof[2] = (f32)(center_y + r->safe_rect.y);
+    dof[3] = (f32)fabs(tan(tilt) / focal);
+    if (dof[3] <= 0.0f) dof[0] = 0.0f;
     r->plane_count++;
     r->current_plane = r->plane_count;
     // The plane reaches past the screen toward its horizon, so its clips
@@ -2920,17 +2916,19 @@ void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 fo
     }
 }
 
-// Depth of field for the planes begun after this call in the frame. Depth on
-// a plane is w, 1 on the line it turns about. A fragment whose |1 - 1/w| is
-// past `band` defocuses: up to `blur` ui units of softened edges on MSDF
-// text, arcs and filtered rectangles, a mip-biased image, and its alpha
-// scaled down by up to `fade` (0..1). It costs a few instructions per
-// fragment and no extra pass. ui_begin_frame returns it to sharp.
-void ui_set_plane_focus(ui_renderer *r, f64 blur, f64 band, f64 fade) {
+// Depth of field for the planes begun after this call in the frame, as a
+// camera focused on the plane's pivot line would see it. Each pixel's defocus
+// is |1 - 1/w| for its depth w on the plane: none within `band`, growing to a
+// blur radius of `blur` ui units toward the horizon and the near edge. The
+// plane draws into an offscreen scene that a screen-space pass gathers back
+// through a lens disc turned and jittered per pixel by blue noise, so the
+// blur carries the fine grain of a real lens rather than banding. A plane
+// that is not tilted stays sharp and costs nothing. ui_begin_frame returns
+// it to sharp.
+void ui_set_plane_focus(ui_renderer *r, f64 blur, f64 band) {
     if (!r) return;
     r->plane_focus[0] = (f32)(blur > 0.0 ? blur : 0.0);
     r->plane_focus[1] = (f32)(band < 0.0 ? 0.0 : (band > 0.95 ? 0.95 : band));
-    r->plane_focus[2] = (f32)(fade < 0.0 ? 0.0 : (fade > 1.0 ? 1.0 : fade));
 }
 
 void ui_end_plane(ui_renderer *r) {
@@ -3011,6 +3009,9 @@ static ns_bool ui_plan_draws(ui_renderer *r, ns_bool panel, ns_bool hud) {
         const u32 rgba = ui_command_rgba(r, cmd);
         const u32 meta = ui_command_meta(cmd, rgba) | (projection << UI_META_PROJECTION_SHIFT);
         const ns_bool msdf = cmd->kind == UI_KIND_MSDF;
+        const ns_bool focus = projection > 0 && projection <= (u32)r->plane_count &&
+                              r->plane_dof[projection - 1][0] > 0.0f;
+        const u32 planes = focus ? 1u << (projection - 1) : 0u;
         if (msdf) {
             r->plan_msdf = true;
             if (cmd->texture_id == UI_FONT_ZH_TEXTURE) r->plan_zh = true;
@@ -3021,15 +3022,18 @@ static ns_bool ui_plan_draws(ui_renderer *r, ns_bool panel, ns_bool hud) {
                 .batch_meta = meta,
                 .rgba = rgba,
                 .msdf = msdf,
+                .focus = focus,
+                .planes = planes,
             };
             run = NULL;
             continue;
         }
         if (!run || run->vertex_offset + run->vertex_count != cmd->vertex_offset ||
-            (rgba && run->rgba && rgba != run->rgba)) {
+            (rgba && run->rgba && rgba != run->rgba) || run->focus != focus) {
             run = &r->draws[r->draw_count++];
-            *run = (ui_draw){.command = -1, .vertex_offset = cmd->vertex_offset};
+            *run = (ui_draw){.command = -1, .vertex_offset = cmd->vertex_offset, .focus = focus};
         }
+        run->planes |= planes;
         if (rgba) run->rgba = rgba;
         if (msdf) run->msdf = true;
         run->vertex_count += cmd->vertex_count;
@@ -3048,7 +3052,6 @@ static void ui_upload_projections(ui_renderer *r, f64 sx, f64 sy, f32 *words) {
         f32 *out = words + i * UI_PROJECTION_WORDS;
         const ui_clip c = r->plane_scissors[i];
         memcpy(out, r->planes[i], 16 * sizeof(f32));
-        out[2] = (f32)(out[2] * sx);
         out[16] = (f32)floor(c.x * sx);
         out[17] = (f32)floor(c.y * sy);
         out[18] = (f32)ceil((c.x + c.w) * sx);
@@ -3058,47 +3061,262 @@ static void ui_upload_projections(ui_renderer *r, f64 sx, f64 sy, f32 *words) {
     gpu_write(r->storage + r->projection_offset, words, sizeof(f32) * UI_PROJECTION_PANEL * UI_PROJECTION_WORDS);
 }
 
-void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
-    if (!r || !r->gpu_ready) return;
-    // ui_color_rgba is passed by value at the ns surface and the native FFI
-    // adapter retains the historical opaque pointer ABI. The old renderer did
-    // not dereference it either; keep that ABI and use the established default.
-    ns_unused(clear);
+// Depth of field composite. It reads the plane's offscreen scene, which holds
+// premultiplied colour (straight-alpha draws over a cleared target), and
+// gathers each pixel's lens disc from it: a golden-angle spiral of taps,
+// turned and jittered per pixel by a tiling blue-noise mask, its tap count
+// growing with the disc's area. A tap counts as far as its own blur reaches
+// back to the pixel, so a sharp region does not bleed into its neighbours.
+// The defocus is analytic: on a tilted plane it grows linearly with the
+// distance from the pivot line.
+static const char *ui_dof_shader_src =
+"#include <metal_stdlib>\n"
+"using namespace metal;\n"
+"struct DofRoot { float4 rect; float4 focus; float4 size; };\n"
+"struct DofOut { float4 pos [[position]]; };\n"
+"vertex DofOut ui_dof_vs(uint vertex_id [[vertex_id]], constant DofRoot &ns_root [[buffer(0)]]) {\n"
+"  float2 t = float2(vertex_id == 1u || vertex_id == 3u || vertex_id == 4u ? 1.0 : 0.0, vertex_id == 2u || vertex_id >= 4u ? 1.0 : 0.0);\n"
+"  float2 p = mix(ns_root.rect.xy, ns_root.rect.zw, t);\n"
+"  DofOut o; o.pos = float4(p.x / ns_root.size.x * 2.0 - 1.0, 1.0 - p.y / ns_root.size.y * 2.0, 0.0, 1.0); return o;\n"
+"}\n"
+"static inline float ui_dof_coc(float y, constant DofRoot &root) {\n"
+"  float off = abs(y - root.focus.z) * root.focus.w;\n"
+"  return root.focus.x * clamp((off - root.focus.y) / max(1.0 - root.focus.y, 1e-3), 0.0, 1.0);\n"
+"}\n"
+"fragment float4 ui_dof_fs(DofOut in [[stage_in]], constant DofRoot &ns_root [[buffer(0)]], texture2d<float> ns_texture_table_scene [[texture(3)]], texture2d<float> ns_texture_table_noise [[texture(4)]]) {\n"
+"  uint2 texel = uint2(in.pos.xy);\n"
+"  float4 sharp = ns_texture_table_scene.read(texel);\n"
+"  float coc = ui_dof_coc(in.pos.y, ns_root);\n"
+"  if (coc < 0.5) { return sharp; }\n"
+"  constexpr sampler samp(mag_filter::linear, min_filter::linear, address::clamp_to_zero);\n"
+"  float turn = ns_texture_table_noise.read(texel & 63u).r * 6.2831853;\n"
+"  float jitter = ns_texture_table_noise.read((texel + uint2(32u, 21u)) & 63u).r;\n"
+"  int taps = clamp(int(coc * coc * 0.25) + 8, 8, 48);\n"
+"  float2 size = float2(ns_texture_table_scene.get_width(), ns_texture_table_scene.get_height());\n"
+"  float4 sum = sharp; float weight = 1.0;\n"
+"  for (int i = 0; i < taps; i++) {\n"
+"    float radius = coc * sqrt((float(i) + jitter) / float(taps));\n"
+"    float a = turn + float(i) * 2.39996323;\n"
+"    float2 q = in.pos.xy + radius * float2(cos(a), sin(a));\n"
+"    float w = clamp(ui_dof_coc(q.y, ns_root) - radius + 1.0, 0.0, 1.0);\n"
+"    sum += ns_texture_table_scene.sample(samp, q / size, level(0.0)) * w; weight += w;\n"
+"  }\n"
+"  return sum / weight;\n"
+"}\n";
+
+static const char *ui_dof_shader_glsl_vs =
+    "#version 450\n"
+    "layout(set = 0, binding = 2, std140) uniform DofRoot { vec4 rect; vec4 focus; vec4 size; } ns_root;\n"
+    "void main() {\n"
+    "    uint v = uint(gl_VertexIndex);\n"
+    "    vec2 t = vec2((v == 1u || v == 3u || v == 4u) ? 1.0 : 0.0, (v == 2u || v >= 4u) ? 1.0 : 0.0);\n"
+    "    vec2 p = mix(ns_root.rect.xy, ns_root.rect.zw, t);\n"
+    "    gl_Position = vec4(p.x / ns_root.size.x * 2.0 - 1.0, 1.0 - p.y / ns_root.size.y * 2.0, 0.0, 1.0);\n"
+    "}\n";
+
+static const char *ui_dof_shader_glsl_fs =
+    "#version 450\n"
+    "layout(set = 0, binding = 2, std140) uniform DofRoot { vec4 rect; vec4 focus; vec4 size; } ns_root;\n"
+    "layout(set = 0, binding = 5) uniform sampler2D ns_texture_table[2];\n"
+    "layout(location = 0) out vec4 ns_frag_color;\n"
+    "float ui_dof_coc(float y) {\n"
+    "    float off = abs(y - ns_root.focus.z) * ns_root.focus.w;\n"
+    "    return ns_root.focus.x * clamp((off - ns_root.focus.y) / max(1.0 - ns_root.focus.y, 1e-3), 0.0, 1.0);\n"
+    "}\n"
+    "void main() {\n"
+    "    ivec2 texel = ivec2(gl_FragCoord.xy);\n"
+    "    vec4 sharp = texelFetch(ns_texture_table[0], texel, 0);\n"
+    "    float coc = ui_dof_coc(gl_FragCoord.y);\n"
+    "    if (coc < 0.5) { ns_frag_color = sharp; return; }\n"
+    "    float turn = texelFetch(ns_texture_table[1], texel & 63, 0).r * 6.2831853;\n"
+    "    float jitter = texelFetch(ns_texture_table[1], (texel + ivec2(32, 21)) & 63, 0).r;\n"
+    "    int taps = clamp(int(coc * coc * 0.25) + 8, 8, 48);\n"
+    "    vec2 size = vec2(textureSize(ns_texture_table[0], 0));\n"
+    "    vec4 sum = sharp;\n"
+    "    float weight = 1.0;\n"
+    "    for (int i = 0; i < taps; i++) {\n"
+    "        float radius = coc * sqrt((float(i) + jitter) / float(taps));\n"
+    "        float a = turn + float(i) * 2.39996323;\n"
+    "        vec2 q = gl_FragCoord.xy + radius * vec2(cos(a), sin(a));\n"
+    "        float w = clamp(ui_dof_coc(q.y) - radius + 1.0, 0.0, 1.0);\n"
+    "        vec2 uv = q / size;\n"
+    "        vec4 tap = (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) ? vec4(0.0) : textureLod(ns_texture_table[0], uv, 0.0);\n"
+    "        sum += tap * w;\n"
+    "        weight += w;\n"
+    "    }\n"
+    "    ns_frag_color = sum / weight;\n"
+    "}\n";
+
+typedef struct ui_dof_root {
+    f32 rect[4];  // the plane's framebuffer rectangle (x0, y0, x1, y1)
+    f32 focus[4]; // blur radius px, band, pivot y px, defocus per px
+    f32 size[4];  // framebuffer width, height
+} ui_dof_root;
+
+#define UI_DOF_NOISE_SIZE 64
+#define UI_DOF_NOISE_RADIUS 6
+
+// Add (sign 1) or remove (-1) one point's Gaussian from the toroidal energy.
+static void ui_noise_splat(f32 *energy, const f32 *kernel, i32 index, f32 sign) {
+    const i32 n = UI_DOF_NOISE_SIZE;
+    const i32 reach = UI_DOF_NOISE_RADIUS;
+    const i32 side = 2 * reach + 1;
+    const i32 x = index % n;
+    const i32 y = index / n;
+    for (i32 dy = -reach; dy <= reach; dy++) {
+        const i32 row = ((y + dy + n) % n) * n;
+        for (i32 dx = -reach; dx <= reach; dx++) {
+            energy[row + (x + dx + n) % n] += sign * kernel[(dy + reach) * side + dx + reach];
+        }
+    }
+}
+
+// The set point with the most energy (the tightest cluster) or the empty
+// pixel with the least (the largest void).
+static i32 ui_noise_extreme(const f32 *energy, const u8 *bits, u8 set) {
+    i32 best = -1;
+    for (i32 i = 0; i < UI_DOF_NOISE_SIZE * UI_DOF_NOISE_SIZE; i++) {
+        if (bits[i] != set) continue;
+        if (best < 0 || (set ? energy[i] > energy[best] : energy[i] < energy[best])) best = i;
+    }
+    return best;
+}
+
+// A tiling blue-noise rank mask by void and cluster (Ulichney 1993): every
+// value 0..255 appears equally often, and any threshold of it spreads its
+// pixels evenly with no low-frequency clumps. Built once, deterministically.
+static ns_bool ui_blue_noise(u8 *out) {
+    const i32 count = UI_DOF_NOISE_SIZE * UI_DOF_NOISE_SIZE;
+    const i32 side = 2 * UI_DOF_NOISE_RADIUS + 1;
+    f32 kernel[(2 * UI_DOF_NOISE_RADIUS + 1) * (2 * UI_DOF_NOISE_RADIUS + 1)];
+    for (i32 dy = 0; dy < side; dy++) {
+        for (i32 dx = 0; dx < side; dx++) {
+            const f32 x = (f32)(dx - UI_DOF_NOISE_RADIUS);
+            const f32 y = (f32)(dy - UI_DOF_NOISE_RADIUS);
+            kernel[dy * side + dx] = expf(-(x * x + y * y) / (2.0f * 1.5f * 1.5f));
+        }
+    }
+    f32 *energy = (f32 *)calloc((size_t)count, sizeof(f32));
+    f32 *seed_energy = (f32 *)malloc((size_t)count * sizeof(f32));
+    u8 *bits = (u8 *)calloc((size_t)count, 1);
+    u8 *seed_bits = (u8 *)malloc((size_t)count);
+    i32 *rank = (i32 *)malloc((size_t)count * sizeof(i32));
+    if (!energy || !seed_energy || !bits || !seed_bits || !rank) {
+        free(energy); free(seed_energy); free(bits); free(seed_bits); free(rank);
+        return false;
+    }
+    // A tenth of the pixels from a fixed generator, then the tightest
+    // cluster moves into the largest void until it lands where it was.
+    const i32 ones = count / 10;
+    u32 state = 0x9e3779b9u;
+    for (i32 placed = 0; placed < ones;) {
+        state = state * 1664525u + 1013904223u;
+        const i32 i = (i32)((state >> 8) % (u32)count);
+        if (bits[i]) continue;
+        bits[i] = 1;
+        ui_noise_splat(energy, kernel, i, 1.0f);
+        placed++;
+    }
+    for (i32 guard = 0; guard < count; guard++) {
+        const i32 cluster = ui_noise_extreme(energy, bits, 1);
+        bits[cluster] = 0;
+        ui_noise_splat(energy, kernel, cluster, -1.0f);
+        const i32 hole = ui_noise_extreme(energy, bits, 0);
+        bits[hole] = 1;
+        ui_noise_splat(energy, kernel, hole, 1.0f);
+        if (hole == cluster) break;
+    }
+    memcpy(seed_bits, bits, (size_t)count);
+    memcpy(seed_energy, energy, (size_t)count * sizeof(f32));
+    // The seed points rank below it, the tightest cluster removed first
+    // taking the highest rank; then every void filled in turn ranks above.
+    for (i32 r = ones - 1; r >= 0; r--) {
+        const i32 cluster = ui_noise_extreme(energy, bits, 1);
+        bits[cluster] = 0;
+        ui_noise_splat(energy, kernel, cluster, -1.0f);
+        rank[cluster] = r;
+    }
+    memcpy(bits, seed_bits, (size_t)count);
+    memcpy(energy, seed_energy, (size_t)count * sizeof(f32));
+    for (i32 r = ones; r < count; r++) {
+        const i32 hole = ui_noise_extreme(energy, bits, 0);
+        bits[hole] = 1;
+        ui_noise_splat(energy, kernel, hole, 1.0f);
+        rank[hole] = r;
+    }
+    for (i32 i = 0; i < count; i++) out[i] = (u8)((rank[i] * 256) / count);
+    free(energy); free(seed_energy); free(bits); free(seed_bits); free(rank);
+    return true;
+}
+
+// The composite shader, the blue-noise mask and a scene the framebuffer's
+// size, made the first time a plane wants depth of field. On failure the
+// plane draws sharp on the screen as before.
+static ns_bool ui_dof_ready(ui_renderer *r, i32 width, i32 height) {
+    if (r->dof_failed || width <= 0 || height <= 0) return false;
+    if (!r->dof_shader) {
+        if (strcmp(gpu_shader_target(), "glsl") == 0) {
+            r->dof_shader = gpu_shader_graphics_create(ui_dof_shader_glsl_vs, ui_dof_shader_glsl_fs, "ui_dof_vs", "ui_dof_fs");
+        } else {
+            r->dof_shader = gpu_shader_graphics_create(ui_dof_shader_src, ui_dof_shader_src, "ui_dof_vs", "ui_dof_fs");
+        }
+        r->dof_state = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
+                                        COMPARE_ALWAYS, false, GPU_BLEND_PREMULTIPLIED, COLOR_MASK_ALL);
+        u8 noise[UI_DOF_NOISE_SIZE * UI_DOF_NOISE_SIZE];
+        if (r->dof_shader && ui_blue_noise(noise)) {
+            r->dof_noise = gpu_texture_create(UI_DOF_NOISE_SIZE, UI_DOF_NOISE_SIZE, 1, PIXELFORMAT_R8,
+                                              TEXTURE_USAGE_READ, 1, TEXTURE_2D, "ui depth of field blue noise");
+            if (r->dof_noise) gpu_texture_upload(r->dof_noise, 0, 0, noise, sizeof(noise));
+        }
+        if (!r->dof_shader || !r->dof_state || !r->dof_noise) {
+            r->dof_failed = true;
+            return false;
+        }
+    }
+    if (r->dof_scene && r->dof_width == width && r->dof_height == height) return true;
+    if (r->dof_scene) {
+        if (r->dof_retired) gpu_texture_destroy(r->dof_retired);
+        r->dof_retired = r->dof_scene;
+        r->dof_retired_frames = 4;
+    }
+    r->dof_scene = gpu_texture_create(width, height, 1, PIXELFORMAT_RGBA8,
+                                      TEXTURE_USAGE_READ | TEXTURE_USAGE_RENDER_TARGET, 1, TEXTURE_2D,
+                                      "ui depth of field scene");
+    r->dof_width = width;
+    r->dof_height = height;
+    if (!r->dof_scene) r->dof_failed = true;
+    return r->dof_scene != 0;
+}
+
+// What every draw of one flush shares.
+typedef struct ui_flush_frame {
+    ns_bool hud;
     ui_hud_frame hud_frame;
-    ns_bool hud = ui_hud_solve(&hud_frame);
-    // The immersive HUD places itself; a 3D panel otherwise.
-    ns_bool panel = !hud && r->panel;
-    ui_preview_sync(r);
-    if (!ui_plan_draws(r, panel, hud)) return;
-    u32 clip_offset = 0;
-    u32 root_offset = 0;
-    if (!ui_upload_storage(r, &clip_offset, &root_offset)) return;
-    const f64 fallback_scale = r->content_scale > 0.0 ? r->content_scale : 1.0;
-    const i32 framebuffer_width = r->v && r->v->framebuffer_width > 0
-                                      ? r->v->framebuffer_width
-                                      : (i32)(r->rect.w * fallback_scale + 0.5);
-    const i32 framebuffer_height = r->v && r->v->framebuffer_height > 0
-                                       ? r->v->framebuffer_height
-                                       : (i32)(r->rect.h * fallback_scale + 0.5);
+    u32 clip_offset;
+    u32 root_offset;
+    u32 pack;
+    i32 width;
+    i32 height;
     f32 projection_words[UI_PROJECTION_PANEL * UI_PROJECTION_WORDS];
-    ui_upload_projections(r, (f64)framebuffer_width / r->rect.w, (f64)framebuffer_height / r->rect.h, projection_words);
-    // One pass, one pipeline: clips, planes and the panel are resolved per
-    // fragment, so nothing changes between the draws but their roots.
-    if (hud) gpu_screen_pass_begin("ui", 0.0, 0.0, 0.0, 1.0);
-    else gpu_screen_pass_begin_depth("ui", 0.0, 0.0, 0.0, 1.0, 0.0);
+} ui_flush_frame;
+
+// Encode draws [from, to) in the open pass. The shader, state and storage are
+// bound again for each run: a composite between runs replaces them.
+static void ui_encode_draws(ui_renderer *r, const ui_flush_frame *f, i32 from, i32 to) {
+    const i32 framebuffer_width = f->width;
+    const i32 framebuffer_height = f->height;
     gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
     gpu_set_scissor(0, 0, framebuffer_width, framebuffer_height);
-    gpu_set_state(hud ? r->render_state_hud : r->render_state);
+    gpu_set_state(f->hud ? r->render_state_hud : r->render_state);
     gpu_set_shader(r->shader);
     gpu_set_storage(r->storage);
     gpu_addr bound_storage = r->storage;
-    const u32 pack = r->plan_msdf ? ui_font_pack(r, r->plan_zh) : r->font_pack;
-    for (i32 i = 0; i < r->draw_count; i++) {
+    for (i32 i = from; i < to; i++) {
         const ui_draw *d = &r->draws[i];
         ui_gpu_root root = {
             .screen_width = (f32)r->rect.w,
             .screen_height = (f32)r->rect.h,
-            .clip_offset = clip_offset,
+            .clip_offset = f->clip_offset,
             .projection_offset = r->projection_offset,
             .vertex_scale = {1.0f, 1.0f, 0.0f, (f32)((f64)framebuffer_width / r->rect.w)},
         };
@@ -3106,7 +3324,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         // Both slots are bound on every draw; one the draw does not read
         // holds a texture the draw does read where there is one.
         u32 textures[2];
-        textures[UI_TEXTURE_MSDF] = d->msdf && pack ? pack : (d->rgba ? d->rgba : pack);
+        textures[UI_TEXTURE_MSDF] = d->msdf && f->pack ? f->pack : (d->rgba ? d->rgba : f->pack);
         if (!textures[UI_TEXTURE_MSDF]) textures[UI_TEXTURE_MSDF] = ui_placeholder_texture(r);
         textures[UI_TEXTURE_RGBA] = d->rgba ? d->rgba : textures[UI_TEXTURE_MSDF];
         i32 vertex_offset = d->vertex_offset;
@@ -3134,14 +3352,14 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             root.batch_clip[3] = (f32)(cmd->batch_clip.y + r->safe_rect.y + cmd->batch_clip.h);
             const u32 projection = (d->batch_meta >> UI_META_PROJECTION_SHIFT) & 15u;
             if (projection > 0 && projection <= UI_PROJECTION_PANEL) {
-                memcpy(root.projection, projection_words + (projection - 1) * UI_PROJECTION_WORDS, sizeof(root.projection));
+                memcpy(root.projection, f->projection_words + (projection - 1) * UI_PROJECTION_WORDS, sizeof(root.projection));
             }
         }
-        if (hud) ui_fill_hud_root(&root, &hud_frame);
+        if (f->hud) ui_fill_hud_root(&root, &f->hud_frame);
         // All roots have reserved, aligned space in this frame's private
         // storage. Large command lists no longer consume the frame ring once
         // per draw, or retry its allocation thousands of times on failure.
-        gpu_addr root_addr = r->storage + root_offset + (u64)(u32)i * GPU_V2_ALLOC_ALIGN;
+        gpu_addr root_addr = r->storage + f->root_offset + (u64)(u32)i * GPU_V2_ALLOC_ALIGN;
         gpu_write(root_addr, &root, sizeof(root));
         gpu_set_root(root_addr);
         gpu_set_texture_table(textures, 2);
@@ -3150,6 +3368,81 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             bound_storage = storage;
         }
         gpu_draw_vertices(vertex_offset, vertex_count, 1);
+    }
+}
+
+// Gather each plane the scene holds back onto the screen, within its rectangle.
+static void ui_composite_focus(ui_renderer *r, const ui_flush_frame *f, u32 planes) {
+    const f64 scale = (f64)f->height / r->rect.h;
+    gpu_set_viewport(0, 0, f->width, f->height);
+    gpu_set_scissor(0, 0, f->width, f->height);
+    gpu_set_state(r->dof_state);
+    gpu_set_shader(r->dof_shader);
+    const u32 textures[2] = {r->dof_scene, r->dof_noise};
+    gpu_set_texture_table(textures, 2);
+    for (i32 i = 0; i < r->plane_count; i++) {
+        if (!(planes & (1u << i))) continue;
+        const f32 *dof = r->plane_dof[i];
+        const f32 *box = f->projection_words + i * UI_PROJECTION_WORDS + 16;
+        ui_dof_root root = {
+            .rect = {box[0], box[1], box[2], box[3]},
+            .focus = {(f32)(dof[0] * scale), dof[1], (f32)(dof[2] * scale), (f32)(dof[3] / scale)},
+            .size = {(f32)f->width, (f32)f->height, 0.0f, 0.0f},
+        };
+        gpu_set_root_data(&root, sizeof(root));
+        gpu_draw_vertices(0, 6, 1);
+    }
+}
+
+void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
+    if (!r || !r->gpu_ready) return;
+    // ui_color_rgba is passed by value at the ns surface and the native FFI
+    // adapter retains the historical opaque pointer ABI. The old renderer did
+    // not dereference it either; keep that ABI and use the established default.
+    ns_unused(clear);
+    static ui_flush_frame f;
+    f.hud = ui_hud_solve(&f.hud_frame);
+    // The immersive HUD places itself; a 3D panel otherwise.
+    ns_bool panel = !f.hud && r->panel;
+    ui_preview_sync(r);
+    if (!ui_plan_draws(r, panel, f.hud)) return;
+    if (!ui_upload_storage(r, &f.clip_offset, &f.root_offset)) return;
+    const f64 fallback_scale = r->content_scale > 0.0 ? r->content_scale : 1.0;
+    f.width = r->v && r->v->framebuffer_width > 0
+                  ? r->v->framebuffer_width
+                  : (i32)(r->rect.w * fallback_scale + 0.5);
+    f.height = r->v && r->v->framebuffer_height > 0
+                   ? r->v->framebuffer_height
+                   : (i32)(r->rect.h * fallback_scale + 0.5);
+    ui_upload_projections(r, (f64)f.width / r->rect.w, (f64)f.height / r->rect.h, f.projection_words);
+    f.pack = r->plan_msdf ? ui_font_pack(r, r->plan_zh) : r->font_pack;
+    // One pass, one pipeline: clips, planes and the panel are resolved per
+    // fragment, so nothing changes between the draws but their roots. Only a
+    // run of draws on a plane with depth of field leaves the screen: it draws
+    // into the offscreen scene, and the screen pass that resumes after it
+    // gathers the scene back through the lens before the next run.
+    ns_bool screen = false;
+    for (i32 i = 0; i < r->draw_count || !screen;) {
+        i32 end = i;
+        u32 planes = 0;
+        ns_bool focus = i < r->draw_count && r->draws[i].focus;
+        while (end < r->draw_count && r->draws[end].focus == focus) planes |= r->draws[end++].planes;
+        if (focus && !ui_dof_ready(r, f.width, f.height)) focus = false;
+        if (focus) {
+            if (screen) gpu_pass_end();
+            screen = false;
+            gpu_pass_begin("ui focus plane", r->dof_scene, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            ui_encode_draws(r, &f, i, end);
+            gpu_pass_end();
+        }
+        if (!screen) {
+            if (f.hud) gpu_screen_pass_begin("ui", 0.0, 0.0, 0.0, 1.0);
+            else gpu_screen_pass_begin_depth("ui", 0.0, 0.0, 0.0, 1.0, 0.0);
+            screen = true;
+        }
+        if (focus) ui_composite_focus(r, &f, planes);
+        else ui_encode_draws(r, &f, i, end);
+        i = end;
     }
     gpu_pass_end();
     // No commit: the pass joins the frame's one command buffer, which the
