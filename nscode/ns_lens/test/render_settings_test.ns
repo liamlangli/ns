@@ -9,6 +9,9 @@ fn main() {
     assert g_render_blur == RENDER_BLUR_MAX * 0.5
     render_slider_set(RENDER_ROW_BAND, 2.0)
     assert g_render_band == RENDER_BAND_MAX
+    render_slider_set(RENDER_ROW_FRINGE, 0.5)
+    assert g_render_fringe == RENDER_FRINGE_MAX * 0.5
+    assert render_slider_text(RENDER_ROW_FRINGE) == "25%"
     render_slider_set(RENDER_ROW_TILT, 0.5)
     assert g_lens_tilt == 0.0
     assert render_slider_get(RENDER_ROW_TILT) == 0.5
@@ -18,6 +21,7 @@ fn main() {
     g_lens_tilt = 0.0
     render_settings_reset()
     assert g_render_dof && g_render_blur == RENDER_BLUR_DEFAULT && g_render_band == RENDER_BAND_DEFAULT
+    assert g_render_fringe == RENDER_FRINGE_DEFAULT
 
     // The hint names the chord that hides the controls.
     assert lens_hint_keys(8) == "cmd+\\"

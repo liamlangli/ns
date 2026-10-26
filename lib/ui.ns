@@ -400,9 +400,11 @@ ref fn ui_end_plane(r: ref ui_renderer)
 // around that line (as |1 - 1/w|, w being 1 on it), growing to a lens blur of
 // `blur` ui units toward the horizon and the near edge. The plane renders
 // offscreen and a screen-space pass gathers it back through a lens disc
-// turned per pixel by blue noise. An untilted plane stays sharp.
+// turned per pixel by blue noise. An untilted plane stays sharp. `fringe`
+// (0 to 0.9) adds axial chromatic aberration: across each blur disc red
+// reaches that share of the radius further out and blue that much less far.
 // ui_begin_frame returns it to sharp.
-ref fn ui_set_plane_focus(r: ref ui_renderer, blur: f64, band: f64)
+ref fn ui_set_plane_focus(r: ref ui_renderer, blur: f64, band: f64, fringe: f64)
 
 // A fingertip against the panel, in canvas units like view.mouse_x after
 // ui_content_x. depth is its distance in front of the panel, toward the

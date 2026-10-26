@@ -433,11 +433,13 @@ typedef struct ui_renderer {
     ui_clip plane_scissors[UI_MAX_PLANES];
     i32 plane_count;
     i32 current_plane;
-    // Depth of field (ui_set_plane_focus): the blur radius in ui units and the
-    // sharp band the next ui_begin_plane takes, and per plane its blur, band,
-    // pivot line (drawable y) and defocus per ui unit away from that line.
-    f32 plane_focus[2];
+    // Depth of field (ui_set_plane_focus): the blur radius in ui units, the
+    // sharp band and the colour fringe the next ui_begin_plane takes, and per
+    // plane its blur, band, pivot line (drawable y) and defocus per ui unit
+    // away from that line, and its fringe.
+    f32 plane_focus[3];
     f32 plane_dof[UI_MAX_PLANES][4];
+    f32 plane_fringe[UI_MAX_PLANES];
     // A plane with depth of field draws into dof_scene, and a screen-space
     // pass gathers it back onto the screen through a blue-noise lens. A
     // resized scene may still be read by a frame in flight.
@@ -2393,7 +2395,7 @@ void ui_begin_frame(ui_renderer *r) {
     r->current_texture_id = UI_WHITE_TEXTURE;
     r->plane_count = 0;
     r->current_plane = 0;
-    r->plane_focus[0] = r->plane_focus[1] = 0.0f;
+    r->plane_focus[0] = r->plane_focus[1] = r->plane_focus[2] = 0.0f;
     r->overlay = false;
 }
 
@@ -2933,6 +2935,7 @@ void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 sp
     dof[2] = (f32)(center_y + r->safe_rect.y);
     dof[3] = (f32)fabs(tan(tilt) / focal);
     if (dof[3] <= 0.0f) dof[0] = 0.0f;
+    r->plane_fringe[r->plane_count] = r->plane_focus[2];
     r->plane_count++;
     r->current_plane = r->plane_count;
     // The plane reaches past the screen toward its horizon, so its clips
@@ -2949,12 +2952,16 @@ void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 sp
 // plane draws into an offscreen scene that a screen-space pass gathers back
 // through a lens disc turned and jittered per pixel by blue noise, so the
 // blur carries the fine grain of a real lens rather than banding. A plane
-// that is not tilted stays sharp and costs nothing. ui_begin_frame returns
-// it to sharp.
-void ui_set_plane_focus(ui_renderer *r, f64 blur, f64 band) {
+// that is not tilted stays sharp and costs nothing. `fringe` adds axial
+// chromatic aberration: red focuses behind the plane and blue in front of it,
+// so across each disc red reaches `fringe` of the radius further out and
+// blue that much less far, and defocused edges pick up red and blue rims.
+// ui_begin_frame returns it to sharp.
+void ui_set_plane_focus(ui_renderer *r, f64 blur, f64 band, f64 fringe) {
     if (!r) return;
     r->plane_focus[0] = (f32)(blur > 0.0 ? blur : 0.0);
     r->plane_focus[1] = (f32)(band < 0.0 ? 0.0 : (band > 0.95 ? 0.95 : band));
+    r->plane_focus[2] = (f32)(fringe < 0.0 ? 0.0 : (fringe > 0.9 ? 0.9 : fringe));
 }
 
 void ui_end_plane(ui_renderer *r) {
@@ -3094,11 +3101,14 @@ static void ui_upload_projections(ui_renderer *r, f64 sx, f64 sy, f32 *words) {
 // growing with the disc's area. A tap counts as far as its own blur reaches
 // back to the pixel, so a sharp region does not bleed into its neighbours.
 // The defocus is analytic: on a tilted plane it grows linearly with the
-// distance from the pivot line.
+// distance from the pivot line. With a fringe, each tap reads red further
+// out along its ray and blue nearer in, the rims a lens's axial chromatic
+// aberration leaves on out-of-focus edges.
 static const char *ui_dof_shader_src =
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
 "struct DofRoot { float4 rect; float4 focus; float4 size; };\n"
+"constexpr sampler ui_dof_samp(mag_filter::linear, min_filter::linear, address::clamp_to_zero);\n"
 "struct DofOut { float4 pos [[position]]; };\n"
 "vertex DofOut ui_dof_vs(uint vertex_id [[vertex_id]], constant DofRoot &ns_root [[buffer(0)]]) {\n"
 "  float2 t = float2(vertex_id == 1u || vertex_id == 3u || vertex_id == 4u ? 1.0 : 0.0, vertex_id == 2u || vertex_id >= 4u ? 1.0 : 0.0);\n"
@@ -3114,18 +3124,25 @@ static const char *ui_dof_shader_src =
 "  float4 sharp = ns_texture_table_scene.read(texel);\n"
 "  float coc = ui_dof_coc(in.pos.y, ns_root);\n"
 "  if (coc < 0.5) { return sharp; }\n"
-"  constexpr sampler samp(mag_filter::linear, min_filter::linear, address::clamp_to_zero);\n"
+
 "  float turn = ns_texture_table_noise.read(texel & 63u).r * 6.2831853;\n"
 "  float jitter = ns_texture_table_noise.read((texel + uint2(32u, 21u)) & 63u).r;\n"
 "  int taps = clamp(int(coc * coc * 0.25) + 8, 8, 48);\n"
 "  float2 size = float2(ns_texture_table_scene.get_width(), ns_texture_table_scene.get_height());\n"
+"  float fringe = ns_root.size.z;\n"
 "  float4 sum = sharp; float weight = 1.0;\n"
 "  for (int i = 0; i < taps; i++) {\n"
 "    float radius = coc * sqrt((float(i) + jitter) / float(taps));\n"
 "    float a = turn + float(i) * 2.39996323;\n"
-"    float2 q = in.pos.xy + radius * float2(cos(a), sin(a));\n"
+"    float2 ray = radius * float2(cos(a), sin(a));\n"
+"    float2 q = in.pos.xy + ray;\n"
 "    float w = clamp(ui_dof_coc(q.y, ns_root) - radius + 1.0, 0.0, 1.0);\n"
-"    sum += ns_texture_table_scene.sample(samp, q / size, level(0.0)) * w; weight += w;\n"
+"    float4 tap = ns_texture_table_scene.sample(ui_dof_samp, q / size, level(0.0));\n"
+"    if (fringe > 0.0) {\n"
+"      tap.r = ns_texture_table_scene.sample(ui_dof_samp, (q + ray * fringe) / size, level(0.0)).r;\n"
+"      tap.b = ns_texture_table_scene.sample(ui_dof_samp, (q - ray * fringe) / size, level(0.0)).b;\n"
+"    }\n"
+"    sum += tap * w; weight += w;\n"
 "  }\n"
 "  return sum / weight;\n"
 "}\n";
@@ -3145,6 +3162,10 @@ static const char *ui_dof_shader_glsl_fs =
     "layout(set = 0, binding = 2, std140) uniform DofRoot { vec4 rect; vec4 focus; vec4 size; } ns_root;\n"
     "layout(set = 0, binding = 5) uniform sampler2D ns_texture_table[2];\n"
     "layout(location = 0) out vec4 ns_frag_color;\n"
+    "vec4 ui_dof_tap(vec2 q, vec2 size) {\n"
+    "    vec2 uv = q / size;\n"
+    "    return (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) ? vec4(0.0) : textureLod(ns_texture_table[0], uv, 0.0);\n"
+    "}\n"
     "float ui_dof_coc(float y) {\n"
     "    float off = abs(y - ns_root.focus.z) * ns_root.focus.w;\n"
     "    return ns_root.focus.x * clamp((off - ns_root.focus.y) / max(1.0 - ns_root.focus.y, 1e-3), 0.0, 1.0);\n"
@@ -3158,15 +3179,20 @@ static const char *ui_dof_shader_glsl_fs =
     "    float jitter = texelFetch(ns_texture_table[1], (texel + ivec2(32, 21)) & 63, 0).r;\n"
     "    int taps = clamp(int(coc * coc * 0.25) + 8, 8, 48);\n"
     "    vec2 size = vec2(textureSize(ns_texture_table[0], 0));\n"
+    "    float fringe = ns_root.size.z;\n"
     "    vec4 sum = sharp;\n"
     "    float weight = 1.0;\n"
     "    for (int i = 0; i < taps; i++) {\n"
     "        float radius = coc * sqrt((float(i) + jitter) / float(taps));\n"
     "        float a = turn + float(i) * 2.39996323;\n"
-    "        vec2 q = gl_FragCoord.xy + radius * vec2(cos(a), sin(a));\n"
+    "        vec2 ray = radius * vec2(cos(a), sin(a));\n"
+    "        vec2 q = gl_FragCoord.xy + ray;\n"
     "        float w = clamp(ui_dof_coc(q.y) - radius + 1.0, 0.0, 1.0);\n"
-    "        vec2 uv = q / size;\n"
-    "        vec4 tap = (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) ? vec4(0.0) : textureLod(ns_texture_table[0], uv, 0.0);\n"
+    "        vec4 tap = ui_dof_tap(q, size);\n"
+    "        if (fringe > 0.0) {\n"
+    "            tap.r = ui_dof_tap(q + ray * fringe, size).r;\n"
+    "            tap.b = ui_dof_tap(q - ray * fringe, size).b;\n"
+    "        }\n"
     "        sum += tap * w;\n"
     "        weight += w;\n"
     "    }\n"
@@ -3176,7 +3202,7 @@ static const char *ui_dof_shader_glsl_fs =
 typedef struct ui_dof_root {
     f32 rect[4];  // the plane's framebuffer rectangle (x0, y0, x1, y1)
     f32 focus[4]; // blur radius px, band, pivot y px, defocus per px
-    f32 size[4];  // framebuffer width, height
+    f32 size[4];  // framebuffer width, height, colour fringe
 } ui_dof_root;
 
 #define UI_DOF_NOISE_SIZE 64
@@ -3413,7 +3439,7 @@ static void ui_composite_focus(ui_renderer *r, const ui_flush_frame *f, u32 plan
         ui_dof_root root = {
             .rect = {box[0], box[1], box[2], box[3]},
             .focus = {(f32)(dof[0] * scale), dof[1], (f32)(dof[2] * scale), (f32)(dof[3] / scale)},
-            .size = {(f32)f->width, (f32)f->height, 0.0f, 0.0f},
+            .size = {(f32)f->width, (f32)f->height, r->plane_fringe[i], 0.0f},
         };
         gpu_set_root_data(&root, sizeof(root));
         gpu_draw_vertices(0, 6, 1);

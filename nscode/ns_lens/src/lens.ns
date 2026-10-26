@@ -1408,7 +1408,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     if g_lens_plane_tilt != 0.0 || g_lens_spin != 0.0 {
         render_settings_plane_focus(r)
         ui_begin_plane(r, g_lens_plane_cx, g_lens_plane_cy, g_lens_plane_tilt, g_lens_spin, g_lens_plane_focal, 0.0, top, w, body_h)
-        ui_set_plane_focus(r, 0.0, 0.0)
+        ui_set_plane_focus(r, 0.0, 0.0, 0.0)
     }
     ui_push_clip(r, vx0, vy0, vx1 - vx0, vy1 - vy0)
     lens_draw_grid(r, w, top, body_h)
