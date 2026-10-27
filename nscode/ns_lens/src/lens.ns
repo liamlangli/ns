@@ -1361,7 +1361,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     if turn != 0.0 && g_lens_touch_held == false {
         g_lens_pad_spin_time = now
     }
-    lens_spin_settle(g_lens_touch_held || lens_pad_held(g_lens_pad_spin_time, now))
+    lens_spin_settle(g_lens_touch_held || lens_pad_held(g_lens_pad_spin_time, now) || g_render_drag == RENDER_ROW_SPIN)
     if over_map {
         if shift_down(v) == false && v.scroll_y != 0.0 {
             lens_zoom_at(g_mouse_x, g_mouse_y, w, top, body_h, v.scroll_y)

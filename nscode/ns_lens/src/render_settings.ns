@@ -1,6 +1,6 @@
 // View > Render Settings: a small floating panel under the top bar with the
 // tilted map's depth of field (on/off, the lens blur, the sharp band around
-// the middle and the lens's colour fringe) and the tilt itself. The values are
+// the middle and the lens's colour fringe), the tilt and the spin. The values are
 // kept with the window state (panel_state.ns).
 //
 // Cmd+\ (a four-finger tap on a trackpad or a phone) hides every control but
@@ -12,14 +12,16 @@ use ui
 
 lit RENDER_PANEL_W = 270.0
 lit RENDER_ROW_H = 26.0
-// Title, depth of field, blur, focus band, aberration, tilt, then reset.
-lit RENDER_ROWS = 7
+// Title, depth of field, blur, focus band, aberration, tilt, rotation, then
+// reset.
+lit RENDER_ROWS = 8
 lit RENDER_ROW_DOF = 1
 lit RENDER_ROW_BLUR = 2
 lit RENDER_ROW_BAND = 3
 lit RENDER_ROW_FRINGE = 4
 lit RENDER_ROW_TILT = 5
-lit RENDER_ROW_RESET = 6
+lit RENDER_ROW_SPIN = 6
+lit RENDER_ROW_RESET = 7
 lit RENDER_LABEL_W = 92.0
 lit RENDER_VALUE_W = 52.0
 lit RENDER_BLUR_MAX = 16.0
@@ -82,6 +84,7 @@ fn render_row_label(row: i32) str {
     if row == RENDER_ROW_BAND { return "Focus band" }
     if row == RENDER_ROW_FRINGE { return "Aberration" }
     if row == RENDER_ROW_TILT { return "Tilt" }
+    if row == RENDER_ROW_SPIN { return "Rotation" }
     return ""
 }
 
@@ -90,6 +93,7 @@ fn render_slider_get(row: i32) f64 {
     if row == RENDER_ROW_BLUR { return g_render_blur / RENDER_BLUR_MAX }
     if row == RENDER_ROW_BAND { return g_render_band / RENDER_BAND_MAX }
     if row == RENDER_ROW_FRINGE { return g_render_fringe / RENDER_FRINGE_MAX }
+    if row == RENDER_ROW_SPIN { return (g_lens_spin + LENS_PI) / (LENS_PI * 2.0) }
     return (g_lens_tilt + LENS_MAX_TILT) / (LENS_MAX_TILT * 2.0)
 }
 
@@ -103,6 +107,10 @@ fn render_slider_set(row: i32, t: f64) {
         g_render_fringe = at * RENDER_FRINGE_MAX
     } else if row == RENDER_ROW_TILT {
         g_lens_tilt = at * LENS_MAX_TILT * 2.0 - LENS_MAX_TILT
+    } else if row == RENDER_ROW_SPIN {
+        // The plane turns about its pivot, the middle of the map, so the
+        // slider spins the map about the screen's centre.
+        g_lens_spin = at * LENS_PI * 2.0 - LENS_PI
     }
 }
 
@@ -112,6 +120,7 @@ fn render_slider_text(row: i32) str {
     if row == RENDER_ROW_FRINGE { return itos((g_render_fringe * 100.0 + 0.5) as i32) + "%" }
     let sign = ""
     let deg = g_lens_tilt
+    if row == RENDER_ROW_SPIN { deg = g_lens_spin * 57.29577951308232 }
     if deg < 0.0 {
         sign = "-"
         deg = 0.0 - deg
@@ -120,7 +129,7 @@ fn render_slider_text(row: i32) str {
 }
 
 fn render_row_slider(row: i32) bool {
-    return row >= RENDER_ROW_BLUR && row <= RENDER_ROW_TILT
+    return row >= RENDER_ROW_BLUR && row <= RENDER_ROW_SPIN
 }
 
 // The panel row under the pointer, -1 off the panel.
@@ -228,7 +237,7 @@ fn render_draw_slider(r: ref ui_renderer, row: i32, ty: f64) {
     let y = render_row_y(row)
     let label = col_text()
     let fill = col_accent()
-    if row != RENDER_ROW_TILT && g_render_dof == false {
+    if row != RENDER_ROW_TILT && row != RENDER_ROW_SPIN && g_render_dof == false {
         label = col_muted()
         fill = col_muted()
     }

@@ -56,6 +56,7 @@ snaps back to orthographic.
   On a touch screen the map starts turning once the fingers have turned about
   ten degrees, so a pinch does not twist it. A map let go within five degrees
   of upright settles there. A tilt recedes up the screen whatever the spin.
+  View > Render Settings also sets the spin with its Rotation slider.
 - Left drag: pan. Right click: select a leaf; right drag selects text in its editor.
   Middle drag, or a three-finger drag on a trackpad or touch screen: tilt the
   map into perspective. Within five degrees of level it settles flat. On a Mac
