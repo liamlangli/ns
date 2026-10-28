@@ -188,6 +188,33 @@ fn main() {
     assert lens_search_find(panel_state_view_text(), 0, panel_state_view_text().len, "history.list_w=420", false) >= 0
 
     let v = view_create("history test", 1280, 800)
+    // A press on the list's title bar folds it to that bar: no resize edge,
+    // no rows, and its side of the map is free. The choice is saved.
+    g_mouse_x = LENS_HISTORY_MARGIN + 20.0
+    g_mouse_y = lens_history_list_y() + 4.0
+    v.mouse_pressed = true
+    lens_history_mouse(v, 1280.0, 800.0)
+    assert g_lens_history_list_open == false && v.mouse_pressed == false
+    assert lens_history_list_box_h() == LENS_HISTORY_TITLE_H && lens_history_list_box_w() == LENS_HISTORY_FOLDED_W
+    assert lens_history_edge_at(LENS_HISTORY_MARGIN + 420.0, lens_history_list_y() + 10.0) == false
+    assert lens_history_free_x0() == LENS_HISTORY_MARGIN
+    assert lens_search_find(panel_state_view_text(), 0, panel_state_view_text().len, "history.list_open=0", false) >= 0
+    g_mouse_y = lens_history_list_y() + 100.0
+    assert lens_history_blocks_pointer(v, 1280.0) == false
+    g_mouse_y = lens_history_list_y() + 4.0
+    v.mouse_pressed = true
+    lens_history_mouse(v, 1280.0, 800.0)
+    assert g_lens_history_list_open && lens_history_list_box_h() == lens_history_list_h()
+    // On a phone-wide window the details panel fits it, and the two folded
+    // bars sit side by side.
+    g_lens_view_w = 390.0
+    assert lens_history_info_w() == 390.0 - LENS_HISTORY_MARGIN * 2.0
+    g_lens_history_list_open = false
+    g_lens_history_info_open = false
+    assert LENS_HISTORY_MARGIN + lens_history_list_box_w() < lens_history_info_x(390.0)
+    g_lens_history_list_open = true
+    g_lens_history_info_open = true
+    g_lens_view_w = 1280.0
     // Arrow keys walk the commits.
     view_on_key_action(v, 265, 0)
     assert lens_history_keys(v) && g_lens_history_selected == 1
@@ -213,6 +240,26 @@ fn main() {
         assert view_get_clipboard(v) == g_lens_history_path[0]
         lens_history_copy(v, LENS_HISTORY_COPY_HASH)
         assert view_get_clipboard(v) == g_lens_history_full_hash
+        // Its title bar folds the details panel; a press below it is the map's.
+        let open_h = g_lens_history_info_h
+        g_mouse_x = lens_history_info_x(1280.0) + 20.0
+        g_mouse_y = lens_history_list_y() + 4.0
+        v.mouse_pressed = true
+        lens_history_mouse(v, 1280.0, 800.0)
+        assert g_lens_history_info_open == false
+        render(r, v, 1)
+        assert g_lens_history_info_h == LENS_HISTORY_TITLE_H && open_h > LENS_HISTORY_TITLE_H
+        assert g_lens_history_button_on[LENS_HISTORY_COPY_HASH] == 0
+        g_mouse_y = lens_history_list_y() + 60.0
+        assert lens_history_blocks_pointer(v, 1280.0) == false
+        g_mouse_x = lens_history_info_x(1280.0) + 20.0
+        g_mouse_y = lens_history_list_y() + 4.0
+        v.mouse_pressed = true
+        lens_history_mouse(v, 1280.0, 800.0)
+        render(r, v, 1)
+        assert g_lens_history_info_open && g_lens_history_info_h == open_h
+        g_mouse_x = -100.0
+        g_mouse_y = -100.0
         ui_renderer_destroy(r)
     }
     // Leaving returns the camera the map had.

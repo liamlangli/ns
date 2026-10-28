@@ -91,6 +91,8 @@ fn panel_state_view_text() str {
         text = text + "view.ref_distance=" + ftos(g_lens_ref_return_distance) + "\n"
     }
     text = text + "history.list_w=" + ftos(g_lens_history_list_w) + "\n"
+    text = text + "history.list_open=" + panel_state_flag(g_lens_history_list_open) + "\n"
+    text = text + "history.info_open=" + panel_state_flag(g_lens_history_info_open) + "\n"
     text = text + "outline.scroll=" + ftos(g_outline_scroll) + "\n"
     text = text + "outline.selected=" + panel_state_relative(g_outline_selected_path) + "\n"
     return text
@@ -229,6 +231,10 @@ fn panel_state_apply(key: str, value: str) {
         }
     } else if key == "history.list_w" {
         if n >= LENS_HISTORY_LIST_MIN_W { g_lens_history_list_w = n }
+    } else if key == "history.list_open" {
+        g_lens_history_list_open = value == "1"
+    } else if key == "history.info_open" {
+        g_lens_history_info_open = value == "1"
     } else if key == "outline.scroll" {
         g_outline_scroll = clamp(n, 0.0, 100000000.0)
     } else if key == "outline.selected" {

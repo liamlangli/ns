@@ -28,6 +28,9 @@ lit LENS_HISTORY_GRAB = 4.0
 lit LENS_HISTORY_TITLE_H = 26.0
 lit LENS_HISTORY_ROW_H = 22.0
 lit LENS_HISTORY_INFO_W = 380.0
+// A collapsed panel keeps only its title bar, at most this wide, so the two
+// fit side by side on a phone.
+lit LENS_HISTORY_FOLDED_W = 180.0
 lit LENS_HISTORY_MARGIN = 8.0
 lit LENS_HISTORY_LINE_H = 17.0
 lit LENS_HISTORY_BUTTON_H = 22.0
@@ -88,6 +91,9 @@ let g_lens_history_list_w: f64 = LENS_HISTORY_LIST_W
 let g_lens_history_drag = false
 let g_lens_history_drag_x: f64 = 0.0
 let g_lens_history_drag_from: f64 = 0.0
+// A tap on a panel's title bar folds it to that bar and back.
+let g_lens_history_list_open = true
+let g_lens_history_info_open = true
 // List scroll in pixels.
 let g_lens_history_scroll: f64 = 0.0
 // The mode and the map camera history mode returns to.
@@ -834,9 +840,20 @@ fn lens_history_tick() {
 }
 
 // The free part of the window between the two panels.
-fn lens_history_free_x0() f64 { return LENS_HISTORY_MARGIN * 2.0 + lens_history_panel_w() }
+// A collapsed panel only covers the top strip and leaves its side free.
+fn lens_history_free_x0() f64 {
+    if g_lens_history_list_open == false {
+        return LENS_HISTORY_MARGIN
+    }
+    return LENS_HISTORY_MARGIN * 2.0 + lens_history_panel_w()
+}
 
-fn lens_history_free_x1() f64 { return g_lens_view_w - LENS_HISTORY_MARGIN * 2.0 - LENS_HISTORY_INFO_W }
+fn lens_history_free_x1() f64 {
+    if g_lens_history_info_open == false {
+        return g_lens_view_w - LENS_HISTORY_MARGIN
+    }
+    return g_lens_view_w - LENS_HISTORY_MARGIN * 2.0 - lens_history_info_w()
+}
 
 // Fly the camera to the whole commit, centred in the room the panels leave.
 fn lens_history_frame() {
@@ -1161,24 +1178,52 @@ fn lens_history_list_rows_h() f64 {
     return lens_history_list_h() - LENS_HISTORY_TITLE_H
 }
 
+// The list as drawn: only its title bar while collapsed.
+fn lens_history_list_box_w() f64 {
+    if g_lens_history_list_open {
+        return lens_history_panel_w()
+    }
+    return clamp(lens_history_panel_w(), 0.0, LENS_HISTORY_FOLDED_W)
+}
+
+fn lens_history_list_box_h() f64 {
+    if g_lens_history_list_open {
+        return lens_history_list_h()
+    }
+    return LENS_HISTORY_TITLE_H
+}
+
 fn lens_history_rows_y() f64 {
     return lens_history_list_y() + LENS_HISTORY_TITLE_H
 }
 
 // The list's width: as dragged, leaving the details panel and some map.
 fn lens_history_panel_w() f64 {
-    let room = g_lens_view_w - LENS_HISTORY_INFO_W - LENS_HISTORY_MARGIN * 4.0 - 160.0
+    let room = g_lens_view_w - lens_history_info_w() - LENS_HISTORY_MARGIN * 4.0 - 160.0
     return clamp(g_lens_history_list_w, LENS_HISTORY_LIST_MIN_W, clamp(room, LENS_HISTORY_LIST_MIN_W, 100000.0))
 }
 
 // Whether the pointer is on the list's right edge.
 fn lens_history_edge_at(mx: f64, my: f64) bool {
+    if g_lens_history_list_open == false {
+        return false
+    }
     let y = lens_history_list_y()
     let edge = LENS_HISTORY_MARGIN + lens_history_panel_w()
     return my >= y && my < y + lens_history_list_h() && mx >= edge - LENS_HISTORY_GRAB && mx <= edge + LENS_HISTORY_GRAB
 }
 
-fn lens_history_info_x(w: f64) f64 { return w - LENS_HISTORY_MARGIN - LENS_HISTORY_INFO_W }
+// The details panel's width: narrower than LENS_HISTORY_INFO_W on a phone,
+// and only its title bar's while collapsed.
+fn lens_history_info_w() f64 {
+    let w = clamp(LENS_HISTORY_INFO_W, LENS_HISTORY_FOLDED_W, clamp(g_lens_view_w - LENS_HISTORY_MARGIN * 2.0, LENS_HISTORY_FOLDED_W, 100000.0))
+    if g_lens_history_info_open {
+        return w
+    }
+    return clamp(w, 0.0, LENS_HISTORY_FOLDED_W)
+}
+
+fn lens_history_info_x(w: f64) f64 { return w - LENS_HISTORY_MARGIN - lens_history_info_w() }
 
 fn lens_history_blocks_pointer(v: ref view, w: f64) bool {
     if lens_history_active() == false {
@@ -1187,15 +1232,16 @@ fn lens_history_blocks_pointer(v: ref view, w: f64) bool {
     if g_lens_history_drag || lens_history_edge_at(g_mouse_x, g_mouse_y) {
         return true
     }
-    if raw_hit(v, LENS_HISTORY_MARGIN, lens_history_list_y(), lens_history_panel_w(), lens_history_list_h()) {
+    if raw_hit(v, LENS_HISTORY_MARGIN, lens_history_list_y(), lens_history_list_box_w(), lens_history_list_box_h()) {
         return true
     }
-    return g_lens_history_info_h > 0.0 && raw_hit(v, lens_history_info_x(w), lens_history_list_y(), LENS_HISTORY_INFO_W, g_lens_history_info_h)
+    return g_lens_history_info_h > 0.0 && raw_hit(v, lens_history_info_x(w), lens_history_list_y(), lens_history_info_w(), g_lens_history_info_h)
 }
 
-// Panel input, in screen coordinates: the list's right edge drags to resize
-// it, the wheel scrolls the list, a click on a row selects that commit, and
-// the details panel's buttons copy.
+// Panel input, in screen coordinates: a press on either title bar folds that
+// panel, the list's right edge drags to resize it, the wheel scrolls the
+// list, a click on a row selects that commit, and the details panel's buttons
+// copy.
 fn lens_history_mouse(v: ref view, w: f64, h: f64) {
     lens_history_flush_clip(v)
     if g_lens_history_drag {
@@ -1219,12 +1265,17 @@ fn lens_history_mouse(v: ref view, w: f64, h: f64) {
     let x = LENS_HISTORY_MARGIN
     let y = lens_history_list_y()
     let rows_y = lens_history_rows_y()
-    if raw_hit(v, x, y, lens_history_panel_w(), lens_history_list_h()) {
-        if v.scroll_y != 0.0 {
+    if raw_hit(v, x, y, lens_history_list_box_w(), lens_history_list_box_h()) {
+        if v.mouse_pressed && g_mouse_y < rows_y {
+            g_lens_history_list_open = !g_lens_history_list_open
+            lens_history_folded()
+            v.mouse_pressed = false
+        }
+        if g_lens_history_list_open && v.scroll_y != 0.0 {
             g_lens_history_scroll = g_lens_history_scroll - v.scroll_y * 24.0
             lens_history_clamp_scroll()
-            v.scroll_y = 0.0
         }
+        v.scroll_y = 0.0
         if v.mouse_pressed {
             if g_mouse_y >= rows_y {
                 let i = ((g_mouse_y - rows_y + g_lens_history_scroll) / LENS_HISTORY_ROW_H) as i32
@@ -1236,7 +1287,12 @@ fn lens_history_mouse(v: ref view, w: f64, h: f64) {
         return
     }
     let ix = lens_history_info_x(w)
-    if g_lens_history_info_h > 0.0 && raw_hit(v, ix, y, LENS_HISTORY_INFO_W, g_lens_history_info_h) {
+    if g_lens_history_info_h > 0.0 && raw_hit(v, ix, y, lens_history_info_w(), g_lens_history_info_h) {
+        if v.mouse_pressed && g_mouse_y < y + LENS_HISTORY_TITLE_H {
+            g_lens_history_info_open = !g_lens_history_info_open
+            lens_history_folded()
+            v.mouse_pressed = false
+        }
         if v.mouse_pressed {
             for b in 0 to LENS_HISTORY_BUTTONS {
                 if g_lens_history_button_on[b] != 0 && raw_hit(v, g_lens_history_button_x[b], g_lens_history_button_y[b], g_lens_history_button_w[b], LENS_HISTORY_BUTTON_H) {
@@ -1247,6 +1303,34 @@ fn lens_history_mouse(v: ref view, w: f64, h: f64) {
         }
         v.scroll_y = 0.0
         v.mouse_right_pressed = false
+    }
+}
+
+// After a panel folds: keep the choice for the next launch. The camera stays;
+// the next framing uses the room the panels now leave.
+fn lens_history_folded() {
+    g_lens_input_dirty = true
+    panel_state_save()
+}
+
+// A chevron at the right end of a title bar: down while open, right while
+// collapsed.
+fn lens_history_chevron_color(hot: bool) u32 {
+    if hot {
+        return col_accent()
+    }
+    return col_muted()
+}
+
+fn lens_history_chevron(r: ref ui_renderer, right: f64, y: f64, open: bool, color: u32) {
+    let cx = right - 9.0
+    let cy = y + LENS_HISTORY_TITLE_H * 0.5
+    if open {
+        ui_stroke_line(r, cx - 4.0, cy - 2.0, cx, cy + 2.0, 1.5, color, 0.5)
+        ui_stroke_line(r, cx, cy + 2.0, cx + 4.0, cy - 2.0, 1.5, color, 0.5)
+    } else {
+        ui_stroke_line(r, cx - 2.0, cy - 4.0, cx + 2.0, cy, 1.5, color, 0.5)
+        ui_stroke_line(r, cx + 2.0, cy, cx - 2.0, cy + 4.0, 1.5, color, 0.5)
     }
 }
 
@@ -1407,8 +1491,8 @@ fn lens_history_draw_panels(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
 fn lens_history_draw_list(r: ref ui_renderer, v: ref view) {
     let x = LENS_HISTORY_MARGIN
     let y = lens_history_list_y()
-    let pw = lens_history_panel_w()
-    let ph = lens_history_list_h()
+    let pw = lens_history_list_box_w()
+    let ph = lens_history_list_box_h()
     let resizing = g_lens_history_drag || lens_history_edge_at(g_mouse_x, g_mouse_y)
     ui_fill_round_rect(r, x, y, pw, ph, 3.0, lens_float_color(col_popup_bg()), 0.0)
     ui_stroke_round_rect(r, x, y, pw, ph, 3.0, 1.0, col_muted(), 0.0)
@@ -1426,8 +1510,13 @@ fn lens_history_draw_list(r: ref ui_renderer, v: ref view) {
     if g_lens_history_busy[LENS_HISTORY_JOB_LOG] != 0 {
         title = title + "  loading..."
     }
+    let title_hot = raw_hit(v, x, y, pw, LENS_HISTORY_TITLE_H) && resizing == false
     let ty = ui_text_v_center_y(r, y, LENS_HISTORY_TITLE_H, small_px(), FONT_MONO())
-    draw_text_clipped(r, x + LENS_HISTORY_PAD, ty, pw - LENS_HISTORY_PAD * 2.0, LENS_HISTORY_TITLE_H, title, small_px(), col_text())
+    draw_text_clipped(r, x + LENS_HISTORY_PAD, ty, pw - LENS_HISTORY_PAD * 2.0 - 18.0, LENS_HISTORY_TITLE_H, title, small_px(), col_text())
+    lens_history_chevron(r, x + pw - LENS_HISTORY_PAD + 4.0, y, g_lens_history_list_open, lens_history_chevron_color(title_hot))
+    if g_lens_history_list_open == false {
+        return
+    }
     ui_fill_rect(r, x + 1.0, y + LENS_HISTORY_TITLE_H - 1.0, pw - 2.0, 1.0, col_editor_sel(), 0.0)
     let rows_y = lens_history_rows_y()
     let rows_h = lens_history_list_rows_h()
@@ -1516,7 +1605,18 @@ fn lens_history_draw_info(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     }
     let x = lens_history_info_x(w)
     let y = lens_history_list_y()
-    let pw = LENS_HISTORY_INFO_W
+    let pw = lens_history_info_w()
+    let short = g_lens_history_short[g_lens_history_selected]
+    let title_hot = raw_hit(v, x, y, pw, LENS_HISTORY_TITLE_H)
+    if g_lens_history_info_open == false {
+        g_lens_history_info_h = LENS_HISTORY_TITLE_H
+        ui_fill_round_rect(r, x, y, pw, LENS_HISTORY_TITLE_H, 3.0, lens_float_color(col_popup_bg()), 0.0)
+        ui_stroke_round_rect(r, x, y, pw, LENS_HISTORY_TITLE_H, 3.0, 1.0, col_muted(), 0.0)
+        let fy = ui_text_v_center_y(r, y, LENS_HISTORY_TITLE_H, small_px(), FONT_MONO())
+        draw_text_clipped(r, x + 12.0, fy, pw - 42.0, LENS_HISTORY_TITLE_H, "commit " + short, small_px(), col_text())
+        lens_history_chevron(r, x + pw - 6.0, y, false, lens_history_chevron_color(title_hot))
+        return
+    }
     let inner_x = x + 12.0
     let inner_w = pw - 24.0
     let max_h = clamp(h - STATUS_BAR_H - LENS_HISTORY_MARGIN - y, 80.0, 100000.0)
@@ -1536,11 +1636,11 @@ fn lens_history_draw_info(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     if body_text == "" {
         body = [str](0)
     }
-    let rows = 1 + subject.len + 1 + 4 + 1
+    let rows = subject.len + 1 + 4 + 1
     if body.len > 0 {
         rows = rows + body.len + 1
     }
-    let ph = 12.0 + (rows as f64) * LENS_HISTORY_LINE_H + LENS_HISTORY_BUTTON_H + 12.0
+    let ph = LENS_HISTORY_TITLE_H + 6.0 + (rows as f64) * LENS_HISTORY_LINE_H + LENS_HISTORY_BUTTON_H + 12.0
     let f = g_lens_history_file_selected
     if f >= 0 && f < g_lens_history_files {
         ph = ph + 12.0 + LENS_HISTORY_LINE_H * 2.0 + LENS_HISTORY_BUTTON_H + 4.0
@@ -1550,11 +1650,11 @@ fn lens_history_draw_info(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     ui_fill_round_rect(r, x, y, pw, ph, 3.0, lens_float_color(col_popup_bg()), 0.0)
     ui_stroke_round_rect(r, x, y, pw, ph, 3.0, 1.0, col_muted(), 0.0)
     ui_push_clip(r, x + 1.0, y + 1.0, pw - 2.0, ph - 2.0)
-    let ry = y + 8.0
-    let short = g_lens_history_short[g_lens_history_selected]
-    let ty = ui_text_v_center_y(r, ry, LENS_HISTORY_LINE_H, small_px(), FONT_MONO())
-    draw_text_clipped(r, inner_x, ty, inner_w, LENS_HISTORY_LINE_H, "commit " + short + "  (read only)", small_px(), col_muted())
-    ry = ry + LENS_HISTORY_LINE_H
+    let ty = ui_text_v_center_y(r, y, LENS_HISTORY_TITLE_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, inner_x, ty, inner_w - 18.0, LENS_HISTORY_TITLE_H, "commit " + short + "  (read only)", small_px(), col_muted())
+    lens_history_chevron(r, x + pw - 6.0, y, true, lens_history_chevron_color(title_hot))
+    ui_fill_rect(r, x + 1.0, y + LENS_HISTORY_TITLE_H - 1.0, pw - 2.0, 1.0, col_editor_sel(), 0.0)
+    let ry = y + LENS_HISTORY_TITLE_H + 6.0
     for line in subject {
         let sy = ui_text_v_center_y(r, ry, LENS_HISTORY_LINE_H, small_px(), FONT_MONO())
         draw_text_clipped(r, inner_x, sy, inner_w, LENS_HISTORY_LINE_H, line, small_px(), col_accent())
