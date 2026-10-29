@@ -10,7 +10,47 @@ let g_frames = 0
 let g_exit_saved = false
 let g_ready = false
 
+// This frame's panel shapes for the intersection fade. Each panel lists the
+// earlier-drawn panels whose bounding spheres come within INTERSECT_FADE of
+// its own, so a fragment tests a handful of patches at most.
+fn upload_panel_shapes() {
+    for i in 0 to g_panel_count {
+        let p = g_panels[i]
+        let base = i * SHAPE_STRIDE
+        let width = p.width + 20.0
+        let height = p.height + 60.0
+        g_shapes[base] = p.a
+        g_shapes[base + 1] = p.e
+        g_shapes[base + 2] = p.radius
+        g_shapes[base + 3] = width
+        g_shapes[base + 4] = height
+        let n = dome_normal(p.a, p.e)
+        let reach = 0.5 * sqrt(width * width + height * height) as f32
+        let count = 0
+        for j in 0 to i {
+            if count >= SHAPE_NEIGHBORS {
+                break
+            }
+            let q = g_panels[j]
+            let m = dome_normal(q.a, q.e)
+            let dx = n.x * p.radius - m.x * q.radius
+            let dy = n.y * p.radius - m.y * q.radius
+            let dz = n.z * p.radius - m.z * q.radius
+            let qw = q.width + 20.0
+            let qh = q.height + 60.0
+            let limit = reach + 0.5 * sqrt(qw * qw + qh * qh) as f32 + INTERSECT_FADE
+            if dx * dx + dy * dy + dz * dz < limit * limit {
+                g_shapes[base + 6 + count] = j as f32
+                count = count + 1
+            }
+        }
+        g_shapes[base + 5] = count as f32
+    }
+    g_shape_addr = gpu_frame_write(g_shapes, (maxf(g_panel_count as f32, 1.0) as i32 * SHAPE_STRIDE * 4) as u64)
+}
+
 fn draw_panels() {
+    upload_panel_shapes()
     for i in 0 to g_panel_count {
         let p = g_panels[i]
         if p.capture != 0 {
@@ -27,6 +67,7 @@ fn draw_panels() {
         let width = p.width + 20.0
         let height = p.height + 60.0
         draw_space(width, height, p.a, p.e, p.radius, 1.0, curve_radius(g_curve), false, false)
+        g_draw_panel = i
         plate(-10.0, -3.0, width + 20.0, height + 20.0, 20.0, float4 {
             0, 0, 0, 0.35
         })

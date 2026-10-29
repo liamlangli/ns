@@ -17,6 +17,15 @@ lit DOT_COUNT: f32 = 4200.0
 lit DOT_RADIUS: f32 = DOME_RADIUS * 1.55
 lit DOT_SIZE: f32 = 11.0
 lit PITCH_LIMIT: f32 = 80.0 * DEG
+// Where a window cuts through one drawn before it, it turns see-through:
+// alpha falls to INTERSECT_ALPHA on the intersection and recovers over
+// INTERSECT_FADE world units of distance from the other window's surface.
+lit INTERSECT_FADE: f32 = 260.0
+lit INTERSECT_ALPHA: f32 = 0.0
+// Per-panel record in the shape buffer: a, e, radius, width, height, the
+// neighbour count, then up to SHAPE_NEIGHBORS indices of earlier panels.
+lit SHAPE_STRIDE = 16
+lit SHAPE_NEIGHBORS = 8
 
 fn clampf(x: f32, low: f32, high: f32) f32 {
     if x < low {
@@ -194,6 +203,25 @@ fn panel_hit(ray: float3, a: f32, e: f32, radius: f32, width: f32, height: f32, 
     return float4 {
         x + width * 0.5, height * 0.5 - y, t, 1
     }
+}
+
+// Distance from world point p to a panel's surface patch: the cylinder (or
+// plane, unbent) offset combined with how far p lies beyond the patch's
+// edges, measured along the arc and vertically. Zero where p is on it.
+fn patch_distance(p: float3, a: f32, e: f32, radius: f32, width: f32, height: f32, bend: f32) f32 {
+    let lx = dot3(p, dome_right(a))
+    let ly = dot3(p, dome_up(a, e))
+    let lz = dot3(p, dome_normal(a, e))
+    let s = lx
+    let normal = lz - radius
+    if bend > 1.0 {
+        let cz = lz - (radius - bend)
+        normal = sqrt(lx * lx + cz * cz) as f32 - bend
+        s = (atan2(lx, cz) * bend) as f32
+    }
+    let ex = maxf(absf(s) - width * 0.5, 0.0)
+    let ey = maxf(absf(ly) - height * 0.5, 0.0)
+    return sqrt(normal * normal + ex * ex + ey * ey) as f32
 }
 
 fn hex_position(index: i32) float3 {

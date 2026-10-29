@@ -27,6 +27,11 @@ let g_draw_nearest = false
 let g_draw_bias: f32 = 0.0
 let g_draw_shadow = false
 let g_draw_lean = false
+// The dome panel the next draws belong to, or -1; selects its record in the
+// shape buffer for the intersection fade.
+let g_draw_panel = -1
+let g_shapes = [f32](64 * SHAPE_STRIDE)
+let g_shape_addr: u64 = 0
 let g_lean_x: f32 = 0.0
 let g_lean_y: f32 = 0.0
 let g_lean_w: f32 = 0.0
@@ -88,6 +93,7 @@ fn draw_space(width: f32, height: f32, a: f32, e: f32, radius: f32, wpp: f32, be
     g_draw_bias = 0.0
     g_draw_shadow = false
     g_draw_lean = false
+    g_draw_panel = -1
 }
 
 // A head-locked screen panel of width x height pixels centred on screen pixel
@@ -148,11 +154,18 @@ fn draw_quad(mode: i32, texture: u32, x: f32, y: f32, width: f32, height: f32, r
     g_root[41] = g_lean_scale
     g_root[42] = g_lean_pivot_x
     g_root[43] = g_lean_pivot_y
+    g_root[44] = -1.0
+    if g_shape_addr != 0 {
+        g_root[44] = g_draw_panel as f32
+    }
     g_root[34] = 0.0
     if g_draw_nearest {
         g_root[34] = 1.0
     }
     gpu_set_shader(g_quad_shader)
+    if g_shape_addr != 0 {
+        gpu_set_storage_at(0, g_shape_addr)
+    }
     if g_draw_screen {
         gpu_set_state(g_flat_state)
     } else {

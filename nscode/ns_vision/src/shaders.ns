@@ -3,7 +3,10 @@ use shader
 struct vision_vertex {
     position: float4,
     uv: float2,
-    distance: f32
+    distance: f32,
+    // World point on the panel's chord mesh, so the fragment can recover its
+    // exact view ray. Unused off the dome.
+    world: float3
 }
 
 struct vision_pixel {
@@ -36,7 +39,7 @@ fn quad_uv(index: i32) float2 {
 // Camera-space point of authored pixel (px, py) on the current panel's flat or
 // curved surface. The fragment shader re-evaluates it so every layer of a
 // panel takes its depth from the same exact surface, not from its own chords.
-fn panel_camera(px: f32, py: f32) float3 {
+fn panel_world(px: f32, py: f32) float3 {
     let x = (px - shader_root_f32(8) * 0.5) * shader_root_f32(10)
     let y = (shader_root_f32(9) * 0.5 - py) * shader_root_f32(10)
     let curved = curve_point(x, shader_root_f32(11))
@@ -46,10 +49,9 @@ fn panel_camera(px: f32, py: f32) float3 {
     let r = dome_right(a)
     let up = dome_up(a, e)
     let distance = shader_root_f32(14) + curved.y
-    let world = float3 {
+    return float3 {
         n.x * distance + r.x * curved.x + up.x * y, n.y * distance + up.y * y, n.z * distance + r.z * curved.x + up.z * y
     }
-    return camera_space(world, shader_root_f32(16), shader_root_f32(17))
 }
 
 // Camera-space point of panel-local pixel (px, py) on a leaned HUD panel. The
@@ -103,22 +105,27 @@ fn vs_vision() vision_vertex {
         return vision_vertex {
             reverse_z_clip(lean.x / (lean_tangent * shader_root_f32(19) * lean.z), lean.y / (lean_tangent * lean.z), lean.z, NEAR), float2 {
                 u, v
-            }, 1.0
+            }, 1.0, float3 {
+                0, 0, 1
+            }
         }
     }
     if shader_root_f32(30) > 0.5 {
         return vision_vertex {
             reverse_z_clip(px / shader_root_f32(32) * 2.0 - 1.0, 1.0 - py / shader_root_f32(33) * 2.0, 1.0, NEAR), float2 {
                 u, v
-            }, 1.0
+            }, 1.0, float3 {
+                0, 0, 1
+            }
         }
     }
-    let camera = panel_camera(px, py)
+    let world = panel_world(px, py)
+    let camera = camera_space(world, shader_root_f32(16), shader_root_f32(17))
     let tangent = shader_root_f32(18)
     return vision_vertex {
         reverse_z_clip(camera.x / (tangent * shader_root_f32(19) * camera.z), camera.y / (tangent * camera.z), camera.z, NEAR), float2 {
             u, v
-        }, camera.z
+        }, camera.z, world
     }
 }
 
@@ -153,6 +160,22 @@ fn hex_distance(uv: float2, width: f32, height: f32) f32 {
 // Offset from the nearest cell centre of a unit grid, in [-0.5, 0.5).
 fn fract_dot(x: f32) f32 {
     return env_fract(x) - 0.5
+}
+
+// Alpha factor for a point on `panel` near the panels drawn before it that
+// the CPU listed as close enough to cross it (storage buffer 0).
+fn intersect_fade(panel: i32, p: float3, bend: f32) f32 {
+    let base = panel * SHAPE_STRIDE
+    let count = shader_buffer_f32(0, base + 5) as i32
+    let near: f32 = 0.0
+    for k in 0 to SHAPE_NEIGHBORS {
+        if k < count {
+            let other = shader_buffer_f32(0, base + 6 + k) as i32 * SHAPE_STRIDE
+            let d = patch_distance(p, shader_buffer_f32(0, other), shader_buffer_f32(0, other + 1), shader_buffer_f32(0, other + 2), shader_buffer_f32(0, other + 3), shader_buffer_f32(0, other + 4), bend)
+            near = maxf(near, 1.0 - ease(d / INTERSECT_FADE))
+        }
+    }
+    return mixf(1.0, INTERSECT_ALPHA, near)
 }
 
 fn fs_vision(input: vision_vertex) vision_pixel {
@@ -219,11 +242,27 @@ fn fs_vision(input: vision_vertex) vision_pixel {
         }
     }
     color.w = color.w * alpha
+    // Every layer of a panel is its own chord mesh, split at different arc
+    // positions, so its interpolated uv names a slightly different surface
+    // point under the same pixel. Up close that gap outgrows LAYER_EPSILON and
+    // layers cut each other into strips. Intersect the pixel's own view ray
+    // (eye to interpolated chord point) with the exact surface instead: every
+    // layer then shares one depth per pixel. `t` scales the chord point, so
+    // the surface's camera depth is t times the chord's.
     let surface = input.distance
+    let point = input.world
     if shader_root_f32(30) < 0.5 {
-        let px = shader_root_f32(4) + (input.uv.x - 0.5) * width
-        let py = shader_root_f32(5) + (input.uv.y - 0.5) * height
-        surface = panel_camera(px, py).z
+        let hit = panel_hit(input.world, shader_root_f32(12), shader_root_f32(13), shader_root_f32(14), 1000000.0, 1000000.0, shader_root_f32(11))
+        if hit.w > 0.5 {
+            surface = hit.z * input.distance
+            point = float3 {
+                input.world.x * hit.z, input.world.y * hit.z, input.world.z * hit.z
+            }
+        }
+        let panel = shader_root_f32(44) as i32
+        if panel >= 0 {
+            color.w = color.w * intersect_fade(panel, point, shader_root_f32(11))
+        }
     }
     let depth = reverse_z_depth(maxf(surface, NEAR), NEAR) * (1.0 + shader_root_f32(29) * LAYER_EPSILON)
     if color.w < 0.01 {
@@ -252,7 +291,9 @@ fn vs_fullscreen() vision_vertex {
             x * 2.0 - 1.0, 1.0 - y * 2.0, 0.000001, 1.0
         }, float2 {
             x, y
-        }, 1.0
+        }, 1.0, float3 {
+            0, 0, 1
+        }
     }
 }
 
