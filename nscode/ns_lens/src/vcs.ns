@@ -22,8 +22,10 @@ lit LENS_JOB_REMOTE = 9
 // commit, and commit then push once the commit lands.
 lit LENS_JOB_AMEND = 10
 lit LENS_JOB_COMMIT_PUSH = 11
-// Seconds between background fetches.
-lit LENS_FETCH_INTERVAL = 300.0
+// Seconds between background fetches, and the least time since the last one
+// before bringing the window to the front fetches again.
+lit LENS_FETCH_INTERVAL = 60.0
+lit LENS_FETCH_FOCUS = 15.0
 // Seconds between status reads, so a branch switched outside Lens shows up.
 lit LENS_STATUS_INTERVAL = 5.0
 
@@ -55,6 +57,7 @@ let g_lens_sync_behind: i32 = -1
 let g_lens_sync_upstream = false
 let g_lens_sync_root = ""
 let g_lens_fetch_next: f64 = 0.0
+let g_lens_fetch_last: f64 = 0.0
 let g_lens_status_next: f64 = 0.0
 // Status bar buttons as last drawn: the down arrow pulls, the up arrow
 // pushes. Zero width while the counts are unknown.
@@ -375,6 +378,20 @@ fn lens_git_error(text: str) str {
     return last
 }
 
+fn lens_fetch_news(behind: i32) str {
+    if behind == 1 {
+        return "1 new commit upstream; the down arrow pulls it"
+    }
+    return itos(behind) + " new commits upstream; the down arrow pulls them"
+}
+
+// Bringing the window to the front fetches, unless one ran a moment ago.
+fn lens_fetch_soon() {
+    if os_time() - g_lens_fetch_last >= LENS_FETCH_FOCUS {
+        g_lens_fetch_next = 0.0
+    }
+}
+
 fn lens_job_poll() {
     if g_lens_job_running == false || os_lock_try_acquire(g_lens_job_lock) == false {
         return
@@ -396,7 +413,14 @@ fn lens_job_poll() {
     g_lens_status_next = os_time() + LENS_STATUS_INTERVAL
     let kind = g_lens_job_kind
     if g_lens_job_root == g_workspace_root {
+        let behind = g_lens_sync_behind
+        let was = g_lens_branch
         lens_sync_parse(counts, upstream)
+        // A background fetch that brought commits to pull says so once; the
+        // down arrow keeps the count.
+        if kind == LENS_JOB_FETCH && status == 0 && g_lens_sync_upstream && branch == was && g_lens_sync_behind > behind && g_lens_sync_behind > 0 {
+            g_lens_message = lens_fetch_news(g_lens_sync_behind)
+        }
         g_lens_sync_root = g_lens_job_root
         lens_branch_apply(branch, detached, locals, remotes)
     }
@@ -431,7 +455,8 @@ fn lens_job_poll() {
 
 // Each frame: collect a finished job, read the counts and the branch for a
 // newly opened project at once, read them again every LENS_STATUS_INTERVAL,
-// and fetch in the background every LENS_FETCH_INTERVAL.
+// and fetch in the background every LENS_FETCH_INTERVAL and when the window
+// comes to the front.
 fn lens_vcs_tick(moving: bool) {
     lens_job_poll()
     if g_lens_job_running || g_workspace_root == "" {
@@ -452,8 +477,9 @@ fn lens_vcs_tick(moving: bool) {
     }
     if os_time() >= g_lens_fetch_next {
         g_lens_fetch_next = os_time() + LENS_FETCH_INTERVAL
+        g_lens_fetch_last = os_time()
         let steps = [str](1)
-        steps[0] = "fetch\n--quiet"
+        steps[0] = "fetch\n--quiet\n--prune"
         lens_job_start(LENS_JOB_FETCH, steps)
     } else if os_time() >= g_lens_status_next {
         lens_job_start(LENS_JOB_STATUS, [str](0))

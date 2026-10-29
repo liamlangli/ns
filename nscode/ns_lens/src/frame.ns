@@ -86,6 +86,9 @@ fn lens_frame(r: ref ui_renderer, v: ref view) {
         // without input. Terminal output stays dirty until it is displayed.
         reset_view_input(v)
     }
+    if active && g_lens_frame_active == false {
+        lens_fetch_soon()
+    }
     g_lens_frame_active = active
     if active == false {
         view_request_frame_after(v, LENS_BACKGROUND_POLL_MS)
