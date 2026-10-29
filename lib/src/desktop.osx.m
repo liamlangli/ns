@@ -172,7 +172,7 @@ u64 desktop_capture_open(u64 window, i32 max_width, i32 fps) {
     config.height = MAX(1, (size_t)(target.frame.size.height * ratio));
     config.pixelFormat = kCVPixelFormatType_32BGRA;
     config.minimumFrameInterval = CMTimeMake(1, fps == 15 ? 15 : 30);
-    config.queueDepth = 3; config.showsCursor = YES; config.capturesAudio = NO;
+    config.queueDepth = 3; config.showsCursor = NO; config.capturesAudio = NO;
     if (@available(macOS 14.0, *)) { config.ignoreShadowsSingleWindow = YES; }
     cap.stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:cap];
     NSError *error = nil;
