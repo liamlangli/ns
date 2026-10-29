@@ -26,9 +26,8 @@ fn set_hidden(v: ref view, hidden: bool) {
         g_launcher_mode = 0
         g_drag_mode = 0
         save_layout()
-        if g_settings_dirty {
-            save_settings()
-        }
+        // Always: the camera view is a setting no change marks dirty.
+        save_settings()
         for i in 0 to g_panel_count {
             if g_panels[i].capture != 0 {
                 desktop_capture_pause(g_panels[i].capture, true)
@@ -166,8 +165,9 @@ fn pick_panels(ray: float3) {
             nearest = hit.z
             g_hovered = i
             g_hover_hit = hit
-            let dx = hit.x - (p.width + 20.0 - 30.0)
-            let dy = hit.y - 20.0
+            // The close button sits inside the content's top-right corner.
+            let dx = hit.x - (p.width - 18.0)
+            let dy = hit.y - 68.0
             g_hover_close = dx * dx + dy * dy < 22.0 * 22.0
         }
     }

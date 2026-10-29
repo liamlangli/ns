@@ -51,6 +51,12 @@ fn upload_panel_shapes() {
 
 fn draw_panels() {
     upload_panel_shapes()
+    // A window under the pointer shows no hover outline or close button while
+    // the settings menu or the launcher is open over it.
+    let hovered = g_hovered
+    if g_menu || g_launcher_mode > 0 {
+        hovered = -1
+    }
     for i in 0 to g_panel_count {
         let p = g_panels[i]
         if p.capture != 0 {
@@ -68,14 +74,10 @@ fn draw_panels() {
         let height = p.height + 60.0
         draw_space(width, height, p.a, p.e, p.radius, 1.0, curve_radius(g_curve), false, false)
         g_draw_panel = i
-        plate(-10.0, -3.0, width + 20.0, height + 20.0, 20.0, float4 {
-            0, 0, 0, 0.35
-        })
+        // A window is its live content alone: no backing plate, shadow or
+        // title. The header strip above the content stays hit-testable and
+        // holds the close button on hover.
         g_draw_bias = 2.0
-        plate(0.0, 0.0, width, height, 14.0, float4 {
-            0.064, 0.064, 0.064, 0.98
-        })
-        g_draw_bias = 3.0
         if p.texture != 0u {
             texture_quad(p.texture, 10.0, 40.0, p.width, p.height, 8.0, 1.0)
         } else {
@@ -91,20 +93,19 @@ fn draw_panels() {
             })
         }
         g_draw_bias = 4.0
-        centered_label(short_title(p.title, 65), width * 0.5, 9.0, 16.0, float4 {
-            0.777, 0.777, 0.777, 1
-        })
-        if i == g_selected || i == g_hovered {
-            ring(-6.0, -6.0, width + 12.0, height + 12.0, 20.0, ink(1.0, 0.65), 3.0)
-            if i == g_hovered {
-                let alpha: f32 = 0.30
+        if i == g_selected || i == hovered {
+            ring(5.0, 35.0, p.width + 10.0, p.height + 10.0, 13.0, ink(1.0, 0.65), 3.0)
+            if i == hovered {
+                // Inside the content's top-right corner, within the outline;
+                // dark so it reads over any window content.
+                let alpha: f32 = 0.55
                 if g_hover_close {
-                    alpha = 0.70
+                    alpha = 0.85
                 }
-                plate(width - 46.0, 4.0, 32.0, 32.0, 16.0, float4 {
-                    0.42, 0.42, 0.42, alpha
+                plate(p.width - 34.0, 52.0, 32.0, 32.0, 16.0, float4 {
+                    0.12, 0.12, 0.12, alpha
                 })
-                centered_label("x", width - 30.0, 4.0, 28.0, float4 {
+                centered_label("x", p.width - 18.0, 52.0, 28.0, float4 {
                     1, 1, 1, 0.95
                 })
             }
@@ -129,8 +130,8 @@ fn hud_heat(x: f32, y: f32, width: f32, height: f32, ui: f32) f32 {
 // baseline in panel pixels.
 fn hud_text(text: str, x: f32, y: f32, size: f32, gray: f32, alpha: f32, ui: f32) {
     let top = y - size * 0.8
-    label(text, x + 2.0 * ui, top + 2.0 * ui, size, shade(0.40 * alpha))
-    label(text, x + 1.0 * ui, top + 1.0 * ui, size, shade(0.70 * alpha))
+    label(text, x + 1.0 * ui, top + 1.0 * ui, size, shade(0.40 * alpha))
+    label(text, x + 0.5 * ui, top + 0.5 * ui, size, shade(0.70 * alpha))
     label(text, x, top, size, ink(gray, alpha))
 }
 
@@ -383,9 +384,8 @@ fn vision_terminate(v: ref view) {
     }
     g_exit_saved = true
     save_layout()
-    if g_settings_dirty {
-        save_settings()
-    }
+    // Always: the camera view is a setting no change marks dirty.
+    save_settings()
     desktop_shortcuts_stop()
     for i in 0 to g_panel_count {
         if g_panels[i].capture != 0 {
@@ -402,6 +402,12 @@ fn vision_terminate(v: ref view) {
         gpu_texture_destroy(g_font_main.texture)
         gpu_texture_destroy(g_font_alternate.texture)
         gpu_texture_destroy(g_font_cjk.texture)
+        if g_floor_texture != 0u {
+            gpu_texture_destroy(g_floor_texture)
+        }
+        if g_wall_texture != 0u {
+            gpu_texture_destroy(g_wall_texture)
+        }
     }
     print(`ns_vision: {g_frames} frames in {g_elapsed}s\n`)
 }

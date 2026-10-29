@@ -46,8 +46,10 @@ fn main() {
         menu_open()
     }
     if g_start_launcher > 0 {
+        if g_start_view >= 0 {
+            g_launcher_view = g_start_view
+        }
         launcher_open(g_start_launcher)
-        g_launcher_view = g_start_view
     }
     v.on_frame({ frame in
         vision_frame(frame)

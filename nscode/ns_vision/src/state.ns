@@ -72,9 +72,10 @@ let g_menu_e: f32 = 0.0
 let g_menu_radius: f32 = 1600.0
 let g_menu_dropdown = -1
 let g_launcher_mode = 0
-// 0 lists programs, 1 lists environments; Alt+E always opens on programs.
+// 0 lists programs, 1 lists environments. Alt+E reopens on the last one,
+// which settings keep across launches; --environments forces the second.
 let g_launcher_view = 0
-let g_start_view = 0
+let g_start_view = -1
 let g_environment = 0
 let g_environment_previous = 0
 let g_environment_blend: f32 = 1.0
@@ -105,7 +106,7 @@ fn state_path(name: str) str {
 }
 
 fn settings_text() str {
-    return `scale {ftos(g_scale)}\nfov {ftos(g_target_fov)}\ndof {g_dof}\nfocus {ftos(g_focus_radius)}\nca {g_ca as i32}\ncurve {ftos(g_curve)}\nlast_curve {ftos(g_last_curve)}\nfont {g_font_choice}\nhud_guide {g_hud_guide as i32}\nhud_clock {g_hud_clock as i32}\nenvironment {g_environment}\n`
+    return `scale {ftos(g_scale)}\nfov {ftos(g_target_fov)}\ndof {g_dof}\nfocus {ftos(g_focus_radius)}\nca {g_ca as i32}\ncurve {ftos(g_curve)}\nlast_curve {ftos(g_last_curve)}\nfont {g_font_choice}\nhud_guide {g_hud_guide as i32}\nhud_clock {g_hud_clock as i32}\nenvironment {g_environment}\nlauncher_view {g_launcher_view}\nyaw {ftos(wrap_angle(g_target_yaw))}\npitch {ftos(g_target_pitch)}\n`
 }
 
 fn save_settings() {
@@ -162,8 +163,20 @@ fn load_settings() {
         if key == "environment" {
             g_environment = clampf(value, 0.0, (ENVIRONMENT_COUNT - 1) as f32) as i32
         }
+        if key == "launcher_view" {
+            g_launcher_view = clampf(value, 0.0, 1.0) as i32
+        }
+        if key == "yaw" {
+            g_target_yaw = wrap_angle(value)
+        }
+        if key == "pitch" {
+            g_target_pitch = clampf(value, 0.0 - PITCH_LIMIT, PITCH_LIMIT)
+        }
     }
+    // The camera starts where the last session left it.
     g_fov = g_target_fov
+    g_yaw = g_target_yaw
+    g_pitch = g_target_pitch
 }
 
 fn set_environment(index: i32) {
@@ -227,15 +240,110 @@ fn default_slot(index: i32) layout_slot {
     }
 }
 
+// Gap between tiled windows, in world units on the dome.
+lit LAYOUT_GAP: f32 = 60.0
+
+// Angular width and height of panel i's frame on the dome, gap included.
+fn layout_extent(i: i32) float2 {
+    let p = g_panels[i]
+    return float2 {
+        (p.width + 20.0 + LAYOUT_GAP) / DOME_RADIUS, (p.height + 60.0 + LAYOUT_GAP) / DOME_RADIUS
+    }
+}
+
+// Splits the panels, in order, into at most `rows` rows of about equal
+// angular width, writing each panel's row to `row_of`. Returns the rows used.
+fn layout_rows(rows: i32, row_of: [i32]) i32 {
+    let total: f32 = 0.0
+    for i in 0 to g_panel_count {
+        total = total + layout_extent(i).x
+    }
+    let target = total / rows as f32
+    let row = 0
+    let width: f32 = 0.0
+    for i in 0 to g_panel_count {
+        let w = layout_extent(i).x
+        // Start a new row once this panel would end more past the target
+        // than the row already falls short of it.
+        if width > 0.0 && row < rows - 1 && width + w - target > target - width {
+            row = row + 1
+            width = 0.0
+        }
+        row_of[i] = row
+        width = width + w
+    }
+    return row + 1
+}
+
+// Tiles every window on the dome in front of the viewer: a grid of rows
+// centred on the current yaw at eye level, each window at its own size. The
+// row count is the one whose bounding box best fits the frame's aspect, so
+// the grid needs the least zooming out to take in whole.
 fn reset_layout() {
     g_slots = [str: layout_slot](4096)
-    for i in 0 to g_panel_count {
-        let s = default_slot(i)
-        g_panels[i].a = s.a
-        g_panels[i].e = s.e
-        g_panels[i].radius = s.radius
+    let row_of = [i32](64)
+    let widths = [f32](64)
+    let heights = [f32](64)
+    let aspect = maxf(g_frame_w / maxf(g_frame_h, 1.0), 0.5)
+    let best = 1
+    let best_cost: f32 = 1000000.0
+    for rows in 1 to g_panel_count + 1 {
+        let used = layout_rows(rows, row_of)
+        for r in 0 to used {
+            widths[r] = 0.0
+            heights[r] = 0.0
+        }
+        for i in 0 to g_panel_count {
+            let extent = layout_extent(i)
+            widths[row_of[i]] = widths[row_of[i]] + extent.x
+            heights[row_of[i]] = maxf(heights[row_of[i]], extent.y)
+        }
+        let span: f32 = 0.0
+        let tall: f32 = 0.0
+        for r in 0 to used {
+            span = maxf(span, widths[r])
+            tall = tall + heights[r]
+        }
+        let cost = maxf(span / aspect, tall)
+        if tall * 0.5 <= PITCH_LIMIT && cost < best_cost {
+            best_cost = cost
+            best = rows
+        }
     }
-    g_target_yaw = 0.0
+    let used = layout_rows(best, row_of)
+    for r in 0 to used {
+        widths[r] = 0.0
+        heights[r] = 0.0
+    }
+    for i in 0 to g_panel_count {
+        let extent = layout_extent(i)
+        widths[row_of[i]] = widths[row_of[i]] + extent.x
+        heights[row_of[i]] = maxf(heights[row_of[i]], extent.y)
+    }
+    let tall: f32 = 0.0
+    for r in 0 to used {
+        tall = tall + heights[r]
+    }
+    let yaw = wrap_angle(g_yaw)
+    let row = -1
+    let a: f32 = 0.0
+    let top = tall * 0.5
+    for i in 0 to g_panel_count {
+        let r = row_of[i]
+        if r != row {
+            if row >= 0 {
+                top = top - heights[row]
+            }
+            row = r
+            a = yaw - widths[r] * 0.5
+        }
+        let extent = layout_extent(i)
+        g_panels[i].a = wrap_angle(a + extent.x * 0.5)
+        g_panels[i].e = top - heights[r] * 0.5
+        g_panels[i].radius = DOME_RADIUS
+        a = a + extent.x
+    }
+    g_target_yaw = g_yaw
     g_target_pitch = 0.0
     save_layout()
 }

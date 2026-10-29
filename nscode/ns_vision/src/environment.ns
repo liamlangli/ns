@@ -1,10 +1,14 @@
 // Environments behind the window dome, shared by the background pass and the
-// launcher's hex previews. Each is a screen-space gradient under the dot field.
-lit ENVIRONMENT_COUNT = 2
+// launcher's hex previews. Void and Light are gradients under the dot field;
+// Warehouse is an open-roofed concrete room traced per pixel.
+lit ENVIRONMENT_COUNT = 3
 
 fn environment_name(index: i32) str {
     if index == 1 {
         return "Light"
+    }
+    if index == 2 {
+        return "Warehouse"
     }
     return "Void"
 }
@@ -25,6 +29,10 @@ fn env_scale3(a: float3, k: f32) float3 {
     return float3 {
         a.x * k, a.y * k, a.z * k
     }
+}
+
+fn env_floor(x: f32) f32 {
+    return x - env_fract(x)
 }
 
 fn env_fract(x: f32) f32 {
@@ -69,6 +77,14 @@ fn shade(alpha: f32) float4 {
     }
 }
 
+// Opacity of the dot field over each environment.
+fn environment_dot_alpha(index: i32) f32 {
+    if index == 2 {
+        return 0.0
+    }
+    return 1.0
+}
+
 // Grey of the dot field over each environment.
 fn environment_dot(index: i32) f32 {
     if index == 1 {
@@ -81,6 +97,9 @@ fn environment_dot(index: i32) f32 {
 // `d`), so looking up reads brighter than looking down, under a soft
 // screen-space vignette. Void: dark grey. Light: soft grey.
 fn environment_sample(index: i32, d: float3, uv: float2) float3 {
+    if index == 2 {
+        return env_warehouse(d, uv)
+    }
     let up = ease(d.y * 0.5 + 0.5)
     let dx = uv.x - 0.5
     let dy = uv.y - 0.46
@@ -97,4 +116,558 @@ fn environment_sample(index: i32, d: float3, uv: float2) float3 {
 // dither in [-0.5, 0.5) that breaks up 8-bit banding in the gradients.
 fn environment_dither(x: f32, y: f32) f32 {
     return env_fract(52.9829189 * env_fract(0.06711056 * x + 0.00583715 * y)) - 0.5
+}
+
+fn env_smooth(low: f32, high: f32, x: f32) f32 {
+    return ease((x - low) / (high - low))
+}
+
+fn env_hash(x: f32, y: f32, z: f32) f32 {
+    return env_fract(sin(x * 127.1 + y * 311.7 + z * 74.7) as f32 * 43758.5453)
+}
+
+// Trilinear value noise in [0, 1].
+fn env_noise(x: f32, y: f32, z: f32) f32 {
+    let ix = x - env_fract(x)
+    let iy = y - env_fract(y)
+    let iz = z - env_fract(z)
+    let fx = x - ix
+    let fy = y - iy
+    let fz = z - iz
+    let ux = fx * fx * (3.0 - 2.0 * fx)
+    let uy = fy * fy * (3.0 - 2.0 * fy)
+    let uz = fz * fz * (3.0 - 2.0 * fz)
+    let a = mixf(env_hash(ix, iy, iz), env_hash(ix + 1.0, iy, iz), ux)
+    let b = mixf(env_hash(ix, iy + 1.0, iz), env_hash(ix + 1.0, iy + 1.0, iz), ux)
+    let c = mixf(env_hash(ix, iy, iz + 1.0), env_hash(ix + 1.0, iy, iz + 1.0), ux)
+    let e = mixf(env_hash(ix, iy + 1.0, iz + 1.0), env_hash(ix + 1.0, iy + 1.0, iz + 1.0), ux)
+    return mixf(mixf(a, b, uy), mixf(c, e, uy), uz)
+}
+
+fn env_fbm(x: f32, y: f32, z: f32) f32 {
+    return (env_noise(x, y, z) * 0.57 + env_noise(x * 2.03 + 1.7, y * 2.03 - 0.9, z * 2.03 + 3.1) * 0.29 + env_noise(x * 4.1 - 2.3, y * 4.1 + 0.4, z * 4.1 - 1.3) * 0.14)
+}
+
+// Warehouse room, in room space (the view rotated by WH_TURN): the eye at
+// the origin, the floor WH_FLOOR below it, wall tops WH_TOP above it, walls
+// at WH_X0/WH_X1 and WH_Z0/WH_Z1. No roof. Distances are in metres. Each
+// wall's length is a whole number of WH_WALL_TILE tiles (11 along x, 10
+// along z), so the formwork starts and ends on a full tile in every corner.
+lit WH_TURN: f32 = 0.32
+lit WH_FLOOR: f32 = -1.6
+lit WH_TOP: f32 = 5.6
+lit WH_X0: f32 = -17.0
+lit WH_X1: f32 = 22.6
+lit WH_Z0: f32 = -19.0
+lit WH_Z1: f32 = 17.0
+
+// Towards the sun, in room space: about 46 degrees up, from the back left.
+fn wh_sun() float3 {
+    return float3 {
+        -0.45, 0.72, 0.53
+    }
+}
+
+// Value noise with quintic fades: C2-continuous, so its slopes carry no
+// creases at the lattice cells.
+fn env_noise_c2(x: f32, y: f32, z: f32) f32 {
+    let ix = x - env_fract(x)
+    let iy = y - env_fract(y)
+    let iz = z - env_fract(z)
+    let fx = x - ix
+    let fy = y - iy
+    let fz = z - iz
+    let ux = fx * fx * fx * (fx * (fx * 6.0 - 15.0) + 10.0)
+    let uy = fy * fy * fy * (fy * (fy * 6.0 - 15.0) + 10.0)
+    let uz = fz * fz * fz * (fz * (fz * 6.0 - 15.0) + 10.0)
+    let a = mixf(env_hash(ix, iy, iz), env_hash(ix + 1.0, iy, iz), ux)
+    let b = mixf(env_hash(ix, iy + 1.0, iz), env_hash(ix + 1.0, iy + 1.0, iz), ux)
+    let c = mixf(env_hash(ix, iy, iz + 1.0), env_hash(ix + 1.0, iy, iz + 1.0), ux)
+    let e = mixf(env_hash(ix, iy + 1.0, iz + 1.0), env_hash(ix + 1.0, iy + 1.0, iz + 1.0), ux)
+    return mixf(mixf(a, b, uy), mixf(c, e, uy), uz)
+}
+
+// Four octaves of env_noise_c2, each rotated against the last (an
+// orthonormal matrix scaled by 2.02) so no octave's lattice lines up with
+// another's or with the axes.
+fn wh_cloud_fbm(p: float3) f32 {
+    let q = p
+    let sum: f32 = 0.0
+    let amplitude: f32 = 0.5
+    for i in 0 to 4 {
+        sum = sum + amplitude * env_noise_c2(q.x, q.y, q.z)
+        q = float3 {
+            (0.00 * q.x + 0.80 * q.y + 0.60 * q.z) * 2.02, (-0.80 * q.x + 0.36 * q.y - 0.48 * q.z) * 2.02, (-0.60 * q.x - 0.48 * q.y + 0.64 * q.z) * 2.02
+        }
+        amplitude = amplitude * 0.5
+    }
+    return sum / 0.9375
+}
+
+// The clear sky, a smooth function of the view direction alone: a blue
+// gradient whitening toward the horizon, a broad forward glow around the sun
+// and its disc.
+fn wh_sky_plain(d: float3) float3 {
+    let h = maxf(d.y, 0.0)
+    let k = 1.0 - h
+    let sky = env_mix(env_rgb(0.18, 0.38, 0.73), env_rgb(0.62, 0.73, 0.85), k * k * k)
+    let mu = maxf(dot3(d, wh_sun()), 0.0)
+    let m2 = mu * mu
+    let m8 = m2 * m2 * m2 * m2
+    // Blended toward the sun's warm white, not added: added to the blue it
+    // clips blue first and leaves a green cast.
+    let glow = minf(m8 * 0.22 + m8 * m8 * m8 * 0.45, 1.0)
+    sky = env_mix(sky, env_rgb(1.0, 0.95, 0.86), glow)
+    return env_mix(sky, env_rgb(1.0, 0.97, 0.90), env_smooth(0.99955, 0.99975, mu))
+}
+
+// Soft cumulus sampled on the view sphere itself, so the cloud field has no
+// projection plane, pole or seam anywhere; it thins out toward the horizon
+// and is lit from the sun's side.
+fn wh_sky(d: float3) float3 {
+    let h = maxf(d.y, 0.0)
+    let field = wh_cloud_fbm(float3 {
+        d.x * 2.6 + 3.1, d.y * 2.6, d.z * 2.6 - 1.7
+    })
+    let cover = env_smooth(0.52, 0.80, field) * env_smooth(0.06, 0.38, h)
+    let sunward = 0.5 + 0.5 * dot3(d, wh_sun())
+    let cloud = env_mix(env_rgb(0.72, 0.76, 0.82), env_rgb(0.97, 0.97, 0.96), sunward)
+    return env_mix(wh_sky_plain(d), cloud, cover * 0.75)
+}
+
+// Sunlight reaching room point p: 1 when the ray to the sun clears the wall
+// tops, 0 when a wall blocks it, with a penumbra widening with distance.
+fn wh_sunlight(p: float3) f32 {
+    let sun = wh_sun()
+    let sx = (WH_X0 - p.x) / sun.x
+    let sz = (WH_Z1 - p.z) / sun.z
+    let s = maxf(minf(sx, sz), 0.0)
+    let soft = 0.06 + s * 0.025
+    return env_smooth(WH_TOP - soft, WH_TOP + soft, p.y + s * sun.y)
+}
+
+// The wall material: assets/warehouse_wall.png, bound as root texture 1 (the
+// mask map), one tile of two 1.8 x 3.6 m formwork panels with joints and
+// 4 x 3 tie holes. R and G hold an OpenGL (Y+) tangent-space normal's x and y
+// (z is rebuilt), B a baked cavity marking the joints and holes, A roughness.
+// The shader sampler has no mipmaps and the walls are always tens of metres
+// off, so the file is a hand-built mip atlas of WH_ATLAS_LEVELS levels: level
+// 0 (1024) at x 0, level k (1024 / 2^k, k >= 1) at x 1024, y 1024 - 2 * size.
+// Mipmapping averages a joint's opposed slopes to a flat normal; the cavity
+// channel keeps it visible at distance, fading with the share of a pixel it
+// covers. The floor's texture is an atlas of the same layout.
+// A square tile, two rows of it up the wall's full height.
+lit WH_WALL_TILE: f32 = (WH_TOP - WH_FLOOR) * 0.5
+lit WH_ATLAS_LEVELS = 6
+lit WH_WALL_CAVITY: f32 = 0.85
+// The wall's base colour is its roughness map scaled by WH_WALL_ALBEDO: the
+// map's light, matte patches and darker, smoother marks read as cast concrete,
+// and the scale brings its mean of about 0.82 to an albedo near 0.58.
+lit WH_WALL_ALBEDO: f32 = 0.71
+
+// Atlas coordinate of tile uv at mip `level` of a WH_ATLAS_LEVELS atlas.
+// Half a texel in from the level's edges, so filtering never bleeds into its
+// neighbour in the atlas.
+fn wh_atlas_coord(uv: float2, level: i32) float2 {
+    let size: f32 = 1024.0
+    for k in 0 to WH_ATLAS_LEVELS {
+        if k < level {
+            size = size * 0.5
+        }
+    }
+    let x0: f32 = 0.0
+    let y0: f32 = 0.0
+    if level > 0 {
+        x0 = 1024.0
+        y0 = 1024.0 - 2.0 * size
+    }
+    let px = clampf(uv.x * size, 0.5, size - 0.5)
+    let py = clampf(uv.y * size, 0.5, size - 0.5)
+    return float2 {
+        (x0 + px) / 1536.0, (y0 + py) / 1024.0
+    }
+}
+
+// Mip level and blend toward the next for a pixel spanning `texels` level-0
+// texels: level + blend approximates log2(texels), clamped to the atlas.
+fn wh_atlas_lod(texels: f32) float2 {
+    let x = maxf(texels, 1.0)
+    let level: f32 = 0.0
+    for k in 0 to WH_ATLAS_LEVELS - 1 {
+        if x >= 2.0 {
+            x = x * 0.5
+            level = level + 1.0
+        }
+    }
+    if level >= (WH_ATLAS_LEVELS - 1) as f32 {
+        return float2 {
+            level - 1.0, 1.0
+        }
+    }
+    return float2 {
+        level, clampf(x - 1.0, 0.0, 1.0)
+    }
+}
+
+fn env_mix4(a: float4, b: float4, t: f32) float4 {
+    return float4 {
+        mixf(a.x, b.x, t), mixf(a.y, b.y, t), mixf(a.z, b.z, t), mixf(a.w, b.w, t)
+    }
+}
+
+// Trilinear sample of the wall atlas (mask map) at wall metres (u, v) along a
+// wall `length` metres long. The tile is stretched across to a whole number
+// of tiles, so both corners land on a tile edge (u = 0 or 1).
+fn wh_wall_texel(u: f32, v: f32, length: f32, texels: f32) float4 {
+    let count = maxf(env_floor(length / WH_WALL_TILE + 0.5), 1.0)
+    let uv = float2 {
+        env_fract(u * count / length), 1.0 - env_fract(v / WH_WALL_TILE)
+    }
+    let lod = wh_atlas_lod(texels)
+    let level = lod.x as i32
+    return env_mix4(shader_sample_mask(wh_atlas_coord(uv, level)), shader_sample_mask(wh_atlas_coord(uv, level + 1)), lod.y)
+}
+
+// Trilinear sample of the floor atlas (texture map) at floor metres (x, z).
+fn wh_floor_texel(x: f32, z: f32, texels: f32) float4 {
+    let uv = float2 {
+        env_fract(x / WH_FLOOR_TILE), env_fract(z / WH_FLOOR_TILE)
+    }
+    let lod = wh_atlas_lod(texels)
+    let level = lod.x as i32
+    return env_mix4(shader_sample_texture(wh_atlas_coord(uv, level)), shader_sample_texture(wh_atlas_coord(uv, level + 1)), lod.y)
+}
+
+// Schlick Fresnel for a dielectric (F0 = 0.04) at cosine `c`.
+fn wh_fresnel(c: f32) f32 {
+    let k = 1.0 - clampf(c, 0.0, 1.0)
+    let k2 = k * k
+    return 0.04 + 0.96 * k2 * k2 * k
+}
+
+// Diffuse sunlight over a cool sky ambient.
+fn wh_diffuse(albedo: f32, sun_facing: f32, sunlit: f32, ao: f32) float3 {
+    let direct = maxf(sun_facing, 0.0) * sunlit
+    return float3 {
+        albedo * (0.50 * ao + 0.72 * direct), albedo * (0.53 * ao + 0.68 * direct), albedo * (0.60 * ao + 0.60 * direct)
+    }
+}
+
+// Where on the walls room point p lies: metres along the wall from its
+// corner, metres up from the floor, and the wall's length. `xwall` picks the
+// walls at WH_X0 / WH_X1 over those at WH_Z0 / WH_Z1.
+fn wh_wall_uv(p: float3, xwall: bool) float3 {
+    if xwall {
+        return float3 {
+            p.z - WH_Z0, p.y - WH_FLOOR, WH_Z1 - WH_Z0
+        }
+    }
+    return float3 {
+        p.x - WH_X0, p.y - WH_FLOOR, WH_X1 - WH_X0
+    }
+}
+
+// Inward normal of the wall a ray along d meets.
+fn wh_wall_normal(d: float3, xwall: bool) float3 {
+    if xwall {
+        if d.x > 0.0 {
+            return float3 {
+                -1, 0, 0
+            }
+        }
+        return float3 {
+            1, 0, 0
+        }
+    }
+    if d.z > 0.0 {
+        return float3 {
+            0, 0, -1
+        }
+    }
+    return float3 {
+        0, 0, 1
+    }
+}
+
+// Light on wall point p of the given albedo, normal n and roughness, seen
+// along d: sun and sky diffuse, corner and floor occlusion, and a Fresnel
+// sheen of the sky that roughness dulls.
+fn wh_wall_lit(p: float3, d: float3, xwall: bool, albedo: f32, n: float3, rough: f32) float3 {
+    let v = p.y - WH_FLOOR
+    let corner = minf(p.x - WH_X0, WH_X1 - p.x)
+    if xwall {
+        corner = minf(p.z - WH_Z0, WH_Z1 - p.z)
+    }
+    let ao = (0.62 + 0.38 * env_smooth(0.0, 2.2, v)) * (0.72 + 0.28 * env_smooth(0.0, 2.0, corner))
+    let f = wh_fresnel(absf(dot3(d, n)))
+    let col = env_scale3(wh_diffuse(albedo, dot3(n, wh_sun()), wh_sunlight(p), ao), 1.0 - f)
+    // Rough cast concrete: the grazing reflection is the sky's average light.
+    return env_add(col, env_scale3(env_rgb(0.62, 0.70, 0.80), f * 0.75 * (1.0 - 0.5 * rough) * ao))
+}
+
+// Textured wall point p, seen along d from distance t: the atlas normal in
+// the wall's tangent frame (u along the wall, v up, the inward normal), its
+// roughness, and the roughness map as base colour, darkened by the baked
+// cavity.
+fn wh_wall(p: float3, d: float3, xwall: bool, t: f32) float3 {
+    let q = wh_wall_uv(p, xwall)
+    let base = wh_wall_normal(d, xwall)
+    let along = maxf(absf(dot3(d, base)), 0.15)
+    let metres = t * 2.0 * shader_root_f32(18) / shader_root_f32(2) / along
+    let texel = wh_wall_texel(q.x, q.y, q.z, metres / WH_WALL_TILE * 1024.0)
+    let nx = texel.x * 2.0 - 1.0
+    let ny = texel.y * 2.0 - 1.0
+    let nz = sqrt(maxf(1.0 - nx * nx - ny * ny, 0.0)) as f32
+    // Tangent: +z along the x walls (u = p.z), +x along the z walls.
+    let n = float3 {
+        nx, ny, base.z * nz
+    }
+    if xwall {
+        n = float3 {
+            base.x * nz, ny, nx
+        }
+    }
+    let nl = sqrt(dot3(n, n)) as f32
+    n = float3 {
+        n.x / nl, n.y / nl, n.z / nl
+    }
+    let albedo = texel.w * WH_WALL_ALBEDO * (1.0 - WH_WALL_CAVITY * texel.z)
+    return wh_wall_lit(p, d, xwall, albedo, n, texel.w)
+}
+
+// What a ray from room point p along r sees, coarsely: a flat-shaded wall or
+// the cloudless sky. One sample of the floor's glossy reflection.
+fn wh_trace(p: float3, r: float3) float3 {
+    let tx: f32 = 1000000.0
+    if r.x > 0.0001 {
+        tx = (WH_X1 - p.x) / r.x
+    }
+    if r.x < -0.0001 {
+        tx = (WH_X0 - p.x) / r.x
+    }
+    let tz: f32 = 1000000.0
+    if r.z > 0.0001 {
+        tz = (WH_Z1 - p.z) / r.z
+    }
+    if r.z < -0.0001 {
+        tz = (WH_Z0 - p.z) / r.z
+    }
+    let tw = minf(tx, tz)
+    let y = p.y + r.y * tw
+    if y > WH_TOP {
+        return wh_sky_plain(r)
+    }
+    // The mean albedo and roughness of the concrete: blur leaves no texture
+    // to see.
+    return wh_wall_lit(float3 {
+        p.x + r.x * tw, y, p.z + r.z * tw
+    }, r, tx < tz, 0.56, wh_wall_normal(r, tx < tz), 0.82)
+}
+
+// Slope (dh/dx, dh/dz) of one wave of the floor's height field: amplitude
+// `amp` metres, wavelength `len` metres, travelling along `angle`.
+fn wh_wave(x: f32, z: f32, angle: f32, len: f32, amp: f32, phase: f32) float2 {
+    let k = 6.2831853 / len
+    let dx = cos(angle) as f32
+    let dz = sin(angle) as f32
+    let c = amp * k * cos(k * (x * dx + z * dz) + phase) as f32
+    return float2 {
+        c * dx, c * dz
+    }
+}
+
+// Slope of the floor's undulation: four slow swells of several metres, three
+// ripples of about 0.7 m and three fine trowel waves of about 11 cm, each
+// along its own direction so no grid shows. The fine waves scale by `fine`
+// to fade out where a pixel would alias them.
+fn wh_floor_slope(x: f32, z: f32, fine: f32) float2 {
+    let s = wh_wave(x, z, 0.3, 5.1, 0.006, 0.0)
+    let w = wh_wave(x, z, 1.9, 3.7, 0.005, 1.3)
+    s = float2 {
+        s.x + w.x, s.y + w.y
+    }
+    w = wh_wave(x, z, 3.6, 4.4, 0.005, 2.1)
+    s = float2 {
+        s.x + w.x, s.y + w.y
+    }
+    w = wh_wave(x, z, 5.0, 2.9, 0.004, 4.0)
+    s = float2 {
+        s.x + w.x, s.y + w.y
+    }
+    w = wh_wave(x, z, 0.8, 0.83, 0.0010, 0.7)
+    s = float2 {
+        s.x + w.x, s.y + w.y
+    }
+    w = wh_wave(x, z, 2.6, 0.61, 0.0008, 3.3)
+    s = float2 {
+        s.x + w.x, s.y + w.y
+    }
+    w = wh_wave(x, z, 4.3, 0.71, 0.0008, 5.1)
+    s = float2 {
+        s.x + w.x, s.y + w.y
+    }
+    w = wh_wave(x, z, 1.3, 0.13, 0.00012 * fine, 2.4)
+    s = float2 {
+        s.x + w.x, s.y + w.y
+    }
+    w = wh_wave(x, z, 3.1, 0.11, 0.0001 * fine, 0.2)
+    s = float2 {
+        s.x + w.x, s.y + w.y
+    }
+    w = wh_wave(x, z, 5.5, 0.097, 0.0001 * fine, 4.6)
+    return float2 {
+        s.x + w.x, s.y + w.y
+    }
+}
+
+// Glossy reflection: WH_GLOSS_SAMPLES rays on a golden-angle spiral in a cone
+// of WH_GLOSS_SPREAD radians around the mirror direction r, turned by `spin`
+// (per-pixel noise) so neighbouring pixels sample different directions. A
+// sample tipped under the slab is mirrored back up rather than clamped to
+// skim it, which would pile every such sample onto the dark wall foot.
+lit WH_GLOSS_SAMPLES = 8
+lit WH_GLOSS_SPREAD: f32 = 0.2
+// The floor material: assets/warehouse_floor.png, bound as root texture 0, a
+// mip atlas laid out as the wall's (R, G normal x and y, B cavity, A
+// roughness), tiled every WH_FLOOR_TILE metres. The normal is bent by
+// WH_FLOOR_NORMAL and the cavity darkens the odd pore by WH_FLOOR_CAVITY. The roughness map spans only about 0.78 to 0.88 around its
+// mean WH_FLOOR_ROUGH, so WH_FLOOR_ROUGH_CONTRAST stretches it about that
+// mean until its patches show as changes in sheen; the mean stays the map's.
+lit WH_FLOOR_TILE: f32 = 1.6
+lit WH_FLOOR_NORMAL: f32 = 0.7
+lit WH_FLOOR_ROUGH: f32 = 0.83
+lit WH_FLOOR_ROUGH_CONTRAST: f32 = 3.0
+lit WH_FLOOR_CAVITY: f32 = 0.5
+
+fn wh_glossy(p: float3, r: float3, spin: f32, spread: f32) float3 {
+    let tl = sqrt(r.x * r.x + r.z * r.z) as f32
+    let t1 = float3 {
+        r.z / tl, 0.0, 0.0 - r.x / tl
+    }
+    let t2 = float3 {
+        r.y * t1.z - r.z * t1.y, r.z * t1.x - r.x * t1.z, r.x * t1.y - r.y * t1.x
+    }
+    let sum = env_rgb(0.0, 0.0, 0.0)
+    for i in 0 to WH_GLOSS_SAMPLES {
+        let angle = i as f32 * 2.3999632 + spin
+        let radius = sqrt((i as f32 + 0.5) / WH_GLOSS_SAMPLES as f32) as f32 * spread
+        let ca = cos(angle) as f32 * radius
+        let sa = sin(angle) as f32 * radius
+        let dir = float3 {
+            r.x + t1.x * ca + t2.x * sa, maxf(absf(r.y + t1.y * ca + t2.y * sa), 0.002), r.z + t1.z * ca + t2.z * sa
+        }
+        sum = env_add(sum, wh_trace(p, dir))
+    }
+    return env_scale3(sum, 1.0 / WH_GLOSS_SAMPLES as f32)
+}
+
+// Honed concrete slab: diffuse grey with saw-cut joints every 2.4 m, the textured normal
+// over the wave undulation, a GGX sun highlight and a Fresnel-weighted glossy
+// reflection, both driven by the texture's per-pixel roughness.
+//
+// The atlas level follows one pixel's floor footprint (from distance,
+// grazing angle and the field of view), so the grain and the roughness
+// patches filter down smoothly with distance instead of aliasing.
+fn wh_floor(d: float3, t: f32, spin: f32) float3 {
+    let sun = wh_sun()
+    let p = float3 {
+        d.x * t, WH_FLOOR, d.z * t
+    }
+    let slope = wh_floor_slope(p.x, p.z, 1.0 - env_smooth(4.0, 16.0, t))
+    let tn = float3 {
+        0, 1, 0
+    }
+    let rough = WH_FLOOR_ROUGH
+    let grain: f32 = 1.0
+    if shader_root_f32(0) > 0.5 {
+        let metres = t * 2.0 * shader_root_f32(18) / shader_root_f32(2) / maxf(absf(d.y), 0.03)
+        let texel = wh_floor_texel(p.x, p.z, metres / WH_FLOOR_TILE * 1024.0)
+        let nx = (texel.x * 2.0 - 1.0) * WH_FLOOR_NORMAL
+        let ny = (texel.y * 2.0 - 1.0) * WH_FLOOR_NORMAL
+        // Image up is -z on the slab.
+        tn = float3 {
+            nx, sqrt(maxf(1.0 - nx * nx - ny * ny, 0.0)) as f32, 0.0 - ny
+        }
+        rough = clampf(WH_FLOOR_ROUGH + (texel.w - WH_FLOOR_ROUGH) * WH_FLOOR_ROUGH_CONTRAST, 0.05, 1.0)
+        // Rougher patches scatter more light back: a slightly lighter tone.
+        grain = (1.0 + (rough - WH_FLOOR_ROUGH) * 0.5) * (1.0 - WH_FLOOR_CAVITY * texel.z)
+    }
+    let n = float3 {
+        tn.x - slope.x * tn.y, tn.y, tn.z - slope.y * tn.y
+    }
+    let nl = sqrt(dot3(n, n)) as f32
+    n = float3 {
+        n.x / nl, n.y / nl, n.z / nl
+    }
+    let width = 0.01 + t * 0.0012
+    let jx = env_fract(p.x / 2.4)
+    let jz = env_fract(p.z / 2.4)
+    let joint = 1.0 - env_smooth(0.0, width, minf(minf(jx, 1.0 - jx), minf(jz, 1.0 - jz)) * 2.4)
+    let albedo = (0.43 + (env_fbm(p.x * 0.22, p.z * 0.22, 4.0) - 0.5) * 0.10) * (1.0 - 0.35 * joint) * grain
+    let wall = minf(minf(p.x - WH_X0, WH_X1 - p.x), minf(p.z - WH_Z0, WH_Z1 - p.z))
+    let ao = 0.55 + 0.45 * env_smooth(0.0, 3.0, wall)
+    let sunlit = wh_sunlight(p)
+    let cv = maxf(0.0 - dot3(d, n), 0.0)
+    let f = wh_fresnel(cv)
+    let col = env_scale3(wh_diffuse(albedo, dot3(n, sun), sunlit, ao), 1.0 - f)
+    // Mirror direction about the bumped normal, kept above the slab.
+    let k = 2.0 * dot3(d, n)
+    let r = float3 {
+        d.x - k * n.x, maxf(absf(d.y - k * n.y), 0.002), d.z - k * n.z
+    }
+    // Roughness widens and dulls the reflection; so do the joints.
+    col = env_add(col, env_scale3(wh_glossy(p, r, spin, WH_GLOSS_SPREAD * rough / 0.5), f * (1.0 - 0.55 * rough) * (1.0 - 0.6 * joint)))
+    // GGX highlight of the sun: alpha = roughness squared.
+    let hx = sun.x - d.x
+    let hy = sun.y - d.y
+    let hz = sun.z - d.z
+    let hl = sqrt(hx * hx + hy * hy + hz * hz) as f32
+    let ndh = maxf((n.x * hx + n.y * hy + n.z * hz) / hl, 0.0)
+    let a2 = rough * rough * rough * rough
+    let q = ndh * ndh * (a2 - 1.0) + 1.0
+    let ggx = a2 / (PI * q * q)
+    let spec = minf(ggx * wh_fresnel((sun.x * hx + sun.y * hy + sun.z * hz) / hl) * 0.25 / maxf(cv, 0.15), 3.0)
+    return env_add(col, env_scale3(env_rgb(1.0, 0.95, 0.86), spec * sunlit * maxf(dot3(n, sun), 0.0)))
+}
+
+// `uv` only seeds the floor's per-pixel reflection noise, over the scene
+// target's pixels (root 2 and the frame aspect).
+fn env_warehouse(view: float3, uv: float2) float3 {
+    let cs = cos(WH_TURN) as f32
+    let sn = sin(WH_TURN) as f32
+    let d = float3 {
+        cs * view.x - sn * view.z, view.y, sn * view.x + cs * view.z
+    }
+    let tx: f32 = 1000000.0
+    if d.x > 0.0001 {
+        tx = WH_X1 / d.x
+    }
+    if d.x < -0.0001 {
+        tx = WH_X0 / d.x
+    }
+    let tz: f32 = 1000000.0
+    if d.z > 0.0001 {
+        tz = WH_Z1 / d.z
+    }
+    if d.z < -0.0001 {
+        tz = WH_Z0 / d.z
+    }
+    let tw = minf(tx, tz)
+    if d.y < 0.0 && WH_FLOOR / d.y < tw {
+        let spin = (environment_dither(uv.x * shader_root_f32(32) * shader_root_f32(2) / shader_root_f32(33), uv.y * shader_root_f32(2)) + 0.5) * 6.2831853
+        return wh_floor(d, WH_FLOOR / d.y, spin)
+    }
+    let y = d.y * tw
+    if y > WH_TOP {
+        return wh_sky(d)
+    }
+    return wh_wall(float3 {
+        d.x * tw, y, d.z * tw
+    }, d, tx < tz, tw)
+}
+
+fn env_add(a: float3, b: float3) float3 {
+    return float3 {
+        a.x + b.x, a.y + b.y, a.z + b.z
+    }
 }

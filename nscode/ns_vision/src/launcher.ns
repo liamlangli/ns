@@ -159,8 +159,7 @@ fn launcher_open(mode: i32) {
     }
     g_menu = false
     g_launcher_mode = mode
-    g_launcher_view = 0
-    g_tab_slide = 0.0
+    g_tab_slide = g_launcher_view as f32
     g_launcher_time = 0.0
     g_launcher_drag = -1
     g_launcher_pressed = -1
@@ -345,6 +344,7 @@ fn launcher_input(v: ref view) {
     if g_tab_pressed >= 0 {
         if g_tab_pressed == g_tab_hover && g_launcher_view != g_tab_hover {
             g_launcher_view = g_tab_hover
+            save_settings()
             g_launcher_time = 0.0
         }
         g_tab_pressed = -1
@@ -397,7 +397,7 @@ fn launcher_input(v: ref view) {
 }
 
 fn draw_environment_cell(index: i32, cell: float4) {
-    draw_quad(6, 0u, cell.x - cell.z * 0.82, cell.y - cell.z * 0.82, cell.z * 1.64, cell.z * 1.64, 0.0, ink(1.0, cell.w), index as f32, float4 {
+    draw_quad(6, g_floor_texture, cell.x - cell.z * 0.82, cell.y - cell.z * 0.82, cell.z * 1.64, cell.z * 1.64, 0.0, ink(1.0, cell.w), index as f32, float4 {
         0, 0, 1, 1
     })
     let current = index == g_environment
@@ -416,7 +416,7 @@ fn draw_environment_cell(index: i32, cell: float4) {
     }
     let name = environment_name(index)
     let y = cell.y + cell.z * 0.82 + 4.0
-    centered_label(name, cell.x + 1.0, y + 1.0, 12.0, shade(cell.w))
+    centered_label(name, cell.x + 0.5, y + 0.5, 12.0, shade(cell.w))
     centered_label(name, cell.x, y, 12.0, ink(gray, cell.w * 0.95))
 }
 
@@ -443,7 +443,7 @@ fn draw_launcher_tabs() {
                 plate(icon_x + ox, y + oy, 6.0, 6.0, 1.5, panel_ink(1.0, alpha * 0.9))
             }
         } else {
-            draw_quad(6, 0u, icon_x - 11.0, y - 11.0, 22.0, 22.0, 0.0, panel_ink(1.0, alpha), g_environment as f32, float4 {
+            draw_quad(6, g_floor_texture, icon_x - 11.0, y - 11.0, 22.0, 22.0, 0.0, panel_ink(1.0, alpha), g_environment as f32, float4 {
                 0, 0, 1, 1
             })
         }
@@ -461,7 +461,7 @@ fn draw_launcher_icon(index: i32, cell: float4) {
         draw_quad(4, 0u, cell.x - cell.z * 0.78, cell.y - cell.z * 0.78, cell.z * 1.56, cell.z * 1.56, 0.0, ink(1.0, cell.w * 0.5), 1.0, float4 {
             0, 0, 1, 1
         })
-        centered_label("+", cell.x, cell.y - cell.z * 0.29, cell.z * 0.6, ink(1.0, cell.w * 0.8))
+        centered_mark("+", cell.x, cell.y, cell.z * 0.6, ink(1.0, cell.w * 0.8))
         return
     }
     let app = launcher_app(index)
@@ -484,7 +484,7 @@ fn draw_launcher_icon(index: i32, cell: float4) {
         plate(cell.x - cell.z * 0.4, cell.y - cell.z * 0.4, cell.z * 0.8, cell.z * 0.8, cell.z * 0.18, ink(0.21, cell.w))
         centered_label(substr(app.name, 0, 1), cell.x, cell.y - cell.z * 0.23, cell.z * 0.5, ink(1.0, cell.w))
     }
-    centered_label(short_title(app.name, 14), cell.x + 1.0, cell.y + cell.z * 0.65 + 1.0, 11.0, shade(cell.w))
+    centered_label(short_title(app.name, 14), cell.x + 0.5, cell.y + cell.z * 0.65 + 0.5, 11.0, shade(cell.w))
     centered_label(short_title(app.name, 14), cell.x, cell.y + cell.z * 0.65, 11.0, ink(1.0, cell.w * 0.9))
 }
 

@@ -3,6 +3,10 @@ use io
 let g_root = [f32](48)
 lit ROOT_BYTES = 192
 let g_quad_shader: u32 = 0
+// Warehouse floor normal (RGB) and roughness (A); 0 when the asset is missing.
+let g_floor_texture: u32 = 0u
+// Warehouse wall normal/roughness mip atlas; 0 when the asset is missing.
+let g_wall_texture: u32 = 0u
 let g_background_shader: u32 = 0
 let g_lens_shader: u32 = 0
 let g_dot_shader: u32 = 0
@@ -66,6 +70,8 @@ fn render_init() bool {
     // Soft shadows are depth tested but never occlude: a shadow that wrote
     // depth would cut into the panels it falls across.
     g_shadow_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_NEARER_EQUAL, false, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
+    g_floor_texture = load_texture("assets/warehouse_floor.png")
+    g_wall_texture = load_texture("assets/warehouse_wall.png")
     g_flat_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_ALWAYS, false, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
     return g_quad_shader != 0u && g_background_shader != 0u && g_dot_shader != 0u && g_lens_shader != 0u
 }
@@ -218,20 +224,27 @@ fn render_begin() {
     render_targets((g_frame_w * g_scale) as i32, (g_frame_h * g_scale) as i32)
     gpu_pass_begin("vision live window dome", g_scene_color, 0u, 0u, 0u, g_scene_depth, 0u, 0.012, 0.012, 0.012, 1.0, GPU_DEPTH_CLEAR)
     let blend = ease(g_environment_blend)
-    g_root[1] = g_target_w as f32
+    g_root[0] = g_floor_texture as f32
+    // Root words 0 and 1 bind the texture and mask maps: the warehouse floor
+    // and wall. No draw_quad call rewrites word 1, so the launcher's previews
+    // keep the wall too.
+    g_root[1] = g_wall_texture as f32
     g_root[2] = g_target_h as f32
     g_root[44] = g_environment as f32
     g_root[45] = g_environment_previous as f32
     g_root[46] = blend
     // Dot grey, crossfading with the background.
     g_root[47] = mixf(environment_dot(g_environment_previous), environment_dot(g_environment), blend)
+    g_root[3] = mixf(environment_dot_alpha(g_environment_previous), environment_dot_alpha(g_environment), blend)
     gpu_set_shader(g_background_shader)
     gpu_set_state(g_flat_state)
     gpu_set_root_data(g_root, ROOT_BYTES)
     gpu_draw_vertices(0, 3, 1)
-    gpu_set_shader(g_dot_shader)
-    gpu_set_state(g_scene_state)
-    gpu_draw_vertices(0, DOT_COUNT as i32 * 6, 1)
+    if g_root[3] > 0.01 {
+        gpu_set_shader(g_dot_shader)
+        gpu_set_state(g_scene_state)
+        gpu_draw_vertices(0, DOT_COUNT as i32 * 6, 1)
+    }
 }
 
 fn render_resolve() {
@@ -248,9 +261,12 @@ fn render_resolve() {
         g_root[8] = 1.0
     }
     g_root[10] = g_theme
+    // Lateral chromatic aberration per pixel of depth-of-field blur: red and
+    // blue magnified 0.04% apart about the frame centre for each, about 2 px
+    // of fringe at the frame edge at the default depth of field.
     g_root[9] = 0.0
     if g_ca {
-        g_root[9] = 0.09
+        g_root[9] = 0.0004
     }
     gpu_set_shader(g_lens_shader)
     gpu_set_state(g_scene_state)

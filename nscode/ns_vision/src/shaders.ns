@@ -226,7 +226,7 @@ fn fs_vision(input: vision_vertex) vision_pixel {
         let gy = fract_dot(input.uv.y * 9.0)
         let dot = clampf(1.0 - (gx * gx + gy * gy) / 0.02, 0.0, 1.0) * 0.62
         let ink = environment_dot(index)
-        scene = env_mix(scene, env_rgb(ink, ink, ink), dot)
+        scene = env_mix(scene, env_rgb(ink, ink, ink), dot * environment_dot_alpha(index))
         color = float4 {
             scene.x, scene.y, scene.z, color.w
         }
@@ -306,9 +306,9 @@ fn fs_background(input: vision_vertex) float4 {
     if blend < 0.999 {
         c = env_mix(environment_sample(shader_root_f32(45) as i32, view, input.uv), c, blend)
     }
-    // About one 8-bit step of dither over the scene target's pixels (roots
-    // 1 and 2).
-    let n = environment_dither(input.uv.x * shader_root_f32(1), input.uv.y * shader_root_f32(2)) * 0.006
+    // About one 8-bit step of dither over the scene target's pixels: root 2
+    // is its height, and the frame's aspect (roots 32, 33) gives its width.
+    let n = environment_dither(input.uv.x * shader_root_f32(32) * shader_root_f32(2) / shader_root_f32(33), input.uv.y * shader_root_f32(2)) * 0.006
     return float4 {
         c.x + n, c.y + n, c.z + n, 1.0
     }
@@ -372,7 +372,7 @@ fn fs_dots(input: dot_vertex) vision_pixel {
     let x = (input.uv.x - 0.5) * 2.0
     let y = (input.uv.y - 0.5) * 2.0
     let t = clampf((sqrt(x * x + y * y) as f32 - 0.45) / 0.55, 0.0, 1.0)
-    let a = (1.0 - t * t * (3.0 - 2.0 * t)) * 0.62 * input.fade
+    let a = (1.0 - t * t * (3.0 - 2.0 * t)) * 0.62 * input.fade * shader_root_f32(3)
     let depth = reverse_z_depth(maxf(input.distance, NEAR), NEAR)
     if a < 0.01 {
         depth = 0.0
@@ -381,6 +381,27 @@ fn fs_dots(input: dot_vertex) vision_pixel {
         float4 {
             shader_root_f32(47), shader_root_f32(47), shader_root_f32(47), a
         }, depth
+    }
+}
+
+// Lateral chromatic aberration: the scene at q with red magnified by 1 + ca
+// and blue by 1 - ca about the frame centre, so colour fringes grow toward
+// the edges and vanish in the middle, as through a real lens.
+fn lens_rgb(q: float2, ca: f32) float3 {
+    let green = shader_sample_texture(q)
+    if ca <= 0.0 {
+        return float3 {
+            green.x, green.y, green.z
+        }
+    }
+    let red = shader_sample_texture(float2 {
+        0.5 + (q.x - 0.5) * (1.0 + ca), 0.5 + (q.y - 0.5) * (1.0 + ca)
+    })
+    let blue = shader_sample_texture(float2 {
+        0.5 + (q.x - 0.5) * (1.0 - ca), 0.5 + (q.y - 0.5) * (1.0 - ca)
+    })
+    return float3 {
+        red.x, green.y, blue.z
     }
 }
 
@@ -393,10 +414,15 @@ fn fs_lens(input: vision_vertex) vision_pixel {
     if shader_root_f32(8) > 0.5 {
         blur = 12.0
     }
-    let color = shader_sample_texture(uv)
-    let sum = float3 {
-        color.x, color.y, color.z
+    // Chromatic aberration follows the depth of field: root 9 is the
+    // magnification split per pixel of blur, so focus stays clean and fringes
+    // grow with the same falloff and strength as the blur. None behind the
+    // launcher, which is blurred and dimmed already.
+    let ca = shader_root_f32(9) * blur
+    if shader_root_f32(8) > 0.5 {
+        ca = 0.0
     }
+    let sum = lens_rgb(uv, ca)
     let weight: f32 = 1.0
     if blur > 0.2 {
         for i in 0 to 24 {
@@ -404,18 +430,12 @@ fn fs_lens(input: vision_vertex) vision_pixel {
             let radius = sqrt((i as f32 + 0.5) / 24.0) as f32 * blur
             let px = cos(angle) as f32 * radius / shader_root_f32(32)
             let py = sin(angle) as f32 * radius / shader_root_f32(33)
-            let red = shader_sample_texture(float2 {
-                uv.x + px * (1.0 + shader_root_f32(9)), uv.y + py * (1.0 + shader_root_f32(9))
-            })
-            let green = shader_sample_texture(float2 {
+            let tap = lens_rgb(float2 {
                 uv.x + px, uv.y + py
-            })
-            let blue = shader_sample_texture(float2 {
-                uv.x + px * (1.0 - shader_root_f32(9)), uv.y + py * (1.0 - shader_root_f32(9))
-            })
-            sum.x = sum.x + red.x
-            sum.y = sum.y + green.y
-            sum.z = sum.z + blue.z
+            }, ca)
+            sum = float3 {
+                sum.x + tap.x, sum.y + tap.y, sum.z + tap.z
+            }
             weight = weight + 1.0
         }
     }

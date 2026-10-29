@@ -182,6 +182,23 @@ fn centered_label(text: str, x: f32, y: f32, size: f32, rgba: float4) {
     label(text, x - text_width(text, size) * 0.5, y, size, rgba)
 }
 
+// One glyph centred on (x, y) by its own ink box in the active font, for a
+// symbol such as "+" that must sit in the middle of a shape whatever the
+// font's baseline and padding.
+fn centered_mark(text: str, x: f32, y: f32, size: f32, rgba: float4) {
+    let font = active_font()
+    let cp = codepoint(text, 0).x as i32
+    if !has(font.index, cp) {
+        centered_label(text, x, y - size * 0.5, size, rgba)
+        return
+    }
+    let offset = font.index[cp] * 8
+    let scale = size / font.size
+    let left = x - (font.glyphs[offset + 3] + font.glyphs[offset + 1] * 0.5) * scale
+    let top = y - (font.glyphs[offset + 4] + font.glyphs[offset + 2] * 0.5) * scale
+    label(text, left, top, size, rgba)
+}
+
 fn short_title(text: str, maximum: i32) str {
     let i = 0
     let count = 0
