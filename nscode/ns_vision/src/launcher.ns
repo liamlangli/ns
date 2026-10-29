@@ -1,0 +1,435 @@
+let g_cells = [float4](40)
+let g_cell_count = 0
+let g_launcher_hover = -1
+let g_launcher_pressed = -1
+let g_launcher_drag = -1
+let g_drop_cell = -1
+let g_drop_hole = false
+let g_launcher_x: f32 = 0.0
+let g_launcher_y: f32 = 0.0
+let g_press_launcher_x: f32 = 0.0
+let g_press_launcher_y: f32 = 0.0
+let g_lens_x: f32 = 380.0
+let g_lens_y: f32 = 400.0
+let g_lens_strength: f32 = 0.0
+
+fn save_launcher() {
+    if g_demo {
+        return
+    }
+    let text = ""
+    for i in 0 to g_added_count {
+        text = text + "+" + g_added[i] + "\n"
+    }
+    for path in g_removed {
+        text = text + "-" + path + "\n"
+    }
+    for i in 0 to g_app_count {
+        text = text + "=" + g_apps[i].path + "\n"
+    }
+    if os_write_file_atomic(state_path("launcher.txt"), text) != 1 {
+        notify("Could not save launcher")
+    }
+}
+
+fn load_launcher_state() {
+    for line in split_lines(os_read_file(state_path("launcher.txt"))) {
+        if line.len < 2 {
+            continue
+        }
+        let path = substr(line, 1, line.len - 1)
+        if line[0] == 43 {
+            g_added[g_added_count] = path
+            g_added_count = g_added_count + 1
+        }
+        if line[0] == 45 {
+            g_removed[path] = true
+        }
+        if line[0] == 61 {
+            g_order[g_order_count] = path
+            g_order_count = g_order_count + 1
+        }
+    }
+}
+
+fn app_name_from_path(path: str) str {
+    let start = 0
+    for i in 0 to path.len {
+        if path[i] == 47 || path[i] == 92 {
+            start = i + 1
+        }
+    }
+    let length = path.len - start
+    if length > 4 && substr(path, path.len - 4, 4) == ".app" {
+        length = length - 4
+    }
+    return substr(path, start, length)
+}
+
+fn append_app(name: str, path: str, manual: bool) {
+    if path.len == 0 || has(g_removed, path) {
+        return
+    }
+    for i in 0 to g_app_count {
+        if g_apps[i].path == path {
+            if manual {
+                g_apps[i].manual = true
+            }
+            return
+        }
+    }
+    if g_app_count >= 256 {
+        return
+    }
+    g_apps[g_app_count] = vision_app {
+        name, path, 0, 0, 0u, manual
+    }
+    g_app_count = g_app_count + 1
+}
+
+fn launcher_load() {
+    load_launcher_state()
+    let total = desktop_apps_refresh()
+    // Restore actual paths, including programs outside the system catalog.
+    for i in 0 to g_order_count {
+        let path = g_order[i]
+        if os_file_size(path) >= 0 || os_dir_list(path).len > 0 {
+            let manual = false
+            for j in 0 to g_added_count {
+                if g_added[j] == path {
+                    manual = true
+                }
+            }
+            append_app(app_name_from_path(path), path, manual)
+        }
+    }
+    for i in 0 to g_added_count {
+        append_app(app_name_from_path(g_added[i]), g_added[i], true)
+    }
+    // Everyday apps get the inner cells on a fresh install.
+    let preferred = split_lines("Finder\nSafari\nGoogle Chrome\nTerminal\nVisual Studio Code\nMail\nMessages\nNotes\nCalendar\nMusic\nPhotos\nSystem Settings\nPreview\nCalculator")
+    for name in preferred {
+        for i in 0 to total {
+            if desktop_app_name(i) == name {
+                append_app(name, desktop_app_path(i), false)
+            }
+        }
+    }
+    for i in 0 to total {
+        append_app(desktop_app_name(i), desktop_app_path(i), false)
+    }
+    for i in 0 to minf(g_app_count as f32, 19.0) as i32 {
+        g_apps[i].icon = app_icon(g_apps[i].path)
+    }
+}
+
+fn background_sync() {
+    g_background_count = 0
+    for i in 0 to desktop_window_count() {
+        let info = desktop_window_at(i)
+        if info.flags != DESKTOP_BACKGROUND || g_background_count >= 37 {
+            continue
+        }
+        let path = desktop_window_path(i)
+        g_background[g_background_count] = vision_app {
+            desktop_window_title(i), path, info.id, info.pid, app_icon(path), false
+        }
+        g_background_count = g_background_count + 1
+    }
+}
+
+fn launcher_open(mode: i32) {
+    if g_launcher_mode == mode {
+        g_launcher_mode = 0
+        return
+    }
+    g_menu = false
+    g_launcher_mode = mode
+    g_launcher_time = 0.0
+    g_launcher_drag = -1
+    g_launcher_pressed = -1
+    if mode == 2 {
+        desktop_refresh()
+        background_sync()
+    }
+}
+
+fn launcher_count() i32 {
+    if g_launcher_mode == 2 {
+        return g_background_count
+    }
+    return minf(g_app_count as f32, 19.0) as i32
+}
+
+fn launcher_app(index: i32) vision_app {
+    if g_launcher_mode == 2 {
+        return g_background[index]
+    }
+    return g_apps[index]
+}
+
+fn launcher_update(dt: f32) {
+    g_launcher_time = g_launcher_time + dt
+    let scale = g_frame_h * 0.72 / 700.0
+    g_launcher_x = (g_mouse_x - g_frame_w * 0.5) / scale + 380.0
+    g_launcher_y = (g_mouse_y - g_frame_h * 0.5) / scale + 350.0
+    g_lens_x = mixf(g_lens_x, g_launcher_x, minf(1.0, dt * 18.0))
+    g_lens_y = mixf(g_lens_y, g_launcher_y, minf(1.0, dt * 18.0))
+    let target: f32 = 0.0
+    if g_launcher_x > -50.0 && g_launcher_x < 810.0 && g_launcher_y > 0.0 && g_launcher_y < 750.0 {
+        target = 1.0
+    }
+    g_lens_strength = mixf(g_lens_strength, target, minf(1.0, dt * 12.0))
+    let count = launcher_count()
+    g_cell_count = count
+    if g_launcher_mode == 1 {
+        g_cell_count = count + 1
+    }
+    g_launcher_hover = -1
+    g_drop_cell = -1
+    let pitch: f32 = 52.0 * 1.32
+    if count > 19 {
+        pitch = pitch * 0.72
+    }
+    for i in 0 to g_cell_count {
+        let pos = hex_position(i)
+        if i == count && g_launcher_mode == 1 {
+            pos = float3 {
+                4.327, 1.5, 3.0
+            }
+        }
+        let t = clampf((g_launcher_time - pos.z * 0.085) / 0.40, 0.0, 1.0)
+        let spring = 1.0 + 2.7 * (t - 1.0) * (t - 1.0) * (t - 1.0) + 1.7 * (t - 1.0) * (t - 1.0)
+        let x = 380.0 + pos.x * pitch * spring
+        let y = 400.0 + pos.y * pitch * spring
+        let dx = x - g_lens_x
+        let dy = y - g_lens_y
+        let falloff = clampf(1.0 - sqrt(dx * dx + dy * dy) as f32 / 200.0, 0.0, 1.0)
+        let zoom = 1.0 + 0.30 * falloff * falloff * falloff * g_lens_strength
+        x = g_lens_x + dx * zoom
+        y = g_lens_y + dy * zoom
+        let size = 62.0 * (0.2 + 0.8 * ease(t)) * zoom
+        if count > 19 {
+            size = size * 0.72
+        }
+        g_cells[i] = float4 {
+            x, y, size, ease(t)
+        }
+        let hx = g_launcher_x - x
+        let hy = g_launcher_y - y
+        if hx * hx + hy * hy < size * size * 0.85 && t > 0.3 {
+            g_launcher_hover = i
+            if i != g_launcher_drag && i < count {
+                g_drop_cell = i
+            }
+        }
+    }
+    let hx = g_launcher_x - 380.0
+    let hy = g_launcher_y + 45.0
+    g_drop_hole = hx * hx + hy * hy < 65.0 * 65.0
+}
+
+fn launcher_add() {
+    let path = desktop_pick_application()
+    if path.len == 0 {
+        return
+    }
+    remove(g_removed, path)
+    for i in 0 to g_app_count {
+        if g_apps[i].path == path {
+            g_apps[i].manual = true
+            if i > 18 {
+                let temp = g_apps[18]
+                g_apps[18] = g_apps[i]
+                g_apps[i] = temp
+            }
+            let saved = false
+            for j in 0 to g_added_count {
+                if g_added[j] == path {
+                    saved = true
+                }
+            }
+            if !saved {
+                g_added[g_added_count] = path
+                g_added_count = g_added_count + 1
+            }
+            save_launcher()
+            return
+        }
+    }
+    let added = vision_app {
+        app_name_from_path(path), path, 0, 0, app_icon(path), true
+    }
+    let index = minf(18.0, g_app_count as f32) as i32
+    for i in index to g_app_count {
+        let j = g_app_count - (i - index)
+        g_apps[j] = g_apps[j - 1]
+    }
+    g_apps[index] = added
+    g_app_count = g_app_count + 1
+    g_added[g_added_count] = path
+    g_added_count = g_added_count + 1
+    save_launcher()
+}
+
+fn launcher_remove(index: i32) {
+    let path = g_apps[index].path
+    g_removed[path] = true
+    for i in index to g_app_count - 1 {
+        g_apps[i] = g_apps[i + 1]
+    }
+    g_app_count = g_app_count - 1
+    let i = 0
+    loop i < g_added_count {
+        if g_added[i] != path {
+            i = i + 1
+            continue
+        }
+        for j in i to g_added_count - 1 {
+            g_added[j] = g_added[j + 1]
+        }
+        g_added_count = g_added_count - 1
+    }
+    save_launcher()
+}
+
+fn launcher_input(v: ref view) {
+    if v.mouse_pressed {
+        g_launcher_pressed = g_launcher_hover
+        g_press_launcher_x = g_launcher_x
+        g_press_launcher_y = g_launcher_y
+    }
+    if v.mouse_down && g_launcher_pressed >= 0 && g_launcher_pressed < launcher_count() && g_launcher_mode == 1 {
+        let dx = g_launcher_x - g_press_launcher_x
+        let dy = g_launcher_y - g_press_launcher_y
+        if dx * dx + dy * dy > 36.0 {
+            g_launcher_drag = g_launcher_pressed
+        }
+    }
+    if !v.mouse_released {
+        return
+    }
+    if g_launcher_drag >= 0 {
+        if g_drop_hole {
+            launcher_remove(g_launcher_drag)
+        } else {
+            if g_drop_cell >= 0 {
+                let app = g_apps[g_launcher_drag]
+                g_apps[g_launcher_drag] = g_apps[g_drop_cell]
+                g_apps[g_drop_cell] = app
+                save_launcher()
+            }
+        }
+    } else {
+        if g_launcher_pressed == g_launcher_hover {
+            if g_launcher_hover == launcher_count() && g_launcher_mode == 1 {
+                launcher_add()
+            } else {
+                if g_launcher_hover >= 0 && g_launcher_hover < launcher_count() {
+                    let app = launcher_app(g_launcher_hover)
+                    let ok = false
+                    if g_launcher_mode == 2 {
+                        ok = desktop_window_activate(app.id, app.pid)
+                    } else {
+                        ok = desktop_app_launch(app.path)
+                    }
+                    if ok {
+                        g_launcher_mode = 0
+                        set_hidden(v, true)
+                    } else {
+                        notify(desktop_last_error())
+                    }
+                } else {
+                    g_launcher_mode = 0
+                }
+            }
+        }
+    }
+    g_launcher_drag = -1
+    g_launcher_pressed = -1
+}
+
+fn draw_launcher_icon(index: i32, cell: float4) {
+    let count = launcher_count()
+    if index == count {
+        draw_quad(4, 0u, cell.x - cell.z * 0.78, cell.y - cell.z * 0.78, cell.z * 1.56, cell.z * 1.56, 0.0, float4 {
+            1, 1, 1, cell.w * 0.5
+        }, 1.0, float4 {
+            0, 0, 1, 1
+        })
+        centered_label("+", cell.x, cell.y - cell.z * 0.29, cell.z * 0.6, float4 {
+            1, 1, 1, cell.w * 0.8
+        })
+        return
+    }
+    let app = launcher_app(index)
+    if app.icon == 0u && !g_demo {
+        app.icon = app_icon(app.path)
+        if g_launcher_mode == 1 {
+            g_apps[index].icon = app.icon
+        } else {
+            g_background[index].icon = app.icon
+        }
+    }
+    if index == g_launcher_hover || index == g_drop_cell {
+        draw_quad(4, 0u, cell.x - cell.z * 0.82, cell.y - cell.z * 0.82, cell.z * 1.64, cell.z * 1.64, 0.0, float4 {
+            1, 1, 1, cell.w * 0.55
+        }, 1.5, float4 {
+            0, 0, 1, 1
+        })
+    }
+    if app.icon != 0u {
+        texture_quad(app.icon, cell.x - cell.z * 0.5, cell.y - cell.z * 0.5, cell.z, cell.z, 0.0, cell.w)
+    } else {
+        plate(cell.x - cell.z * 0.4, cell.y - cell.z * 0.4, cell.z * 0.8, cell.z * 0.8, cell.z * 0.18, float4 {
+            0.21, 0.21, 0.21, cell.w
+        })
+        centered_label(substr(app.name, 0, 1), cell.x, cell.y - cell.z * 0.23, cell.z * 0.5, float4 {
+            1, 1, 1, cell.w
+        })
+    }
+    centered_label(short_title(app.name, 14), cell.x + 1.0, cell.y + cell.z * 0.65 + 1.0, 11.0, float4 {
+        0, 0, 0, cell.w
+    })
+    centered_label(short_title(app.name, 14), cell.x, cell.y + cell.z * 0.65, 11.0, float4 {
+        1, 1, 1, cell.w * 0.9
+    })
+}
+
+fn draw_launcher() {
+    let wpp = 2.0 * 1500.0 * tan(g_fov * 0.5) as f32 * 0.72 / 700.0
+    draw_space(760.0, 700.0, g_yaw, g_pitch, 1500.0, wpp, 0.0, false, true)
+    let title = "Programs"
+    let hint = "Click to open  |  Drag to reorder or remove  |  + Add application"
+    if g_launcher_mode == 2 {
+        title = "Background"
+        hint = "Wake an existing application  |  Esc to return"
+    }
+    centered_label(title, 380.0, 24.0, 28.0, float4 {
+        1, 1, 1, 1
+    })
+    centered_label(`{launcher_count()} applications`, 380.0, 63.0, 13.0, float4 {
+        0.7, 0.7, 0.7, 1
+    })
+    for i in 0 to g_cell_count {
+        if i != g_launcher_drag {
+            draw_launcher_icon(i, g_cells[i])
+        }
+    }
+    if g_launcher_drag >= 0 {
+        draw_quad(5, 0u, 337.0, -88.0, 86.0, 86.0, 0.0, float4 {
+            1, 1, 1, 1
+        }, 0.0, float4 {
+            0, 0, 1, 1
+        })
+        centered_label("Remove", 380.0, -108.0, 13.0, float4 {
+            1, 1, 1, 0.8
+        })
+        draw_launcher_icon(g_launcher_drag, float4 {
+            g_launcher_x, g_launcher_y, 70.0, 0.95
+        })
+    }
+    centered_label(hint, 380.0, 683.0, 12.0, float4 {
+        0.7, 0.7, 0.7, 1
+    })
+}

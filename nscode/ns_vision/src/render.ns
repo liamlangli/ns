@@ -1,0 +1,241 @@
+use gpu
+use io
+let g_root = [f32](48)
+lit ROOT_BYTES = 192
+let g_quad_shader: u32 = 0
+let g_background_shader: u32 = 0
+let g_lens_shader: u32 = 0
+let g_dot_shader: u32 = 0
+let g_scene_state: u32 = 0
+let g_shadow_state: u32 = 0
+let g_flat_state: u32 = 0
+let g_scene_color: u32 = 0
+let g_scene_depth: u32 = 0
+let g_target_w = 0
+let g_target_h = 0
+let g_frame_w: f32 = 1600.0
+let g_frame_h: f32 = 900.0
+let g_author_w: f32 = 0.0
+let g_author_h: f32 = 0.0
+let g_draw_a: f32 = 0.0
+let g_draw_e: f32 = 0.0
+let g_draw_r: f32 = 1600.0
+let g_draw_wpp: f32 = 1.0
+let g_draw_curve: f32 = 0.0
+let g_draw_screen = false
+let g_draw_nearest = false
+let g_draw_bias: f32 = 0.0
+let g_draw_shadow = false
+let g_draw_lean = false
+let g_lean_x: f32 = 0.0
+let g_lean_y: f32 = 0.0
+let g_lean_w: f32 = 0.0
+let g_lean_h: f32 = 0.0
+let g_lean_scale: f32 = 1.0
+let g_lean_pivot_x: f32 = 0.0
+let g_lean_pivot_y: f32 = 0.0
+
+fn load_texture(path: str) u32 {
+    let image = io_load_image(path)
+    if image.width <= 0 || image.height <= 0 {
+        return 0u
+    }
+    let size = image.width * image.height * image.channels
+    let bytes = [u8](size)
+    let tex: u32 = 0
+    if io_image_copy_data(image, bytes, size) == size {
+        tex = gpu_texture_create(image.width, image.height, 1, GPU_PIXELFORMAT_RGBA8, GPU_TEXTURE_USAGE_READ, 1, GPU_TEXTURE_2D, path)
+        gpu_texture_upload(tex, 0, 0, bytes, size as u64)
+    }
+    io_image_destroy(image)
+    return tex
+}
+
+fn render_init() bool {
+    let target = gpu_shader_target()
+    g_quad_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_vision, target, "vertex"), shader_transpile_stage(fs_vision, target, "fragment"), shader_entry(vs_vision, target), shader_entry(fs_vision, target))
+    g_background_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_background, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_background, target))
+    g_dot_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_dots, target, "vertex"), shader_transpile_stage(fs_dots, target, "fragment"), shader_entry(vs_dots, target), shader_entry(fs_dots, target))
+    g_lens_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_lens, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_lens, target))
+    g_scene_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_NEARER_EQUAL, true, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
+    // Soft shadows are depth tested but never occlude: a shadow that wrote
+    // depth would cut into the panels it falls across.
+    g_shadow_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_NEARER_EQUAL, false, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
+    g_flat_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_ALWAYS, false, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
+    return g_quad_shader != 0u && g_background_shader != 0u && g_dot_shader != 0u && g_lens_shader != 0u
+}
+
+fn root_camera() {
+    g_root[16] = g_yaw
+    g_root[17] = g_pitch
+    g_root[18] = tan(g_fov * 0.5) as f32
+    g_root[19] = g_frame_w / g_frame_h
+    g_root[32] = g_frame_w
+    g_root[33] = g_frame_h
+    g_root[35] = g_elapsed
+}
+
+fn draw_space(width: f32, height: f32, a: f32, e: f32, radius: f32, wpp: f32, bend: f32, screen: bool, nearest: bool) {
+    g_author_w = width
+    g_author_h = height
+    g_draw_a = a
+    g_draw_e = e
+    g_draw_r = radius
+    g_draw_wpp = wpp
+    g_draw_curve = bend
+    g_draw_screen = screen
+    g_draw_nearest = nearest
+    g_draw_bias = 0.0
+    g_draw_shadow = false
+    g_draw_lean = false
+}
+
+// A head-locked screen panel of width x height pixels centred on screen pixel
+// (x, y), leaned towards the frame centre and scaled about its pivot (-0.5 /
+// 0.5 = left / right, bottom / top). Draw calls then take panel-local pixels.
+fn lean_space(x: f32, y: f32, width: f32, height: f32, scale: f32, pivot_x: f32, pivot_y: f32) {
+    draw_space(g_frame_w, g_frame_h, 0.0, 0.0, 1.0, 1.0, 0.0, true, false)
+    g_draw_lean = true
+    g_lean_x = x
+    g_lean_y = y
+    g_lean_w = width
+    g_lean_h = height
+    g_lean_scale = scale
+    g_lean_pivot_x = pivot_x
+    g_lean_pivot_y = pivot_y
+}
+
+fn draw_quad(mode: i32, texture: u32, x: f32, y: f32, width: f32, height: f32, radius: f32, rgba: float4, thickness: f32, uv: float4) {
+    g_root[0] = texture as f32
+    g_root[3] = mode as f32
+    g_root[4] = x + width * 0.5
+    g_root[5] = y + height * 0.5
+    g_root[6] = width
+    g_root[7] = height
+    g_root[8] = g_author_w
+    g_root[9] = g_author_h
+    g_root[10] = g_draw_wpp
+    g_root[11] = g_draw_curve
+    g_root[12] = g_draw_a
+    g_root[13] = g_draw_e
+    g_root[14] = g_draw_r
+    g_root[15] = radius
+    g_root[20] = rgba.x
+    g_root[21] = rgba.y
+    g_root[22] = rgba.z
+    g_root[23] = rgba.w
+    g_root[24] = uv.x
+    g_root[25] = uv.y
+    g_root[26] = uv.z
+    g_root[27] = uv.w
+    g_root[28] = thickness
+    g_root[29] = g_draw_bias
+    if mode == 3 { g_root[29] = g_root[29] + 2.0 }
+    g_root[30] = 0.0
+    if g_draw_screen {
+        g_root[30] = 1.0
+    }
+    let segments = curve_segments(width * g_draw_wpp, g_draw_curve)
+    g_root[31] = segments as f32
+    g_root[36] = 0.0
+    if g_draw_lean {
+        g_root[36] = 1.0
+    }
+    g_root[37] = g_lean_x
+    g_root[38] = g_lean_y
+    g_root[39] = g_lean_w
+    g_root[40] = g_lean_h
+    g_root[41] = g_lean_scale
+    g_root[42] = g_lean_pivot_x
+    g_root[43] = g_lean_pivot_y
+    g_root[34] = 0.0
+    if g_draw_nearest {
+        g_root[34] = 1.0
+    }
+    gpu_set_shader(g_quad_shader)
+    if g_draw_screen {
+        gpu_set_state(g_flat_state)
+    } else {
+        if g_draw_shadow {
+            gpu_set_state(g_shadow_state)
+        } else {
+            gpu_set_state(g_scene_state)
+        }
+    }
+    gpu_set_root_data(g_root, ROOT_BYTES)
+    gpu_draw_vertices(0, segments * 6, 1)
+}
+
+fn plate(x: f32, y: f32, width: f32, height: f32, radius: f32, rgba: float4) {
+    draw_quad(1, 0u, x, y, width, height, radius, rgba, 0.0, float4 {
+        0, 0, 1, 1
+    })
+}
+
+fn ring(x: f32, y: f32, width: f32, height: f32, radius: f32, rgba: float4, thickness: f32) {
+    draw_quad(2, 0u, x, y, width, height, radius, rgba, thickness, float4 {
+        0, 0, 1, 1
+    })
+}
+
+fn texture_quad(texture: u32, x: f32, y: f32, width: f32, height: f32, radius: f32, alpha: f32) {
+    draw_quad(0, texture, x, y, width, height, radius, float4 {
+        1, 1, 1, alpha
+    }, 0.0, float4 {
+        0, 0, 1, 1
+    })
+}
+
+fn render_targets(width: i32, height: i32) {
+    if width == g_target_w && height == g_target_h {
+        return
+    }
+    if g_scene_color != 0u {
+        gpu_texture_destroy(g_scene_color)
+        gpu_texture_destroy(g_scene_depth)
+    }
+    g_target_w = width
+    g_target_h = height
+    g_scene_color = gpu_texture_create(width, height, 1, GPU_PIXELFORMAT_RGBA8, GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_RENDER_TARGET, 1, GPU_TEXTURE_2D, "vision supersampled dome color")
+    g_scene_depth = gpu_texture_create(width, height, 1, GPU_PIXELFORMAT_DEPTH, GPU_TEXTURE_USAGE_RENDER_TARGET, 1, GPU_TEXTURE_2D, "vision reverse-z dome depth")
+}
+
+fn render_begin() {
+    root_camera()
+    render_targets((g_frame_w * g_scale) as i32, (g_frame_h * g_scale) as i32)
+    gpu_pass_begin("vision live window dome", g_scene_color, 0u, 0u, 0u, g_scene_depth, 0u, 0.012, 0.012, 0.012, 1.0, GPU_DEPTH_CLEAR)
+    gpu_set_shader(g_background_shader)
+    gpu_set_state(g_flat_state)
+    gpu_set_root_data(g_root, ROOT_BYTES)
+    gpu_draw_vertices(0, 3, 1)
+    gpu_set_shader(g_dot_shader)
+    gpu_set_state(g_scene_state)
+    gpu_draw_vertices(0, DOT_COUNT as i32 * 6, 1)
+}
+
+fn render_resolve() {
+    gpu_pass_end()
+    gpu_screen_pass_begin_depth("vision lens and sharp launcher", 0.012, 0.012, 0.012, 1.0, GPU_DEPTH_CLEAR)
+    root_camera()
+    g_root[0] = g_scene_color as f32
+    g_root[4] = g_focus_u
+    g_root[5] = g_focus_v
+    g_root[6] = maxf(g_focus_inner, g_focus_radius)
+    g_root[7] = g_dof as f32 * 3.0
+    g_root[8] = 0.0
+    if g_launcher_mode > 0 {
+        g_root[8] = 1.0
+    }
+    g_root[9] = 0.0
+    if g_ca {
+        g_root[9] = 0.09
+    }
+    gpu_set_shader(g_lens_shader)
+    gpu_set_state(g_scene_state)
+    gpu_set_root_data(g_root, ROOT_BYTES)
+    gpu_draw_vertices(0, 3, 1)
+}
+
+fn render_end() {
+    gpu_pass_end()
+}

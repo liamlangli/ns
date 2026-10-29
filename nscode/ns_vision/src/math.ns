@@ -1,0 +1,243 @@
+use std
+use simd
+lit PI: f32 = 3.141592653589793
+lit DEG: f32 = PI / 180.0
+lit DOME_RADIUS: f32 = 2400.0
+lit NEAR: f32 = 1.0
+// The layers of one panel (plate, content, labels, ring) share its surface and
+// are told apart by a relative reverse-Z step, not a world offset. A world
+// offset makes every layer cut a crossing panel along its own line; this step
+// is about 0.01 world units per layer at the dome radius.
+lit LAYER_EPSILON: f32 = 0.000004
+// Corner HUD panels: head-locked this far in front of the eye and leaned
+// towards the frame centre.
+lit HUD_DISTANCE: f32 = 1400.0
+lit HUD_TILT: f32 = 16.0 * DEG
+lit DOT_COUNT: f32 = 4200.0
+lit DOT_RADIUS: f32 = DOME_RADIUS * 1.55
+lit DOT_SIZE: f32 = 11.0
+lit PITCH_LIMIT: f32 = 80.0 * DEG
+
+fn clampf(x: f32, low: f32, high: f32) f32 {
+    if x < low {
+        return low
+    }
+    if x > high {
+        return high
+    }
+    return x
+}
+
+fn absf(x: f32) f32 {
+    if x < 0.0 {
+        return 0.0 - x
+    }
+    return x
+}
+
+fn maxf(a: f32, b: f32) f32 {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fn minf(a: f32, b: f32) f32 {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn mixf(a: f32, b: f32, t: f32) f32 {
+    return a + (b - a) * t
+}
+
+fn wrap_angle(a: f32) f32 {
+    loop a > PI {
+        a = a - 2.0 * PI
+    }
+    loop a < 0.0 - PI {
+        a = a + 2.0 * PI
+    }
+    return a
+}
+
+fn ease(t: f32) f32 {
+    let v = clampf(t, 0.0, 1.0)
+    return v * v * (3.0 - 2.0 * v)
+}
+
+fn dome_normal(a: f32, e: f32) float3 {
+    return float3 {
+        (sin(a) * cos(e)) as f32, sin(e) as f32, (cos(a) * cos(e)) as f32
+    }
+}
+
+fn dome_right(a: f32) float3 {
+    return float3 {
+        cos(a) as f32, 0.0, (0.0 - sin(a)) as f32
+    }
+}
+
+fn dome_up(a: f32, e: f32) float3 {
+    return float3 {
+        (0.0 - sin(a) * sin(e)) as f32, cos(e) as f32, (0.0 - cos(a) * sin(e)) as f32
+    }
+}
+
+fn dot3(a: float3, b: float3) f32 {
+    return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn camera_space(p: float3, yaw: f32, pitch: f32) float3 {
+    let x = (cos(yaw) * p.x - sin(yaw) * p.z) as f32
+    let z = (sin(yaw) * p.x + cos(yaw) * p.z) as f32
+    return float3 {
+        x, (cos(pitch) * p.y - sin(pitch) * z) as f32, (sin(pitch) * p.y + cos(pitch) * z) as f32
+    }
+}
+
+fn camera_ray(u: f32, v: f32, yaw: f32, pitch: f32, tangent: f32, aspect: f32) float3 {
+    let x = (2.0 * u - 1.0) * tangent * aspect
+    let y = (1.0 - 2.0 * v) * tangent
+    let py = (cos(pitch) * y + sin(pitch)) as f32
+    let pz = (cos(pitch) - sin(pitch) * y) as f32
+    let p = float3 {
+        (cos(yaw) * x + sin(yaw) * pz) as f32, py, (cos(yaw) * pz - sin(yaw) * x) as f32
+    }
+    let length = sqrt(dot3(p, p)) as f32
+    return float3 {
+        p.x / length, p.y / length, p.z / length
+    }
+}
+
+fn curve_point(s: f32, radius: f32) float2 {
+    if radius <= 1.0 {
+        return float2 {
+            s, 0.0
+        }
+    }
+    return float2 {
+        (radius * sin(s / radius)) as f32, (0.0 - radius * (1.0 - cos(s / radius))) as f32
+    }
+}
+
+fn curve_radius(arc: f32) f32 {
+    if arc < 0.001 {
+        return 0.0
+    }
+    return 1010.0 / arc
+}
+
+fn curve_segments(width: f32, radius: f32) i32 {
+    if radius <= 1.0 {
+        return 1
+    }
+    return clampf(width / radius / (2.5 * DEG) + 1.0, 2.0, 24.0) as i32
+}
+// Returns authored x/y, ray distance, and 1 for a hit. The cylinder equation
+// exactly inverts curve_point, including dolly distances inside the cylinder.
+
+fn panel_hit(ray: float3, a: f32, e: f32, radius: f32, width: f32, height: f32, bend: f32) float4 {
+    let n = dome_normal(a, e)
+    let right = dome_right(a)
+    let up = dome_up(a, e)
+    let dx = dot3(ray, right)
+    let dy = dot3(ray, up)
+    let dz = dot3(ray, n)
+    let t: f32 = 0.0
+    if bend <= 1.0 {
+        if dz <= 0.00001 {
+            return float4 {
+                0, 0, 0, 0
+            }
+        }
+        t = radius / dz
+    } else {
+        let origin = bend - radius
+        let qa = dx * dx + dz * dz
+        let qb = 2.0 * origin * dz
+        let qc = origin * origin - bend * bend
+        let disc = qb * qb - 4.0 * qa * qc
+        if disc < 0.0 || qa < 0.000001 {
+            return float4 {
+                0, 0, 0, 0
+            }
+        }
+        let root = sqrt(disc) as f32
+        let t0 = (0.0 - qb - root) / (2.0 * qa)
+        let t1 = (0.0 - qb + root) / (2.0 * qa)
+        // The front of the panel is the cylinder's positive-z hemisphere.
+        if t0 > 0.0 && origin + t0 * dz > 0.0 {
+            t = t0
+        }
+        if t1 > 0.0 && origin + t1 * dz > 0.0 && (t <= 0.0 || t1 < t) {
+            t = t1
+        }
+        if t <= 0.0 {
+            return float4 {
+                0, 0, 0, 0
+            }
+        }
+    }
+    let x = dx * t
+    if bend > 1.0 {
+        x = (atan2(x, bend - radius + dz * t) * bend) as f32
+    }
+    let y = dy * t
+    if absf(x) > width * 0.5 || absf(y) > height * 0.5 {
+        return float4 {
+            0, 0, 0, 0
+        }
+    }
+    return float4 {
+        x + width * 0.5, height * 0.5 - y, t, 1
+    }
+}
+
+fn hex_position(index: i32) float3 {
+    if index == 0 {
+        return float3 {
+            0, 0, 0
+        }
+    }
+    let cursor = 1
+    for ring in 1 to 4 {
+        let q = ring
+        let r = 0
+        for side in 0 to 6 {
+            for step in 0 to ring {
+                if cursor == index {
+                    return float3 {
+                        1.7320508 * (q as f32 + r as f32 * 0.5), 1.5 * r as f32, ring as f32
+                    }
+                }
+                cursor = cursor + 1
+                if side == 0 {
+                    q = q - 1
+                    r = r + 1
+                }
+                if side == 1 {
+                    q = q - 1
+                }
+                if side == 2 {
+                    r = r - 1
+                }
+                if side == 3 {
+                    q = q + 1
+                    r = r - 1
+                }
+                if side == 4 {
+                    q = q + 1
+                }
+                if side == 5 {
+                    r = r + 1
+                }
+            }
+        }
+    }
+    return float3 {
+        0, 0, 0
+    }
+}

@@ -482,6 +482,7 @@ typedef struct ns_shader_builtin {
 static const ns_shader_builtin ns_shader_builtins[] = {
     {"sqrt", "sqrt", "sqrt", "sqrt", false},       {"sin", "sin", "sin", "sin", false},
     {"cos", "cos", "cos", "cos", false},           {"tan", "tan", "tan", "tan", false},
+    {"atan2", "atan2", "atan", "atan2", false},
     {"abs", "abs", "abs", "abs", false},           {"floor", "floor", "floor", "floor", false},
     {"ceil", "ceil", "ceil", "ceil", false},       {"pow", "pow", "pow", "pow", false},
     {"min", "min", "min", "min", false},           {"max", "max", "max", "max", false},
@@ -527,6 +528,7 @@ static const ns_shader_builtin *ns_shader_find_builtin(ns_str name) {
 
 static const char *ns_shader_builtin_name(const ns_shader_builtin *b, ns_shader_target t) {
     if (t == NS_SHADER_WGSL) {
+        if (ns_str_equals(ns_str_cstr(b->name), ns_str_cstr("atan2"))) return "atan2";
         if (ns_str_equals(ns_str_cstr(b->name), ns_str_cstr("ddx"))) return "dpdx";
         if (ns_str_equals(ns_str_cstr(b->name), ns_str_cstr("ddy"))) return "dpdy";
         return b->glsl;

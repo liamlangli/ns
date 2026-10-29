@@ -22,7 +22,7 @@ ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_DYLIB_DEPS = $(NS_LDFLAGS)
 	NS_OS_DYLIB_DEPS = $(NS_DYLIB_DEPS) $(NS_COCOA_LDFLAGS) -framework CoreServices -framework CoreHaptics
 	NS_VIEW_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_COCOA_LDFLAGS) $(NS_METAL_LDFLAGS) -framework GameController
-	NS_GPU_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_METAL_LDFLAGS)
+	NS_GPU_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_METAL_LDFLAGS) -framework CoreVideo
 	NS_AUDIO_DYLIB_DEPS = $(NS_LDFLAGS) -framework AVFAudio -framework Foundation
 	NS_STORAGE_DYLIB_DEPS = $(NS_LDFLAGS) -framework Foundation -lsqlite3
 else ifeq ($(NS_OS), $(NS_LINUX))
@@ -308,3 +308,24 @@ $(NS_SECURE_STATIC): $(NS_BINDIR)/lib/secure.o | $(NS_BINDIR)
 
 std: $(NS_SECURE_DYLIB) $(NS_SECURE_STATIC)
 shared: $(NS_SECURE_DYLIB)
+
+# Desktop capture/window services stay out of the language runtime.
+NS_DESKTOP_DYLIB = $(NS_BINDIR)/desktop$(NS_DYLIB_SUFFIX)
+NS_DESKTOP_STATIC = $(NS_BINDIR)/libdesktop.a
+NS_STD_SHARED += $(NS_DESKTOP_DYLIB)
+NS_STD_STATIC += $(NS_DESKTOP_STATIC)
+ifeq ($(NS_OS), $(NS_DARWIN))
+NS_DESKTOP_OBJ = $(NS_BINDIR)/lib/desktop.osx.o
+NS_DESKTOP_DEPS = $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) -framework Cocoa -framework ScreenCaptureKit -framework ApplicationServices -framework Carbon -framework CoreMedia -framework CoreVideo
+$(NS_DESKTOP_OBJ): lib/src/desktop.osx.m lib/include/desktop.h lib/include/gpu.h | $(NS_DIRS)
+	$(Q)$(call ns_step,CC,$<,quiet) $(NS_CC) -c -fPIC -fobjc-arc -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS) -Wno-deprecated-declarations
+else
+NS_DESKTOP_OBJ = $(NS_BINDIR)/lib/desktop.stub.o
+endif
+$(NS_DESKTOP_DYLIB): $(NS_DESKTOP_OBJ) $(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_GPU_DYLIB) $(NS_VIEW_DYLIB),)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_DESKTOP_OBJ) -o $@ $(NS_DESKTOP_DEPS)
+$(NS_DESKTOP_STATIC): $(NS_DESKTOP_OBJ)
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
+std: $(NS_DESKTOP_DYLIB) $(NS_DESKTOP_STATIC)
+shared: $(NS_DESKTOP_DYLIB)
+static: $(NS_DESKTOP_STATIC)

@@ -20,6 +20,7 @@ ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool create);
 ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i);
 static ns_return_value ns_eval_struct_ctor(ns_vm *vm, ns_ast_ctx *ctx, i32 i, i32 st_index);
+static ns_return_value ns_eval_member_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool create);
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 
 static void ns_eval_profile_scope_begin(ns_symbol *sym) {
@@ -582,6 +583,8 @@ ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         // (slot address) form — a plain read loads reference-typed elements
         // (strings, nested containers) as immediate handles instead.
         ret_l = ns_eval_index_expr_with_create(vm, ctx, n->binary_expr.left, true);
+    } else if (ctx->nodes[n->binary_expr.left].type == NS_AST_MEMBER_EXPR) {
+        ret_l = ns_eval_member_expr_with_create(vm, ctx, n->binary_expr.left, true);
     } else {
         ret_l = ns_eval_expr(vm, ctx, n->binary_expr.left);
     }
@@ -2187,7 +2190,7 @@ ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, ns_nil);
 }
 
-ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+static ns_return_value ns_eval_member_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool create) {
     ns_ast_t *n = &ctx->nodes[i];
 
     if (n->member_expr.rt.kind == NS_MEMBER_CACHE_ENUM) {
@@ -2235,7 +2238,7 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_ast_t *field = &ctx->nodes[n->member_expr.right];
     if (field->type == NS_AST_MEMBER_EXPR) {
-        return ns_eval_member_expr(vm, ctx, n->member_expr.right);
+        return ns_eval_member_expr_with_create(vm, ctx, n->member_expr.right, create);
     }
     if (field->type == NS_AST_PRIMARY_EXPR && ns_simd_vector_dim(vm, st.t) > 0) {
         i32 idx[4];
@@ -2331,6 +2334,16 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ft.stack = ns_type_in_stack(st.t);
         ft.mut = st.t.mut || ns_type_is_ref(st.t);
         ns_value val = (ns_value){.t = ft, .o = st.o + member->o};
+        // A heap struct stores reference-valued fields in handle slots, just
+        // like a reference-valued array element. Reads need the handle itself;
+        // assignment still needs the slot address. Treating the address as a
+        // string-pool index crashes for e.g. `apps[i].path == path`.
+        if (!create && !ft.stack &&
+            (ns_type_is_array(ft) || ns_type_is(ft, NS_TYPE_STRING) ||
+             ns_type_is(ft, NS_TYPE_DICT) || ns_type_is(ft, NS_TYPE_SET) ||
+             ns_type_is(ft, NS_TYPE_FN) || ns_type_is(ft, NS_TYPE_TASK))) {
+            val.o = *(u64 *)(uintptr_t)val.o;
+        }
         return ns_return_ok(value, val);
     }
 
@@ -2866,6 +2879,10 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n->var_def.name.val, .val = ret, .parsed = true};
     ns_array_push(vm->symbol_stack, symbol);
     return ns_return_ok(value, ret);
+}
+
+ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    return ns_eval_member_expr_with_create(vm, ctx, i, false);
 }
 
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {

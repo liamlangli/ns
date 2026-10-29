@@ -26,6 +26,17 @@ void gpu_mtl_end_frame(MTKView *view);
 @interface ViewMTKView : MTKView
 @end
 
+// Keeps keyboard focus when an application makes the window borderless (a
+// fullscreen overlay); a plain borderless NSWindow can never become key. Main
+// status still needs a visible window: AppKit throws for a hidden one.
+@interface ViewWindow : NSWindow
+@end
+
+@implementation ViewWindow
+- (BOOL)canBecomeKeyWindow { return YES; }
+- (BOOL)canBecomeMainWindow { return self.isVisible; }
+@end
+
 typedef void(*view_on_launch)(view*);
 typedef void(*view_on_frame)(view*);
 typedef void(*view_on_terminate)(view*);
@@ -67,8 +78,10 @@ static void view_osx_activate_window(void) {
     [[NSRunningApplication currentApplication]
         activateWithOptions:NSApplicationActivateAllWindows];
     [NSApp activateIgnoringOtherApps:YES];
-    [view_window makeMainWindow];
+    // Order the window in before making it main: AppKit throws when a window
+    // that is not visible is made main.
     [view_window makeKeyAndOrderFront:nil];
+    if (view_window.canBecomeMainWindow) [view_window makeMainWindow];
     if (view_mtk_view) [view_window makeFirstResponder:view_mtk_view];
 }
 
@@ -702,7 +715,7 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     view_window = view_osx_hosted ? [NSApp keyWindow] : nil;
     if (!view_window && view_osx_hosted) view_window = [[NSApp windows] firstObject];
     if (!view_window) {
-        view_window = [[NSWindow alloc]
+        view_window = [[ViewWindow alloc]
             initWithContentRect:NSMakeRect(0, 0, view_width, view_height)
             styleMask: style
             backing: NSBackingStoreBuffered
@@ -797,7 +810,11 @@ void view_run(view *v) {
     [NSApp finishLaunching];
     view_osx_activate_window();
     view_request_frame(v, 1);
-    dispatch_async(dispatch_get_main_queue(), ^{ view_osx_activate_window(); });
+    // The first frames may already have hidden the window on purpose (an
+    // overlay stepping aside for System Settings); do not bring it back.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (view_window && view_window.isVisible) view_osx_activate_window();
+    });
     [NSApp run];
 }
 

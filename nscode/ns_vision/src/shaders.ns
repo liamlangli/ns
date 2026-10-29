@@ -1,0 +1,359 @@
+use shader
+
+struct vision_vertex {
+    position: float4,
+    uv: float2,
+    distance: f32
+}
+
+struct vision_pixel {
+    color0: float4,
+    depth: f32
+}
+
+fn quad_uv(index: i32) float2 {
+    let v = index % 6
+    if v == 1 {
+        return float2 {
+            1, 0
+        }
+    }
+    if v == 2 || v == 4 {
+        return float2 {
+            1, 1
+        }
+    }
+    if v == 5 {
+        return float2 {
+            0, 1
+        }
+    }
+    return float2 {
+        0, 0
+    }
+}
+
+// Camera-space point of authored pixel (px, py) on the current panel's flat or
+// curved surface. The fragment shader re-evaluates it so every layer of a
+// panel takes its depth from the same exact surface, not from its own chords.
+fn panel_camera(px: f32, py: f32) float3 {
+    let x = (px - shader_root_f32(8) * 0.5) * shader_root_f32(10)
+    let y = (shader_root_f32(9) * 0.5 - py) * shader_root_f32(10)
+    let curved = curve_point(x, shader_root_f32(11))
+    let a = shader_root_f32(12)
+    let e = shader_root_f32(13)
+    let n = dome_normal(a, e)
+    let r = dome_right(a)
+    let up = dome_up(a, e)
+    let distance = shader_root_f32(14) + curved.y
+    let world = float3 {
+        n.x * distance + r.x * curved.x + up.x * y, n.y * distance + up.y * y, n.z * distance + r.z * curved.x + up.z * y
+    }
+    return camera_space(world, shader_root_f32(16), shader_root_f32(17))
+}
+
+// Camera-space point of panel-local pixel (px, py) on a leaned HUD panel. The
+// panel faces back along a direction tilted HUD_TILT away from the frame
+// centre, with no roll, so text rows stay level while the panel leans in.
+fn lean_camera(px: f32, py: f32) float3 {
+    let hy = HUD_DISTANCE * shader_root_f32(18)
+    let hx = hy * shader_root_f32(19)
+    let wpp = 2.0 * hy / shader_root_f32(33)
+    let ax = shader_root_f32(37) / shader_root_f32(32) * 2.0 - 1.0
+    let ay = shader_root_f32(38) / shader_root_f32(33) * 2.0 - 1.0
+    let t = tan(HUD_TILT) as f32
+    let f = float3 {
+        ax * t, 0.0 - ay * t, 1.0
+    }
+    let fl = sqrt(dot3(f, f)) as f32
+    f = float3 {
+        f.x / fl, f.y / fl, f.z / fl
+    }
+    let u = float3 {
+        0.0 - f.x * f.y, 1.0 - f.y * f.y, 0.0 - f.z * f.y
+    }
+    let ul = sqrt(dot3(u, u)) as f32
+    u = float3 {
+        u.x / ul, u.y / ul, u.z / ul
+    }
+    let r = float3 {
+        u.y * f.z - u.z * f.y, u.z * f.x - u.x * f.z, u.x * f.y - u.y * f.x
+    }
+    let rl = sqrt(dot3(r, r)) as f32
+    let pivot_x = shader_root_f32(42) * shader_root_f32(39) * wpp
+    let pivot_y = shader_root_f32(43) * shader_root_f32(40) * wpp
+    let lx = ((px - shader_root_f32(39) * 0.5) * wpp - pivot_x) * shader_root_f32(41) + pivot_x
+    let ly = ((shader_root_f32(40) * 0.5 - py) * wpp - pivot_y) * shader_root_f32(41) + pivot_y
+    return float3 {
+        ax * hx + r.x / rl * lx + u.x * ly, 0.0 - ay * hy + r.y / rl * lx + u.y * ly, HUD_DISTANCE + r.z / rl * lx + u.z * ly
+    }
+}
+
+fn vs_vision() vision_vertex {
+    let id = shader_vertex_id()
+    let corner = quad_uv(id)
+    let segments = shader_root_f32(31)
+    let u = ((id / 6) as f32 + corner.x) / segments
+    let v = corner.y
+    let px = shader_root_f32(4) + (u - 0.5) * shader_root_f32(6)
+    let py = shader_root_f32(5) + (v - 0.5) * shader_root_f32(7)
+    if shader_root_f32(36) > 0.5 {
+        let lean = lean_camera(px, py)
+        let lean_tangent = shader_root_f32(18)
+        return vision_vertex {
+            reverse_z_clip(lean.x / (lean_tangent * shader_root_f32(19) * lean.z), lean.y / (lean_tangent * lean.z), lean.z, NEAR), float2 {
+                u, v
+            }, 1.0
+        }
+    }
+    if shader_root_f32(30) > 0.5 {
+        return vision_vertex {
+            reverse_z_clip(px / shader_root_f32(32) * 2.0 - 1.0, 1.0 - py / shader_root_f32(33) * 2.0, 1.0, NEAR), float2 {
+                u, v
+            }, 1.0
+        }
+    }
+    let camera = panel_camera(px, py)
+    let tangent = shader_root_f32(18)
+    return vision_vertex {
+        reverse_z_clip(camera.x / (tangent * shader_root_f32(19) * camera.z), camera.y / (tangent * camera.z), camera.z, NEAR), float2 {
+            u, v
+        }, camera.z
+    }
+}
+
+fn rounded_sdf(uv: float2, width: f32, height: f32, radius: f32) f32 {
+    let x = absf((uv.x - 0.5) * width) - width * 0.5 + radius
+    let y = absf((uv.y - 0.5) * height) - height * 0.5 + radius
+    return sqrt(maxf(x, 0.0) * maxf(x, 0.0) + maxf(y, 0.0) * maxf(y, 0.0)) as f32 + minf(maxf(x, y), 0.0) - radius
+}
+
+fn fs_vision(input: vision_vertex) vision_pixel {
+    let mode = shader_root_f32(3) as i32
+    let width = shader_root_f32(6)
+    let height = shader_root_f32(7)
+    let alpha: f32 = 1.0
+    let color = float4 {
+        shader_root_f32(20), shader_root_f32(21), shader_root_f32(22), shader_root_f32(23)
+    }
+    if mode <= 2 {
+        let d = rounded_sdf(input.uv, width, height, shader_root_f32(15))
+        let aa = maxf(absf(ddx(d)) + absf(ddy(d)), 0.5)
+        alpha = clampf(0.5 - d / aa, 0.0, 1.0)
+        if mode == 2 {
+            alpha = alpha * clampf(0.5 + (d + shader_root_f32(28)) / aa, 0.0, 1.0)
+        }
+    }
+    if mode == 0 || mode == 3 {
+        let uv = float2 {
+            mixf(shader_root_f32(24), shader_root_f32(26), input.uv.x), mixf(shader_root_f32(25), shader_root_f32(27), input.uv.y)
+        }
+        let texel = shader_sample_texture(uv)
+        if mode == 0 {
+            color = float4 {
+                texel.x * color.x, texel.y * color.y, texel.z * color.z, texel.w * color.w
+            }
+        }
+        if mode == 3 {
+            let median = maxf(minf(texel.x, texel.y), minf(maxf(texel.x, texel.y), texel.z))
+            let edge = maxf(absf(ddx(median)) + absf(ddy(median)), 0.008)
+            alpha = clampf((median - 0.5) / edge + 0.5, 0.0, 1.0)
+        }
+    }
+    if mode == 4 {
+        // Rounded regular pointy-top hexagon, sharp circumradius 0.46 of the quad so
+        // the corners and the stroke stay inside it. Exact distance in the
+        // flat-top frame (x and y swapped), shrunk by the corner radius.
+        let qx = absf((input.uv.y - 0.5) * height)
+        let qy = absf((input.uv.x - 0.5) * width)
+        // Corner radius 0.28 of the apothem, as mw's hover frame.
+        let outer = height * 0.46 * 0.8660254
+        let rounding = outer * 0.28
+        let apothem = outer - rounding
+        let k = minf(qx * -0.8660254 + qy * 0.5, 0.0) * 2.0
+        qx = qx + k * 0.8660254
+        qy = qy - k * 0.5
+        qx = qx - clampf(qx, 0.0 - 0.5773503 * apothem, 0.5773503 * apothem)
+        qy = qy - apothem
+        let d = sqrt(qx * qx + qy * qy) as f32
+        if qy < 0.0 {
+            d = 0.0 - d
+        }
+        d = d - rounding
+        let aa = maxf(absf(ddx(d)) + absf(ddy(d)), 0.7)
+        alpha = clampf(0.5 - absf(d) / aa + shader_root_f32(28) / aa, 0.0, 1.0)
+    }
+    if mode == 5 {
+        let x = (input.uv.x - 0.5) * 2.0
+        let y = (input.uv.y - 0.5) * 2.0
+        let radius = sqrt(x * x + y * y) as f32
+        let swirl = (sin(atan2(y, x) * 3.0 + radius * 15.0 - shader_root_f32(35) * 3.0) * 0.5 + 0.5) as f32
+        alpha = clampf((1.0 - radius) * 10.0, 0.0, 1.0)
+        color = float4 {
+            swirl * 0.18 * radius, swirl * 0.18 * radius, swirl * 0.18 * radius, color.w
+        }
+    }
+    color.w = color.w * alpha
+    let surface = input.distance
+    if shader_root_f32(30) < 0.5 {
+        let px = shader_root_f32(4) + (input.uv.x - 0.5) * width
+        let py = shader_root_f32(5) + (input.uv.y - 0.5) * height
+        surface = panel_camera(px, py).z
+    }
+    let depth = reverse_z_depth(maxf(surface, NEAR), NEAR) * (1.0 + shader_root_f32(29) * LAYER_EPSILON)
+    if color.w < 0.01 {
+        depth = 0.0
+    }
+    if shader_root_f32(34) > 0.5 && color.w >= 0.01 {
+        depth = 0.99
+    }
+    return vision_pixel {
+        color, depth
+    }
+}
+
+fn vs_fullscreen() vision_vertex {
+    let id = shader_vertex_id()
+    let x: f32 = 0.0
+    let y: f32 = 0.0
+    if id == 1 {
+        x = 2.0
+    }
+    if id == 2 {
+        y = 2.0
+    }
+    return vision_vertex {
+        float4 {
+            x * 2.0 - 1.0, 1.0 - y * 2.0, 0.000001, 1.0
+        }, float2 {
+            x, y
+        }, 1.0
+    }
+}
+
+// Neutral backdrop: a grey vertical gradient with a soft vignette.
+fn fs_background(input: vision_vertex) float4 {
+    let c = mixf(0.075, 0.012, clampf(input.uv.y, 0.0, 1.0))
+    let dx = input.uv.x - 0.5
+    let dy = input.uv.y - 0.46
+    let g = c * (1.0 - clampf((dx * dx + dy * dy) * 0.95, 0.0, 1.0))
+    return float4 {
+        g, g, g, 1.0
+    }
+}
+
+struct dot_vertex {
+    position: float4,
+    uv: float2,
+    distance: f32,
+    fade: f32
+}
+
+// Static dot field on a Fibonacci sphere around the eye. The eye never
+// translates, so only the camera rotation moves the dots.
+fn vs_dots() dot_vertex {
+    let id = shader_vertex_id()
+    let corner = quad_uv(id)
+    let i = (id / 6) as f32
+    let y = 1.0 - (i + 0.5) * 2.0 / DOT_COUNT
+    let rr = sqrt(maxf(0.0, 1.0 - y * y)) as f32
+    let turns = i * 0.38196601
+    let th = (turns - (turns as i32) as f32) * 2.0 * PI
+    let n = float3 {
+        cos(th) as f32 * rr, y, sin(th) as f32 * rr
+    }
+    let ax: f32 = 0.0
+    let ay: f32 = 1.0
+    if absf(y) > 0.95 {
+        ax = 1.0
+        ay = 0.0
+    }
+    let t1 = float3 {
+        ay * n.z, 0.0 - ax * n.z, ax * n.y - ay * n.x
+    }
+    let l1 = sqrt(dot3(t1, t1)) as f32
+    t1 = float3 {
+        t1.x / l1, t1.y / l1, t1.z / l1
+    }
+    let t2 = float3 {
+        n.y * t1.z - n.z * t1.y, n.z * t1.x - n.x * t1.z, n.x * t1.y - n.y * t1.x
+    }
+    let sx = (corner.x - 0.5) * DOT_SIZE
+    let sy = (corner.y - 0.5) * DOT_SIZE
+    let world = float3 {
+        n.x * DOT_RADIUS + t1.x * sx + t2.x * sy, n.y * DOT_RADIUS + t1.y * sx + t2.y * sy, n.z * DOT_RADIUS + t1.z * sx + t2.z * sy
+    }
+    let camera = camera_space(world, shader_root_f32(16), shader_root_f32(17))
+    let tangent = shader_root_f32(18)
+    let px = camera.x / (tangent * shader_root_f32(19) * camera.z)
+    let py = camera.y / (tangent * camera.z)
+    let vig = 1.0 - clampf((px * px + py * py) * 0.25 * 1.15, 0.0, 1.0)
+    if camera.z <= NEAR {
+        vig = 0.0
+    }
+    return dot_vertex {
+        reverse_z_clip(px, py, camera.z, NEAR), corner, camera.z, vig
+    }
+}
+
+fn fs_dots(input: dot_vertex) vision_pixel {
+    let x = (input.uv.x - 0.5) * 2.0
+    let y = (input.uv.y - 0.5) * 2.0
+    let t = clampf((sqrt(x * x + y * y) as f32 - 0.45) / 0.55, 0.0, 1.0)
+    let a = (1.0 - t * t * (3.0 - 2.0 * t)) * 0.62 * input.fade
+    let depth = reverse_z_depth(maxf(input.distance, NEAR), NEAR)
+    if a < 0.01 {
+        depth = 0.0
+    }
+    return vision_pixel {
+        float4 {
+            0.52, 0.52, 0.52, a
+        }, depth
+    }
+}
+
+fn fs_lens(input: vision_vertex) vision_pixel {
+    let uv = input.uv
+    let dx = (uv.x - shader_root_f32(4)) * shader_root_f32(19)
+    let dy = uv.y - shader_root_f32(5)
+    let dist = sqrt(dx * dx + dy * dy) as f32
+    let blur = clampf((dist - shader_root_f32(6)) / maxf(0.04, 0.72 - shader_root_f32(6)), 0.0, 1.0) * shader_root_f32(7)
+    if shader_root_f32(8) > 0.5 {
+        blur = 12.0
+    }
+    let color = shader_sample_texture(uv)
+    let sum = float3 {
+        color.x, color.y, color.z
+    }
+    let weight: f32 = 1.0
+    if blur > 0.2 {
+        for i in 0 to 24 {
+            let angle = i as f32 * 2.3999632
+            let radius = sqrt((i as f32 + 0.5) / 24.0) as f32 * blur
+            let px = cos(angle) as f32 * radius / shader_root_f32(32)
+            let py = sin(angle) as f32 * radius / shader_root_f32(33)
+            let red = shader_sample_texture(float2 {
+                uv.x + px * (1.0 + shader_root_f32(9)), uv.y + py * (1.0 + shader_root_f32(9))
+            })
+            let green = shader_sample_texture(float2 {
+                uv.x + px, uv.y + py
+            })
+            let blue = shader_sample_texture(float2 {
+                uv.x + px * (1.0 - shader_root_f32(9)), uv.y + py * (1.0 - shader_root_f32(9))
+            })
+            sum.x = sum.x + red.x
+            sum.y = sum.y + green.y
+            sum.z = sum.z + blue.z
+            weight = weight + 1.0
+        }
+    }
+    let dim: f32 = 1.0
+    if shader_root_f32(8) > 0.5 {
+        dim = 0.58
+    }
+    return vision_pixel {
+        float4 {
+            sum.x / weight * dim, sum.y / weight * dim, sum.z / weight * dim, 1.0
+        }, 0.000001
+    }
+}

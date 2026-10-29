@@ -3,6 +3,7 @@
 #include <AvailabilityMacros.h>
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
+#import <CoreVideo/CoreVideo.h>
 #include <objc/objc.h>
 #include <assert.h>
 #include <dlfcn.h>
@@ -397,6 +398,7 @@ typedef struct gpu_state_mtl {
     // hand the drawable back a second time.
     bool drawable_presented;
     id<MTLCaptureScope> capture_scope;
+    CVMetalTextureCacheRef pixel_buffer_cache;
     
     gpu_shader_mtl shaders[GPU_RESOURCE_POOL_SIZE];
     gpu_texture_mtl textures[GPU_RESOURCE_POOL_SIZE];
@@ -650,6 +652,7 @@ void gpu_destroy_device() {
         }
     }
     mtl_v2_fx_destroy_all();
+    if (_state.pixel_buffer_cache) CFRelease(_state.pixel_buffer_cache);
     gpu_v2_set_backend(NULL, 0, 0);
     for (i32 i = 0; i < GPU_RESOURCE_POOL_SIZE; ++i) {
 #ifndef ENABLE_ARC
@@ -1036,8 +1039,10 @@ static bool mtl_block_format_supported(gpu_pixel_format format) {
 
 static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
                                  i32 format, u32 usage, i32 mip_count, i32 kind, const char *name) {
-    if (width <= 0 || height <= 0 || depth_or_layers <= 0 ||
-        _state.texture_count >= GPU_RESOURCE_POOL_SIZE) return 0;
+    if (width <= 0 || height <= 0 || depth_or_layers <= 0) return 0;
+    u32 slot = 1;
+    while (slot < _state.texture_count && _state.textures[slot].texture) ++slot;
+    if (slot >= GPU_RESOURCE_POOL_SIZE) return 0;
     MTLPixelFormat pixel_format = _mtl_pixel_format((gpu_pixel_format)format);
     if (pixel_format == MTLPixelFormatInvalid) return 0;
     bool block_compressed = mtl_block_compressed((gpu_pixel_format)format);
@@ -1100,8 +1105,8 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
 #endif
     if (!texture) return 0;
     texture.label = [NSString stringWithUTF8String:name];
-    u32 id = _state.texture_count++;
-    _state.textures[id] = (gpu_texture_mtl){
+    if (slot == _state.texture_count) ++_state.texture_count;
+    _state.textures[slot] = (gpu_texture_mtl){
         .texture = texture,
         .width = (NSUInteger)width,
         .height = (NSUInteger)height,
@@ -1111,7 +1116,7 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
         .resource_options = resource_options,
         .transient_render_target = transient_render_target,
     };
-    return id;
+    return slot;
 }
 
 // Private storage is not CPU-visible. One shot command buffer copies the
@@ -1196,6 +1201,35 @@ static void mtl_v2_texture_destroy(u32 tex) {
     [_state.textures[tex].texture release];
 #endif
     memset(&_state.textures[tex], 0, sizeof(_state.textures[tex]));
+}
+
+// Desktop/video service bridge. The ns API still sees an ordinary bindless
+// texture. Pin the producer's pixel buffer until the current command buffer
+// completes, so its IOSurface cannot be recycled beneath an in-flight draw.
+ns_bool gpu_metal_import_pixel_buffer(u32 slot, void *value, const char *name) {
+    if (!slot || slot >= _state.texture_count || !value || !_state.cmd_buffer || !_state.device.device) return false;
+    CVPixelBufferRef pixel = (CVPixelBufferRef)value;
+    CVMetalTextureRef view = NULL;
+    if (!_state.pixel_buffer_cache && CVMetalTextureCacheCreate(NULL, NULL, _state.device.device, NULL, &_state.pixel_buffer_cache) != kCVReturnSuccess) return false;
+    CVReturn result = CVMetalTextureCacheCreateTextureFromImage(NULL, _state.pixel_buffer_cache, pixel, NULL,
+        MTLPixelFormatBGRA8Unorm, CVPixelBufferGetWidth(pixel), CVPixelBufferGetHeight(pixel), 0, &view);
+    if (result != kCVReturnSuccess || !view) return false;
+    id<MTLTexture> texture = CVMetalTextureGetTexture(view);
+    texture.label = [NSString stringWithUTF8String:name ?: "desktop captured window"];
+#ifndef ENABLE_ARC
+    [texture retain];
+    [_state.textures[slot].texture release];
+#endif
+    _state.textures[slot] = (gpu_texture_mtl){
+        .texture = texture, .width = texture.width, .height = texture.height, .depth = 1,
+        .format = PIXELFORMAT_BGRA8, .type = TEXTURE_2D,
+        .resource_options = MTLResourceStorageModeShared,
+    };
+    CVPixelBufferRetain(pixel);
+    [_state.cmd_buffer addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+        (void)completed; CFRelease(view); CVPixelBufferRelease(pixel);
+    }];
+    return true;
 }
 
 static u32 mtl_v2_sampler_create(i32 min_filter, i32 mag_filter, i32 mip_filter,

@@ -1,0 +1,338 @@
+let g_mouse_x: f32 = 0.0
+let g_mouse_y: f32 = 0.0
+let g_drag_mode = 0
+let g_drag_index = -1
+let g_drag_right = false
+let g_drag_start_x: f32 = 0.0
+let g_drag_start_y: f32 = 0.0
+let g_drag_a: f32 = 0.0
+let g_drag_e: f32 = 0.0
+let g_drag_r: f32 = 0.0
+let g_drag_ray_a: f32 = 0.0
+let g_drag_ray_e: f32 = 0.0
+let g_drag_distance: f32 = 0.0
+let g_last_click: f32 = -10.0
+let g_last_clicked_panel = -1
+let g_hover_hit = float4 {
+    0, 0, 0, 0
+}
+let g_hover_close = false
+let g_last_dt: f32 = 0.016
+
+fn set_hidden(v: ref view, hidden: bool) {
+    g_hidden = hidden
+    if hidden {
+        g_menu = false
+        g_launcher_mode = 0
+        g_drag_mode = 0
+        save_layout()
+        if g_settings_dirty {
+            save_settings()
+        }
+        for i in 0 to g_panel_count {
+            if g_panels[i].capture != 0 {
+                desktop_capture_pause(g_panels[i].capture, true)
+            }
+        }
+    } else {
+        for i in 0 to g_panel_count {
+            if g_panels[i].capture != 0 {
+                desktop_capture_pause(g_panels[i].capture, false)
+            }
+        }
+        g_refresh_time = -10.0
+        desktop_refresh()
+    }
+    desktop_overlay_visible(v, !hidden)
+}
+
+fn focused_key(v: ref view, key: i32) bool {
+    return view_take_key_press(v, key) >= 0
+}
+
+fn handle_keys(v: ref view) {
+    let action = desktop_take_action()
+    if action == DESKTOP_ACTION_QUIT {
+        view_close(v)
+        return
+    }
+    if action == DESKTOP_ACTION_TOGGLE {
+        set_hidden(v, !g_hidden)
+        return
+    }
+    if action == DESKTOP_ACTION_PROGRAMS || action == DESKTOP_ACTION_BACKGROUND {
+        if g_hidden {
+            set_hidden(v, false)
+        }
+        let mode = 1
+        if action == DESKTOP_ACTION_BACKGROUND {
+            mode = 2
+        }
+        launcher_open(mode)
+    }
+    if focused_key(v, 256) {
+        if g_launcher_mode > 0 {
+            g_launcher_mode = 0
+        } else {
+            if g_menu_dropdown >= 0 {
+                g_menu_dropdown = -1
+            } else {
+                menu_open()
+            }
+        }
+    }
+    if focused_key(v, 290) {
+        set_hidden(v, !g_hidden)
+    }
+    if focused_key(v, 291) {
+        for i in 0 to g_panel_count {
+            if g_panels[i].capture != 0 {
+                desktop_capture_close(g_panels[i].capture)
+                g_panels[i].capture = 0
+                g_panels[i].texture = 0u
+            }
+        }
+        g_generation = -1
+        desktop_refresh()
+        notify("Refreshing window captures")
+    }
+    if focused_key(v, 67) {
+        g_ca = !g_ca
+        g_settings_dirty = true
+    }
+    if focused_key(v, 86) {
+        if g_curve > 0.0 {
+            g_last_curve = g_curve
+            g_curve = 0.0
+        } else {
+            g_curve = g_last_curve
+        }
+        g_settings_dirty = true
+    }
+    if focused_key(v, 91) {
+        g_dof = maxf(0.0, (g_dof - 1) as f32) as i32
+        g_settings_dirty = true
+    }
+    if focused_key(v, 93) {
+        g_dof = minf(3.0, (g_dof + 1) as f32) as i32
+        g_settings_dirty = true
+    }
+    if focused_key(v, 44) {
+        g_focus_radius = maxf(0.05, g_focus_radius - 0.04)
+        g_settings_dirty = true
+    }
+    if focused_key(v, 46) {
+        g_focus_radius = minf(0.70, g_focus_radius + 0.04)
+        g_settings_dirty = true
+    }
+    let direction = 0
+    if focused_key(v, 262) {
+        direction = 1
+    }
+    if focused_key(v, 263) {
+        direction = -1
+    }
+    if direction != 0 && g_panel_count > 0 {
+        g_selected = (g_selected + direction + g_panel_count) % g_panel_count
+        g_target_yaw = g_yaw + wrap_angle(g_panels[g_selected].a - g_yaw)
+        g_target_pitch = g_panels[g_selected].e
+    }
+    // OS registrations consume Alt shortcuts. Focused fallback is only needed
+    // on a host where another program already owns a registration.
+    if !g_shortcuts && (view_is_key_pressed(v, 342) || view_is_key_pressed(v, 346)) {
+        if focused_key(v, 81) {
+            view_close(v)
+        }
+        if focused_key(v, 87) {
+            set_hidden(v, !g_hidden)
+        }
+        if focused_key(v, 69) {
+            launcher_open(1)
+        }
+        if focused_key(v, 66) {
+            launcher_open(2)
+        }
+    }
+}
+
+fn pick_panels(ray: float3) {
+    g_hovered = -1
+    g_hover_close = false
+    let nearest: f32 = 10000000.0
+    for i in 0 to g_panel_count {
+        let p = g_panels[i]
+        let hit = panel_hit(ray, p.a, p.e, p.radius, p.width + 20.0, p.height + 60.0, curve_radius(g_curve))
+        if hit.w > 0.5 && hit.z < nearest {
+            nearest = hit.z
+            g_hovered = i
+            g_hover_hit = hit
+            let dx = hit.x - (p.width + 20.0 - 22.0)
+            let dy = hit.y - 20.0
+            g_hover_close = dx * dx + dy * dy < 14.0 * 14.0
+        }
+    }
+}
+
+fn pointer_input(v: ref view, ray: float3, dt: f32) {
+    pick_panels(ray)
+    if g_menu {
+        menu_pick(ray)
+    } else {
+        g_menu_hit.w = 0.0
+    }
+    if g_launcher_mode > 0 {
+        launcher_update(dt)
+        launcher_input(v)
+        return
+    }
+    if g_menu && menu_input(v) {
+        return
+    }
+    if v.scroll_y != 0.0 {
+        g_target_fov = clampf(g_target_fov - clampf(v.scroll_y as f32, -20.0, 20.0) * 0.006, 0.50, 1.45)
+        g_settings_dirty = true
+    }
+    let ray_a = atan2(ray.x, ray.z) as f32
+    let ray_e = atan2(ray.y, sqrt(ray.x * ray.x + ray.z * ray.z)) as f32
+    if v.mouse_pressed || v.mouse_right_pressed {
+        g_drag_mode = 1
+        g_drag_index = -1
+        g_drag_right = v.mouse_right_pressed
+        g_drag_start_x = g_mouse_x
+        g_drag_start_y = g_mouse_y
+        g_drag_distance = 0.0
+        g_drag_a = g_target_yaw
+        g_drag_e = g_target_pitch
+        g_drag_ray_a = ray_a
+        g_drag_ray_e = ray_e
+        if g_menu && g_menu_hit.w > 0.5 {
+            g_drag_mode = 3
+            g_drag_a = g_menu_a
+            g_drag_e = g_menu_e
+            g_drag_r = g_menu_radius
+        } else {
+            if g_hovered >= 0 {
+                g_drag_mode = 2
+                g_drag_index = g_hovered
+                g_drag_a = g_panels[g_hovered].a
+                g_drag_e = g_panels[g_hovered].e
+                g_drag_r = g_panels[g_hovered].radius
+                if g_hover_close && v.mouse_pressed {
+                    if !desktop_accessibility(true) {
+                        set_hidden(v, true)
+                        g_drag_mode = 0
+                        return
+                    }
+                    if !desktop_window_close(g_panels[g_hovered].id, g_panels[g_hovered].pid) {
+                        notify(desktop_last_error())
+                    }
+                    g_drag_mode = 0
+                    return
+                }
+            }
+        }
+        g_yaw_velocity = 0.0
+        g_pitch_velocity = 0.0
+    }
+    if g_drag_mode > 0 && (v.mouse_down || v.mouse_right_down) {
+        let dx = g_mouse_x - g_drag_start_x
+        let dy = g_mouse_y - g_drag_start_y
+        g_drag_distance = maxf(g_drag_distance, sqrt(dx * dx + dy * dy) as f32)
+        if g_drag_distance > 4.0 {
+            if g_drag_mode == 1 {
+                let old_yaw = g_target_yaw
+                let old_pitch = g_target_pitch
+                let mapping = 2.0 * tan(g_fov * 0.5) as f32 / g_frame_h
+                g_target_yaw = g_drag_a - dx * mapping
+                g_target_pitch = clampf(g_drag_e + dy * mapping, 0.0 - PITCH_LIMIT, PITCH_LIMIT)
+                g_yaw_velocity = (g_target_yaw - old_yaw) / maxf(dt, 0.001)
+                g_pitch_velocity = (g_target_pitch - old_pitch) / maxf(dt, 0.001)
+                g_yaw = g_target_yaw
+                g_pitch = g_target_pitch
+            } else {
+                let a = wrap_angle(g_drag_a + wrap_angle(ray_a - g_drag_ray_a))
+                let e = clampf(g_drag_e + ray_e - g_drag_ray_e, 0.0 - PITCH_LIMIT, PITCH_LIMIT)
+                let r = clampf(g_drag_r * (1.0 - dy / 800.0), 300.0, 7200.0)
+                if g_drag_mode == 2 {
+                    if g_drag_right {
+                        g_panels[g_drag_index].radius = r
+                    } else {
+                        g_panels[g_drag_index].a = a
+                        g_panels[g_drag_index].e = e
+                    }
+                } else {
+                    if g_drag_right {
+                        g_menu_radius = clampf(r, 900.0, 4800.0)
+                    } else {
+                        g_menu_a = a
+                        g_menu_e = e
+                    }
+                }
+            }
+        }
+    }
+    if g_drag_mode > 0 && (v.mouse_released || v.mouse_right_released) {
+        if g_drag_mode == 2 {
+            save_layout()
+            if g_drag_distance <= 4.0 && !g_drag_right {
+                g_selected = g_drag_index
+                if g_last_clicked_panel == g_selected && g_elapsed - g_last_click < 0.35 {
+                    let p = g_panels[g_selected]
+                    if desktop_window_activate(p.id, p.pid) {
+                        set_hidden(v, true)
+                    } else {
+                        notify(desktop_last_error())
+                    }
+                    g_last_clicked_panel = -1
+                } else {
+                    g_last_clicked_panel = g_selected
+                    g_last_click = g_elapsed
+                }
+            }
+        }
+        if g_drag_mode == 1 && g_drag_distance <= 4.0 {
+            g_selected = -1
+        }
+        g_drag_mode = 0
+    }
+}
+
+fn update_camera(dt: f32) {
+    if g_drag_mode == 0 {
+        g_target_yaw = g_target_yaw + g_yaw_velocity * dt
+        g_target_pitch = clampf(g_target_pitch + g_pitch_velocity * dt, 0.0 - PITCH_LIMIT, PITCH_LIMIT)
+        g_yaw_velocity = g_yaw_velocity * maxf(0.0, 1.0 - dt * 5.0)
+        g_pitch_velocity = g_pitch_velocity * maxf(0.0, 1.0 - dt * 5.0)
+    }
+    let t = minf(1.0, dt * 16.0)
+    g_yaw = mixf(g_yaw, g_target_yaw, t)
+    g_pitch = mixf(g_pitch, g_target_pitch, t)
+    g_fov = mixf(g_fov, g_target_fov, t)
+    let u: f32 = 0.5
+    let v: f32 = 0.5
+    let inner: f32 = 0.0
+    let focus = g_selected
+    if focus < 0 {
+        focus = g_hovered
+    }
+    if focus >= 0 && focus < g_panel_count {
+        let p = g_panels[focus]
+        let n = dome_normal(p.a, p.e)
+        let center = camera_space(float3 {
+            n.x * p.radius, n.y * p.radius, n.z * p.radius
+        }, g_yaw, g_pitch)
+        if center.z > NEAR {
+            u = center.x / (center.z * tan(g_fov * 0.5) as f32 * g_frame_w / g_frame_h) * 0.5 + 0.5
+            v = 0.5 - center.y / (center.z * tan(g_fov * 0.5) as f32) * 0.5
+            inner = sqrt(p.width * p.width + p.height * p.height) as f32 / (center.z * tan(g_fov * 0.5) as f32) * 0.30
+        }
+    }
+    if g_menu {
+        inner = 0.72
+        u = 0.5
+        v = 0.5
+    }
+    g_focus_u = mixf(g_focus_u, u, t)
+    g_focus_v = mixf(g_focus_v, v, t)
+    g_focus_inner = mixf(g_focus_inner, inner, t)
+}

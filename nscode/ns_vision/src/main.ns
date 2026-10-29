@@ -1,0 +1,65 @@
+use std
+use os
+use view
+use gpu
+use desktop
+
+fn main() {
+    g_data_dir = os_app_data_dir("ns_vision")
+    load_settings()
+    load_layout()
+    parse_args()
+    let v = view_create("NS Vision", 1600, 900)
+    view_set_app_name(v, "NS Vision")
+    if !gpu_request_device(v) {
+        print("NS Vision needs a GPU-backed window.\n")
+        view_close(v)
+        return
+    }
+    if !render_init() {
+        print("NS Vision shader creation failed.\n")
+        view_close(v)
+        return
+    }
+    g_font_main = font_load("oxanium")
+    g_font_alternate = font_load("roboto")
+    g_font_cjk = font_load("cjk")
+    if g_demo {
+        demo_init()
+    } else {
+        launcher_load()
+        // One System Settings pane at a time: Screen Recording first, since
+        // it needs a relaunch anyway; Accessibility on the next launch.
+        if desktop_supported() && !desktop_permission() {
+            desktop_request_permission()
+            g_permission_hide = true
+        } else {
+            if desktop_supported() && !desktop_accessibility(false) {
+                desktop_accessibility(true)
+                g_permission_hide = true
+            }
+        }
+        desktop_refresh()
+        g_shortcuts = desktop_shortcuts_start(v)
+    }
+    if g_start_menu {
+        menu_open()
+    }
+    if g_start_launcher > 0 {
+        launcher_open(g_start_launcher)
+    }
+    v.on_frame({ frame in
+        vision_frame(frame)
+    })
+    v.on_terminate({ frame in
+        vision_terminate(frame)
+    })
+    g_start_time = os_time()
+    g_previous_time = g_start_time
+    g_ready = true
+    view_set_frame_per_second(v, 60)
+    if !g_windowed {
+        desktop_overlay_fullscreen(v, true)
+    }
+    view_run(v)
+}

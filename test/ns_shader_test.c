@@ -97,6 +97,9 @@ static const char *ns_shader_test_src =
     "fn fs_depth(data: FragmentInput) FragmentDepthOutput {\n"
     "    return FragmentDepthOutput { color0: data.color, color1: data.color, depth: 0.25 }\n"
     "}\n"
+    "fn fs_angle(data: FragmentInput) float4 {\n"
+    "    return float4 { atan2(data.uv.y, data.uv.x), 0.0, 0.0, 1.0 }\n"
+    "}\n"
     "fn fs_grad(data: FragmentInput) float4 {\n"
     "    let signed_d = data.uv.x - 0.5\n"
     "    let pixel = ddx(signed_d) * ddx(signed_d) + ddy(signed_d) * ddy(signed_d)\n"
@@ -426,6 +429,18 @@ int main() {
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "lerp(") && ns_shader_test_has(r.r, "(a + b)"),
                   "hlsl mix lowers to lerp and keeps vector arithmetic.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
+    // atan2 uses two-argument atan only in GLSL; WGSL keeps atan2.
+    {
+        i32 angle = ns_shader_test_fn(&vm, "fs_angle");
+        ns_shader_target targets[] = {NS_SHADER_MSL, NS_SHADER_GLSL_VULKAN, NS_SHADER_HLSL, NS_SHADER_WGSL};
+        const char *names[] = {"atan2(", "atan(", "atan2(", "atan2("};
+        for (int i = 0; i < 4; ++i) {
+            ns_return_str r = ns_shader_transpile(&vm, &ctx, angle, targets[i], NS_SHADER_STAGE_AUTO);
+            ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, names[i]), "atan2 lowers to the target's two-argument angular intrinsic.");
+            if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+        }
     }
 
     // --- fragment derivatives lower to each target's intrinsic ---

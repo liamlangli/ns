@@ -3185,10 +3185,32 @@ static void ns_build_darwin_write_plist(ns_build_input *in, ns_str app_dir, ns_s
     ns_str_free(plist);
 }
 
-static void ns_build_darwin_codesign_app(ns_str app_dir) {
+// An ad-hoc signature's designated requirement is its cdhash, so macOS privacy
+// grants (Screen Recording, Accessibility) would stop matching after every
+// rebuild. Pin the requirement to the bundle identifier instead, or sign with
+// the certificate NS_CODESIGN_IDENTITY names.
+static void ns_build_darwin_codesign_app(ns_str app_dir, ns_str identifier) {
     ns_str q_app_dir = ns_shell_quote(app_dir);
+    const char *identity = getenv("NS_CODESIGN_IDENTITY");
     ns_str cmd = ns_str_null;
-    ns_str_append_cstr(&cmd, "/usr/bin/codesign --force --sign - --timestamp=none ");
+    if (identity != ns_null && identity[0] != '\0' && strcmp(identity, "-") != 0) {
+        ns_str q_identity = ns_shell_quote(ns_str_cstr((char *)identity));
+        ns_str_append_cstr(&cmd, "/usr/bin/codesign --force --timestamp=none --sign ");
+        ns_str_append(&cmd, q_identity);
+        ns_str_append_cstr(&cmd, " ");
+        ns_str_free(q_identity);
+    } else {
+        ns_str requirement = ns_str_null;
+        ns_str_append_cstr(&requirement, "=designated => identifier \"");
+        ns_str_append(&requirement, identifier);
+        ns_str_append_cstr(&requirement, "\"");
+        ns_str q_requirement = ns_shell_quote(requirement);
+        ns_str_append_cstr(&cmd, "/usr/bin/codesign --force --sign - --timestamp=none --requirements ");
+        ns_str_append(&cmd, q_requirement);
+        ns_str_append_cstr(&cmd, " ");
+        ns_str_free(q_requirement);
+        ns_str_free(requirement);
+    }
     ns_str_append(&cmd, q_app_dir);
     ns_array_push(cmd.data, '\0');
 
@@ -3908,7 +3930,9 @@ static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module
     ns_build_darwin_write_plist(in, app_dir, executable_name, icon_file);
     ns_build_profile_end("write_app_metadata", metadata_start);
     f64 sign_start = ns_build_profile_begin("codesign_app");
-    ns_build_darwin_codesign_app(app_dir);
+    ns_str bundle_identifier = ns_str_concat(ns_str_cstr("ns."), in->name);
+    ns_build_darwin_codesign_app(app_dir, bundle_identifier);
+    ns_str_free(bundle_identifier);
     ns_build_profile_end("codesign_app", sign_start);
 
     ns_info("build", "app %.*s\n", app_dir.len, app_dir.data);

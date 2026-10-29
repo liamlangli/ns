@@ -1,0 +1,41 @@
+use std
+use os
+
+fn main() {
+    g_data_dir = "bin/vision-state-test"
+    os_make_dirs(g_data_dir)
+    g_scale = 2.0
+    g_target_fov = 1.1
+    g_curve = 23.0 * DEG
+    g_hud_clock = false
+    save_settings()
+    g_scale = 1.0
+    g_target_fov = 0.5
+    g_curve = 0.0
+    g_hud_clock = true
+    load_settings()
+    assert g_scale == 2.0 && absf(g_target_fov - 1.1) < 0.001
+    assert absf(g_curve - 23.0 * DEG) < 0.001 && !g_hud_clock
+    g_panel_count = 1
+    let key = os_text_hash("application\twindow 中文")
+    g_panels[0] = vision_panel { 42, 123, "Window", key, "", 800.0, 600.0, 2.4, -0.3, 7100.0, 0, 0u, true }
+    save_layout()
+    g_slots = [str: layout_slot](4096)
+    load_layout()
+    assert has(g_slots, key)
+    assert absf(g_slots[key].a - 2.4) < 0.001 && g_slots[key].radius == 7100.0
+    reset_layout()
+    assert g_panels[0].a == 0.0 && g_panels[0].radius == DOME_RADIUS
+    assert g_scale == 2.0 && !g_hud_clock
+    g_app_count = 0
+    append_app("One", "/One.app", false)
+    append_app("Duplicate", "/One.app", true)
+    append_app("Two", "/Two.app", false)
+    assert g_app_count == 2 && g_apps[0].manual
+    launcher_remove(0)
+    assert g_app_count == 1 && g_apps[0].name == "Two"
+    append_app("One", "/One.app", false)
+    assert g_app_count == 1
+    assert has(g_removed, "/One.app")
+    print("vision: settings, layout, launcher persistence passed\n")
+}

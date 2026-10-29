@@ -74,6 +74,12 @@ u32  gpu_texture_create(i32 width, i32 height, i32 depth_or_layers,
                         const char *name); // non-empty debug name, like gpu_malloc
 void gpu_texture_upload(u32 tex, i32 mip, i32 layer, const void *data, u64 size);
 void gpu_texture_destroy(u32 tex);
+#if defined(NS_DARWIN)
+// Service bridge, called on the rendering thread inside an active GPU frame.
+// `pixel` is a BGRA CVPixelBufferRef. Pins it through command completion and
+// replaces the existing texture slot with an IOSurface view without a copy.
+ns_bool gpu_metal_import_pixel_buffer(u32 slot, void *pixel, const char *name);
+#endif
 u32  gpu_sampler_create(i32 min_filter, i32 mag_filter, i32 mip_filter,
                         i32 wrap_u, i32 wrap_v, i32 wrap_w,
                         i32 compare_func, i32 max_anisotropy);

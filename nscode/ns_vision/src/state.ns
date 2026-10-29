@@ -1,0 +1,313 @@
+use desktop
+
+struct vision_panel {
+    id: u64,
+    pid: i32,
+    title: str,
+    key: str,
+    path: str,
+    width: f32,
+    height: f32,
+    a: f32,
+    e: f32,
+    radius: f32,
+    capture: u64,
+    texture: u32,
+    seen: bool
+}
+
+struct vision_app {
+    name: str,
+    path: str,
+    id: u64,
+    pid: i32,
+    icon: u32,
+    manual: bool
+}
+
+struct layout_slot {
+    a: f32, e: f32, radius: f32
+}
+let g_panels = [vision_panel](64)
+let g_panel_count = 0
+let g_apps = [vision_app](256)
+let g_app_count = 0
+let g_background = [vision_app](64)
+let g_background_count = 0
+let g_order = [str](256)
+let g_order_count = 0
+let g_added = [str](128)
+let g_added_count = 0
+let g_removed = [str: bool](1024)
+let g_slots = [str: layout_slot](4096)
+let g_icon_cache = [str: u32](512)
+let g_icon_paths = [str](512)
+let g_icon_count = 0
+let g_data_dir = ""
+let g_yaw: f32 = 0.0
+let g_pitch: f32 = 0.0
+let g_target_yaw: f32 = 0.0
+let g_target_pitch: f32 = 0.0
+let g_yaw_velocity: f32 = 0.0
+let g_pitch_velocity: f32 = 0.0
+let g_fov: f32 = 0.85
+let g_target_fov: f32 = 0.85
+let g_scale: f32 = 1.5
+let g_dof = 2
+let g_focus_radius: f32 = 0.46
+let g_ca = true
+let g_curve: f32 = 15.0 * DEG
+let g_last_curve: f32 = 15.0 * DEG
+let g_font_choice = 0
+let g_hud_guide = true
+let g_hud_clock = true
+let g_focus_u: f32 = 0.5
+let g_focus_v: f32 = 0.5
+let g_focus_inner: f32 = 0.0
+let g_selected = -1
+let g_hovered = -1
+let g_menu = false
+let g_menu_a: f32 = 0.0
+let g_menu_e: f32 = 0.0
+let g_menu_radius: f32 = 1600.0
+let g_menu_dropdown = -1
+let g_launcher_mode = 0
+let g_launcher_time: f32 = 0.0
+let g_hidden = false
+// A System Settings pane was opened; step out of its way on the first frame.
+let g_permission_hide = false
+let g_elapsed: f32 = 0.0
+let g_status = ""
+let g_status_until: f32 = 0.0
+let g_settings_dirty = false
+let g_generation = -1
+let g_refresh_time: f32 = -10.0
+let g_demo = false
+let g_auto_exit: f32 = 0.0
+let g_windowed = false
+let g_start_menu = false
+let g_start_launcher = 0
+let g_permission_requested = false
+
+fn notify(message: str) {
+    g_status = message
+    g_status_until = g_elapsed + 6.0
+}
+
+fn state_path(name: str) str {
+    return g_data_dir + "/" + name
+}
+
+fn settings_text() str {
+    return `scale {ftos(g_scale)}\nfov {ftos(g_target_fov)}\ndof {g_dof}\nfocus {ftos(g_focus_radius)}\nca {g_ca as i32}\ncurve {ftos(g_curve)}\nlast_curve {ftos(g_last_curve)}\nfont {g_font_choice}\nhud_guide {g_hud_guide as i32}\nhud_clock {g_hud_clock as i32}\n`
+}
+
+fn save_settings() {
+    if g_demo {
+        return
+    }
+    if os_write_file_atomic(state_path("settings.txt"), settings_text()) != 1 {
+        notify("Could not save settings")
+    }
+    g_settings_dirty = false
+}
+
+fn load_settings() {
+    for line in split_lines(os_read_file(state_path("settings.txt"))) {
+        let at = 0
+        loop at < line.len && line[at] != 32 {
+            at = at + 1
+        }
+        if at + 1 >= line.len {
+            continue
+        }
+        let key = substr(line, 0, at)
+        let value = stof(substr(line, at + 1, line.len - at - 1)) as f32
+        if key == "scale" {
+            g_scale = clampf(value, 1.0, 2.0)
+        }
+        if key == "fov" {
+            g_target_fov = clampf(value, 0.50, 1.45)
+        }
+        if key == "dof" {
+            g_dof = clampf(value, 0.0, 3.0) as i32
+        }
+        if key == "focus" {
+            g_focus_radius = clampf(value, 0.05, 0.70)
+        }
+        if key == "ca" {
+            g_ca = value != 0.0
+        }
+        if key == "curve" {
+            g_curve = clampf(value, 0.0, 60.0 * DEG)
+        }
+        if key == "last_curve" {
+            g_last_curve = clampf(value, DEG, 60.0 * DEG)
+        }
+        if key == "font" {
+            g_font_choice = clampf(value, 0.0, 1.0) as i32
+        }
+        if key == "hud_guide" {
+            g_hud_guide = value != 0.0
+        }
+        if key == "hud_clock" {
+            g_hud_clock = value != 0.0
+        }
+    }
+    g_fov = g_target_fov
+}
+
+fn save_layout() {
+    if g_demo {
+        return
+    }
+    for i in 0 to g_panel_count {
+        let p = g_panels[i]
+        g_slots[p.key] = layout_slot {
+            p.a, p.e, p.radius
+        }
+    }
+    let text = ""
+    for key in g_slots {
+        let s = g_slots[key]
+        text = text + `{key} {ftos(s.a)} {ftos(s.e)} {ftos(s.radius)}\n`
+    }
+    if os_write_file_atomic(state_path("layout.txt"), text) != 1 {
+        notify("Could not save layout")
+    }
+}
+
+fn load_layout() {
+    for line in split_lines(os_read_file(state_path("layout.txt"))) {
+        if line.len < 65 {
+            continue
+        }
+        let key = substr(line, 0, 64)
+        let values = numbers(substr(line, 65, line.len - 65))
+        if values.len == 3 {
+            g_slots[key] = layout_slot {
+                wrap_angle(values[0]), clampf(values[1], 0.0 - PITCH_LIMIT, PITCH_LIMIT), clampf(values[2], 300.0, 7200.0)
+            }
+        }
+    }
+}
+
+fn default_slot(index: i32) layout_slot {
+    if index == 0 {
+        return layout_slot {
+            0.0, 0.0, DOME_RADIUS
+        }
+    }
+    let sign: f32 = 1.0
+    if index % 2 == 0 {
+        sign = -1.0
+    }
+    let band = (index + 1) / 2
+    return layout_slot {
+        wrap_angle(sign * band as f32 * 0.64), ((index % 3) as f32 - 1.0) * 0.25, DOME_RADIUS + (index % 3) as f32 * 100.0
+    }
+}
+
+fn reset_layout() {
+    g_slots = [str: layout_slot](4096)
+    for i in 0 to g_panel_count {
+        let s = default_slot(i)
+        g_panels[i].a = s.a
+        g_panels[i].e = s.e
+        g_panels[i].radius = s.radius
+    }
+    g_target_yaw = 0.0
+    g_target_pitch = 0.0
+    save_layout()
+}
+
+fn app_icon(path: str) u32 {
+    if has(g_icon_cache, path) {
+        return g_icon_cache[path]
+    }
+    let texture = desktop_app_icon(path, 128)
+    g_icon_cache[path] = texture
+    g_icon_paths[g_icon_count] = path
+    g_icon_count = g_icon_count + 1
+    return texture
+}
+
+fn panels_sync() {
+    if g_demo {
+        return
+    }
+    let generation = desktop_generation()
+    if generation == g_generation {
+        return
+    }
+    g_generation = generation
+    for i in 0 to g_panel_count {
+        g_panels[i].seen = false
+    }
+    for i in 0 to desktop_window_count() {
+        let info = desktop_window_at(i)
+        if info.flags != DESKTOP_VISIBLE {
+            continue
+        }
+        let found = -1
+        for j in 0 to g_panel_count {
+            if g_panels[j].id == info.id {
+                found = j
+                break
+            }
+        }
+        if found < 0 {
+            if g_panel_count >= 64 {
+                continue
+            }
+            found = g_panel_count
+            g_panel_count = g_panel_count + 1
+            let key = os_text_hash(desktop_window_key(i))
+            let slot = default_slot(found)
+            if has(g_slots, key) {
+                slot = g_slots[key]
+            }
+            g_panels[found] = vision_panel {
+                info.id, info.pid, desktop_window_title(i), key, desktop_window_path(i), 1010.0, 568.0, slot.a, slot.e, slot.radius, 0, 0u, true
+            }
+        }
+        g_panels[found].seen = true
+        g_panels[found].title = desktop_window_title(i)
+        let ratio = info.width as f32 / maxf(info.height as f32, 1.0)
+        g_panels[found].height = clampf(1010.0 / ratio, 350.0, 1100.0)
+        g_panels[found].width = g_panels[found].height * ratio
+        if g_panels[found].width > 1500.0 {
+            g_panels[found].height = g_panels[found].height * 1500.0 / g_panels[found].width
+            g_panels[found].width = 1500.0
+        }
+        if !g_hidden && g_panels[found].capture == 0 {
+            g_panels[found].capture = desktop_capture_open(info.id, 1600, 30)
+        }
+    }
+    let i = 0
+    loop i < g_panel_count {
+        if g_panels[i].seen {
+            i = i + 1
+            continue
+        }
+        let p = g_panels[i]
+        g_slots[p.key] = layout_slot {
+            p.a, p.e, p.radius
+        }
+        if p.capture != 0 {
+            desktop_capture_close(p.capture)
+        }
+        if g_selected == i {
+            g_selected = -1
+        } else {
+            if g_selected > i {
+                g_selected = g_selected - 1
+            }
+        }
+        for j in i to g_panel_count - 1 {
+            g_panels[j] = g_panels[j + 1]
+        }
+        g_panel_count = g_panel_count - 1
+        g_drag_mode = 0
+    }
+}

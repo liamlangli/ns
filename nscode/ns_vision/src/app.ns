@@ -1,0 +1,380 @@
+use std
+use os
+use view
+use gpu
+use desktop
+let g_shortcuts = false
+let g_start_time: f64 = 0.0
+let g_previous_time: f64 = 0.0
+let g_frames = 0
+let g_exit_saved = false
+let g_ready = false
+
+fn draw_panels() {
+    for i in 0 to g_panel_count {
+        let p = g_panels[i]
+        if p.capture != 0 {
+            let texture = desktop_capture_texture(p.capture)
+            if texture != 0u {
+                g_panels[i].texture = texture
+                p.texture = texture
+            }
+        }
+        let center = camera_space(dome_normal(p.a, p.e), g_yaw, g_pitch)
+        if center.z < -0.5 {
+            continue
+        }
+        let width = p.width + 20.0
+        let height = p.height + 60.0
+        draw_space(width, height, p.a, p.e, p.radius, 1.0, curve_radius(g_curve), false, false)
+        plate(-10.0, -3.0, width + 20.0, height + 20.0, 20.0, float4 {
+            0, 0, 0, 0.35
+        })
+        g_draw_bias = 2.0
+        plate(0.0, 0.0, width, height, 14.0, float4 {
+            0.064, 0.064, 0.064, 0.98
+        })
+        g_draw_bias = 3.0
+        if p.texture != 0u {
+            texture_quad(p.texture, 10.0, 40.0, p.width, p.height, 8.0, 1.0)
+        } else {
+            plate(10.0, 40.0, p.width, p.height, 8.0, float4 {
+                0.098, 0.098, 0.098, 1
+            })
+            let message = "Waiting for window capture..."
+            if g_demo {
+                message = "Nano Script  |  Pure ns desktop space"
+            }
+            centered_label(message, width * 0.5, height * 0.5, 24.0, float4 {
+                0.61, 0.61, 0.61, 1
+            })
+        }
+        g_draw_bias = 4.0
+        centered_label(short_title(p.title, 65), width * 0.5, 9.0, 16.0, float4 {
+            0.777, 0.777, 0.777, 1
+        })
+        if i == g_selected || i == g_hovered {
+            ring(-6.0, -6.0, width + 12.0, height + 12.0, 20.0, float4 {
+                1, 1, 1, 0.65
+            }, 3.0)
+            if i == g_hovered {
+                let alpha: f32 = 0.30
+                if g_hover_close {
+                    alpha = 0.70
+                }
+                plate(width - 30.0, 12.0, 16.0, 16.0, 8.0, float4 {
+                    0.42, 0.42, 0.42, alpha
+                })
+                centered_label("x", width - 22.0, 12.0, 14.0, float4 {
+                    1, 1, 1, 0.95
+                })
+            }
+        }
+    }
+}
+
+// 0 at rest, 1 with the pointer on or right next to a HUD panel.
+fn hud_heat(x: f32, y: f32, width: f32, height: f32, ui: f32) f32 {
+    if g_mouse_x < 0.0 || g_mouse_y < 0.0 || g_mouse_x > g_frame_w || g_mouse_y > g_frame_h {
+        return 0.0
+    }
+    let dx = maxf(absf(g_mouse_x - x) - width * 0.5, 0.0)
+    let dy = maxf(absf(g_mouse_y - y) - height * 0.5, 0.0)
+    // A short reach: the panel grows only when the pointer is on it or about
+    // to be, not from across the screen.
+    let t = clampf(1.0 - sqrt(dx * dx + dy * dy) as f32 / (32.0 * ui), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+}
+
+// Text with a two-offset drop shadow; the HUD never draws a plate. `y` is the
+// baseline in panel pixels.
+fn hud_text(text: str, x: f32, y: f32, size: f32, gray: f32, alpha: f32, ui: f32) {
+    let top = y - size * 0.8
+    label(text, x + 2.0 * ui, top + 2.0 * ui, size, float4 {
+        0, 0, 0, 0.40 * alpha
+    })
+    label(text, x + 1.0 * ui, top + 1.0 * ui, size, float4 {
+        0, 0, 0, 0.70 * alpha
+    })
+    label(text, x, top, size, float4 {
+        gray, gray, gray, alpha
+    })
+}
+
+fn draw_hud() {
+    let ui = g_frame_h / 1080.0
+    // Kept clear of the screen edges even at the 120% hover scale.
+    let margin_x = 72.0 * ui
+    let margin_y = 40.0 * ui
+    if g_hud_guide && g_launcher_mode == 0 {
+        let width = 300.0 * ui
+        let height = 176.0 * ui
+        let x = margin_x + width * 0.5
+        let y = g_frame_h - margin_y - height * 0.5
+        let heat = hud_heat(x, y, width, height, ui)
+        let alpha = 0.5 + 0.5 * heat
+        lean_space(x, y, width, height, 0.86 + 0.34 * heat, -0.5, -0.5)
+        hud_text("Shortcuts", 18.0 * ui, 24.0 * ui, 12.0 * ui, 0.62, 0.90 * alpha, ui)
+        let keys = split_lines("Alt+E\nAlt+B\nEsc\nAlt+W\nAlt+Q")
+        let names = split_lines("Programs\nBackground\nSettings\nHide / restore\nQuit")
+        for i in 0 to 5 {
+            let row = (50.0 + 25.0 * i as f32) * ui
+            hud_text(keys[i], 18.0 * ui, row, 15.0 * ui, 0.96, 0.98 * alpha, ui)
+            hud_text(names[i], 104.0 * ui, row, 14.0 * ui, 0.66, 0.95 * alpha, ui)
+        }
+    }
+    if g_hud_clock && g_launcher_mode == 0 {
+        let width = 260.0 * ui
+        let height = 96.0 * ui
+        let x = g_frame_w - margin_x - width * 0.5
+        let y = g_frame_h - margin_y - height * 0.5
+        let heat = hud_heat(x, y, width, height, ui)
+        let alpha = 0.5 + 0.5 * heat
+        lean_space(x, y, width, height, 0.86 + 0.34 * heat, 0.5, -0.5)
+        let right = (260.0 - 18.0) * ui
+        let time = os_time_string()
+        hud_text(time, right - text_width(time, 36.0 * ui), 46.0 * ui, 36.0 * ui, 0.98, 0.99 * alpha, ui)
+        let date = os_locale_date_string()
+        hud_text(date, right - text_width(date, 13.0 * ui), 76.0 * ui, 13.0 * ui, 0.66, 0.95 * alpha, ui)
+    }
+    draw_space(g_frame_w, g_frame_h, 0.0, 0.0, 1.0, 1.0, 0.0, true, false)
+    label(`NS VISION   /   {g_panel_count} windows`, 28.0, 22.0, 12.0, float4 {
+        0.64, 0.64, 0.64, 0.65
+    })
+    if g_status_until > g_elapsed && g_status.len > 0 {
+        let width = text_width(g_status, 15.0) + 40.0
+        plate((g_frame_w - width) * 0.5, 28.0, width, 42.0, 10.0, float4 {
+            0.127, 0.127, 0.127, 0.96
+        })
+        centered_label(g_status, g_frame_w * 0.5, 40.0, 15.0, float4 {
+            0.957, 0.957, 0.957, 1
+        })
+    }
+}
+
+fn draw_empty() {
+    if g_panel_count > 0 || g_launcher_mode > 0 {
+        return
+    }
+    draw_space(g_frame_w, g_frame_h, 0.0, 0.0, 1.0, 1.0, 0.0, true, false)
+    centered_label("Your windows, around you.", g_frame_w * 0.5, g_frame_h * 0.36, 32.0, float4 {
+        0.957, 0.957, 0.957, 1
+    })
+    let message = "Waiting for desktop windows..."
+    if !desktop_supported() {
+        message = "Desktop capture requires macOS 13 or later"
+    } else {
+        if !desktop_permission() {
+            message = "Allow Screen Recording to bring your windows into this space."
+        }
+    }
+    centered_label(message, g_frame_w * 0.5, g_frame_h * 0.36 + 58.0, 16.0, float4 {
+        0.68, 0.68, 0.68, 1
+    })
+    if desktop_supported() && !desktop_permission() {
+        let x = g_frame_w * 0.5 - 132.0
+        let y = g_frame_h * 0.36 + 111.0
+        plate(x, y, 264.0, 44.0, 8.0, float4 {
+            0.233, 0.233, 0.233, 1
+        })
+        centered_label("Enable Screen Recording", g_frame_w * 0.5, y + 13.0, 16.0, float4 {
+            1, 1, 1, 1
+        })
+    } else {
+        centered_label("F2  Refresh     Alt+E  Open programs     Esc  Settings", g_frame_w * 0.5, g_frame_h * 0.36 + 111.0, 14.0, float4 {
+            0.68, 0.68, 0.68, 1
+        })
+    }
+}
+
+fn demo_init() {
+    g_panel_count = 7
+    let names = split_lines("Nano Script\nTerminal\nSafari\nCode\nNotes\nCalendar\nMusic")
+    for i in 0 to g_panel_count {
+        let slot = default_slot(i)
+        g_panels[i] = vision_panel {
+            (i + 1) as u64, 0, names[i], `demo-{i}`, "", 1010.0, 620.0 - (i % 3) as f32 * 90.0, slot.a, slot.e, slot.radius, 0, 0u, true
+        }
+    }
+    for i in 0 to 19 {
+        g_apps[i] = vision_app {
+            names[i % names.len], "", 0, 0, 0u, false
+        }
+    }
+    g_app_count = 19
+}
+
+fn parse_args() {
+    let argc = stof(os_env("NS_ARGC")) as i32
+    let i = 0
+    loop i < argc {
+        let arg = os_env(`NS_ARG{i}`)
+        if arg == "--windowed" {
+            g_windowed = true
+        }
+        if arg == "--demo" {
+            g_demo = true
+        }
+        if arg == "--menu" {
+            g_start_menu = true
+        }
+        if arg == "--launcher" {
+            g_start_launcher = 1
+        }
+        if arg == "--background" || arg == "--running" {
+            g_start_launcher = 2
+        }
+        if arg == "--noca" {
+            g_ca = false
+        }
+        if i + 1 < argc {
+            let next = os_env(`NS_ARG{i + 1}`)
+            if arg == "--seconds" {
+                g_auto_exit = maxf(stof(next) as f32, 0.0)
+                i = i + 1
+            }
+            if arg == "--scale" {
+                g_scale = clampf(stof(next) as f32, 1.0, 2.0)
+                i = i + 1
+            }
+            if arg == "--fov" {
+                g_target_fov = clampf(stof(next) as f32, 0.50, 1.45)
+                g_fov = g_target_fov
+                i = i + 1
+            }
+            if arg == "--dof" {
+                g_dof = clampf(stof(next) as f32, 0.0, 3.0) as i32
+                i = i + 1
+            }
+            if arg == "--curvearc" {
+                g_curve = clampf(stof(next) as f32, 0.0, 60.0) * DEG
+                i = i + 1
+            }
+            if arg == "--font" {
+                if next == "roboto" {
+                    g_font_choice = 1
+                } else {
+                    g_font_choice = 0
+                }
+                i = i + 1
+            }
+            if arg == "--yaw" {
+                g_target_yaw = stof(next) as f32 * DEG
+                g_yaw = g_target_yaw
+                i = i + 1
+            }
+            if arg == "--pitch" {
+                g_target_pitch = clampf(stof(next) as f32 * DEG, 0.0 - PITCH_LIMIT, PITCH_LIMIT)
+                g_pitch = g_target_pitch
+                i = i + 1
+            }
+        }
+        i = i + 1
+    }
+}
+
+fn vision_frame(v: ref view) {
+    if !g_ready {
+        return
+    }
+    let now = os_time()
+    let dt = clampf((now - g_previous_time) as f32, 0.001, 0.1)
+    g_previous_time = now
+    g_elapsed = (now - g_start_time) as f32
+    g_frame_w = maxf(v.framebuffer_width as f32, 1.0)
+    g_frame_h = maxf(v.framebuffer_height as f32, 1.0)
+    // view pointer coordinates are in logical points, render roots in pixels.
+    g_mouse_x = v.mouse_x as f32 * g_frame_w / maxf(v.width as f32, 1.0)
+    g_mouse_y = v.mouse_y as f32 * g_frame_h / maxf(v.height as f32, 1.0)
+    if g_permission_hide {
+        g_permission_hide = false
+        set_hidden(v, true)
+        notify("Grant the permission in System Settings, then press Alt+W")
+    }
+    handle_keys(v)
+    if g_auto_exit > 0.0 && g_elapsed >= g_auto_exit {
+        view_close(v)
+        return
+    }
+    if g_hidden {
+        view_input_reset(v)
+        return
+    }
+    if g_elapsed - g_refresh_time > 2.0 {
+        g_refresh_time = g_elapsed
+        if !g_demo {
+            desktop_refresh()
+        }
+    }
+    let previous_generation = g_generation
+    panels_sync()
+    if previous_generation != g_generation && os_env("NS_VISION_DIAGNOSTICS") == "1" {
+        print(`desktop: permission={desktop_permission()} status={desktop_status()} snapshot={desktop_window_count()} dome={g_panel_count}\n`)
+        for i in 0 to g_panel_count {
+            print(`capture {i}: id={g_panels[i].id} state={desktop_capture_status(g_panels[i].capture)}\n`)
+        }
+    }
+    if previous_generation != g_generation && g_launcher_mode == 2 {
+        background_sync()
+    }
+    let ray = camera_ray(g_mouse_x / g_frame_w, g_mouse_y / g_frame_h, g_yaw, g_pitch, tan(g_fov * 0.5) as f32, g_frame_w / g_frame_h)
+    let permission_click = false
+    if !g_demo && !desktop_permission() && g_panel_count == 0 && v.mouse_pressed && g_launcher_mode == 0 && !g_menu {
+        let x = g_frame_w * 0.5 - 132.0
+        let y = g_frame_h * 0.36 + 111.0
+        if g_mouse_x >= x && g_mouse_x <= x + 264.0 && g_mouse_y >= y && g_mouse_y <= y + 44.0 {
+            permission_click = true
+            desktop_request_permission()
+            desktop_refresh()
+            set_hidden(v, true)
+            notify("Enable NS Vision in System Settings > Privacy & Security > Screen Recording")
+        }
+    }
+    if !permission_click {
+        pointer_input(v, ray, dt)
+    }
+    update_camera(dt)
+    render_begin()
+    draw_panels()
+    if g_menu {
+        draw_settings()
+    }
+    render_resolve()
+    draw_hud()
+    draw_empty()
+    if g_launcher_mode > 0 {
+        draw_launcher()
+    }
+    render_end()
+    g_frames = g_frames + 1
+    view_input_reset(v)
+}
+
+fn vision_terminate(v: ref view) {
+    if g_exit_saved {
+        return
+    }
+    g_exit_saved = true
+    save_layout()
+    if g_settings_dirty {
+        save_settings()
+    }
+    desktop_shortcuts_stop()
+    for i in 0 to g_panel_count {
+        if g_panels[i].capture != 0 {
+            desktop_capture_close(g_panels[i].capture)
+        }
+    }
+    for i in 0 to g_icon_count {
+        let texture = g_icon_cache[g_icon_paths[i]]
+        if texture != 0u {
+            gpu_texture_destroy(texture)
+        }
+    }
+    if g_ready {
+        gpu_texture_destroy(g_font_main.texture)
+        gpu_texture_destroy(g_font_alternate.texture)
+        gpu_texture_destroy(g_font_cjk.texture)
+    }
+    print(`ns_vision: {g_frames} frames in {g_elapsed}s\n`)
+}

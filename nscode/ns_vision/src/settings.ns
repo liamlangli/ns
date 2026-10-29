@@ -1,0 +1,367 @@
+lit MENU_WIDTH: f32 = 600.0
+lit MENU_HEIGHT: f32 = 520.0
+lit MENU_WPP: f32 = 1.8
+let g_menu_hit = float4 {
+    0, 0, 0, 0
+}
+let g_menu_hover = -1
+let g_slider = -1
+let g_slider_start_x: f32 = 0.0
+let g_slider_start_value: f32 = 0.0
+let g_slider_mapping: f32 = 1.0
+
+fn menu_open() {
+    g_menu = !g_menu
+    g_launcher_mode = 0
+    g_menu_dropdown = -1
+    g_menu_a = g_yaw
+    g_menu_e = g_pitch
+    g_menu_radius = 1600.0
+}
+
+fn menu_row_at(x: f32, y: f32) i32 {
+    if x < 232.0 || x > 564.0 {
+        return -1
+    }
+    for row in 0 to 8 {
+        let top = 92.0 + row as f32 * 44.0
+        if y >= top && y < top + 38.0 {
+            return row
+        }
+    }
+    return -1
+}
+
+fn menu_option_count(row: i32) i32 {
+    if row == 0 || row == 2 {
+        return 4
+    }
+    return 2
+}
+
+fn menu_popup_y(row: i32) f32 {
+    let y = 92.0 + row as f32 * 44.0 + 40.0
+    let height = menu_option_count(row) as f32 * 32.0 + 8.0
+    if y + height > 450.0 {
+        y = 92.0 + row as f32 * 44.0 - height
+    }
+    return y
+}
+
+fn menu_value_index(row: i32) i32 {
+    if row == 0 {
+        if g_scale >= 1.9 {
+            return 3
+        }
+        if g_scale >= 1.4 {
+            return 2
+        }
+        if g_scale >= 1.2 {
+            return 1
+        }
+        return 0
+    }
+    if row == 2 {
+        return g_dof
+    }
+    if row == 3 {
+        if g_ca {
+            return 1
+        }
+        return 0
+    }
+    return g_font_choice
+}
+
+fn menu_option(row: i32, index: i32) str {
+    if row == 0 {
+        if index == 0 {
+            return "100%"
+        }
+        if index == 1 {
+            return "125%"
+        }
+        if index == 2 {
+            return "150%"
+        }
+        return "200%"
+    }
+    if row == 2 {
+        if index == 0 {
+            return "Off"
+        }
+        if index == 1 {
+            return "Weak"
+        }
+        if index == 2 {
+            return "Normal"
+        }
+        return "Strong"
+    }
+    if row == 3 {
+        if index == 0 {
+            return "Off"
+        }
+        return "On"
+    }
+    if index == 0 {
+        return "Oxanium"
+    }
+    return "Roboto"
+}
+
+fn menu_apply(row: i32, index: i32) {
+    if row == 0 {
+        g_scale = 1.0 + index as f32 * 0.25
+        if index == 3 {
+            g_scale = 2.0
+        }
+    }
+    if row == 2 {
+        g_dof = index
+    }
+    if row == 3 {
+        g_ca = index == 1
+    }
+    if row == 5 {
+        g_font_choice = index
+    }
+    save_settings()
+}
+
+fn menu_pick(ray: float3) {
+    g_menu_hover = -1
+    g_menu_hit = panel_hit(ray, g_menu_a, g_menu_e, g_menu_radius, MENU_WIDTH * MENU_WPP, MENU_HEIGHT * MENU_WPP, curve_radius(g_curve))
+    if g_menu_hit.w < 0.5 {
+        return
+    }
+    g_menu_hit.x = g_menu_hit.x / MENU_WPP
+    g_menu_hit.y = g_menu_hit.y / MENU_WPP
+    let x = g_menu_hit.x
+    let y = g_menu_hit.y
+    let dx = x - 578.0
+    let dy = y - 22.0
+    if dx * dx + dy * dy < 16.0 * 16.0 {
+        g_menu_hover = 9
+        return
+    }
+    if g_menu_dropdown >= 0 {
+        let top = menu_popup_y(g_menu_dropdown)
+        if x >= 232.0 && x <= 564.0 && y >= top && y < top + menu_option_count(g_menu_dropdown) as f32 * 32.0 + 8.0 {
+            g_menu_hover = 100 + clampf((y - top - 4.0) / 32.0, 0.0, (menu_option_count(g_menu_dropdown) - 1) as f32) as i32
+            return
+        }
+    }
+    g_menu_hover = menu_row_at(x, y)
+    if y >= 460.0 && y <= 495.0 {
+        if x >= 36.0 && x <= 215.0 {
+            g_menu_hover = 10
+        }
+        if x >= 430.0 && x <= 564.0 {
+            g_menu_hover = 11
+        }
+    }
+}
+
+fn menu_input(v: ref view) bool {
+    if g_slider >= 0 {
+        if v.mouse_down {
+            let t = clampf(g_slider_start_value + (g_mouse_x - g_slider_start_x) * g_slider_mapping / 268.0, 0.0, 1.0)
+            if g_slider == 1 {
+                g_target_fov = mixf(0.50, 1.45, t)
+                g_fov = g_target_fov
+            }
+            if g_slider == 4 {
+                g_curve = t * 60.0 * DEG
+                if g_curve < 0.5 * DEG {
+                    g_curve = 0.0
+                }
+                if g_curve > 0.0 {
+                    g_last_curve = g_curve
+                }
+            }
+        }
+        if v.mouse_released {
+            g_slider = -1
+            save_settings()
+        }
+        return true
+    }
+    if !v.mouse_pressed || g_menu_hit.w < 0.5 {
+        return false
+    }
+    if g_menu_hover >= 100 {
+        menu_apply(g_menu_dropdown, g_menu_hover - 100)
+        g_menu_dropdown = -1
+        return true
+    }
+    if g_menu_dropdown >= 0 {
+        g_menu_dropdown = -1
+        return true
+    }
+    if g_menu_hover == 9 {
+        g_menu = false
+        return true
+    }
+    if g_menu_hover == 10 {
+        reset_layout()
+        return true
+    }
+    if g_menu_hover == 11 {
+        view_close(v)
+        return true
+    }
+    if g_menu_hover == 6 {
+        g_hud_guide = !g_hud_guide
+        save_settings()
+        return true
+    }
+    if g_menu_hover == 7 {
+        g_hud_clock = !g_hud_clock
+        save_settings()
+        return true
+    }
+    if g_menu_hover == 1 || g_menu_hover == 4 {
+        g_slider = g_menu_hover
+        g_slider_start_x = g_mouse_x
+        // Freeze the screen-space mapping at press; changing FOV cannot feed
+        // back into the value while the menu changes size beneath the cursor.
+        g_slider_mapping = 2.0 * g_menu_radius * tan(g_fov * 0.5) as f32 / g_frame_h / MENU_WPP
+        g_slider_start_value = clampf((g_menu_hit.x - 232.0) / 268.0, 0.0, 1.0)
+        return true
+    }
+    if g_menu_hover >= 0 && g_menu_hover < 6 {
+        g_menu_dropdown = g_menu_hover
+        return true
+    }
+    return false
+}
+
+fn draw_settings() {
+    draw_space(MENU_WIDTH, MENU_HEIGHT, g_menu_a, g_menu_e, g_menu_radius, MENU_WPP, curve_radius(g_curve), false, true)
+    plate(-9.0, -4.0, 618.0, 538.0, 22.0, float4 {
+        0, 0, 0, 0.35
+    })
+    plate(0.0, 0.0, MENU_WIDTH, MENU_HEIGHT, 18.0, float4 {
+        0.074, 0.074, 0.074, 0.97
+    })
+    if g_menu_hit.w > 0.5 {
+        ring(-5.0, -5.0, 610.0, 530.0, 23.0, float4 {
+            1, 1, 1, 0.65
+        }, 3.0)
+    }
+    label("Settings", 36.0, 31.0, 24.0, float4 {
+        1, 1, 1, 1
+    })
+    let names = split_lines("Render scale\nField of view\nDepth of field\nChromatic aberration\nScreen curve\nFont\nShortcut guide\nClock")
+    for row in 0 to 8 {
+        let y = 92.0 + row as f32 * 44.0
+        label(names[row], 36.0, y + 8.0, 16.0, float4 {
+            0.63, 0.63, 0.63, 1
+        })
+        let hot: f32 = 0.0
+        if g_menu_hover == row || g_menu_dropdown == row {
+            hot = 1.0
+        }
+        if row == 1 || row == 4 {
+            let t = (g_target_fov - 0.50) / 0.95
+            if row == 4 {
+                t = g_curve / (60.0 * DEG)
+            }
+            ring(232.0, y + 6.0, 268.0, 26.0, 5.0, float4 {
+                0.7, 0.7, 0.7, 0.45 + hot * 0.3
+            }, 1.0)
+            plate(236.0, y + 10.0, maxf(0.0, 260.0 * t), 18.0, 2.0, float4 {
+                0.66, 0.66, 0.66, 0.65
+            })
+            let value = `{(g_target_fov / DEG) as i32}°`
+            if row == 4 {
+                value = `{(g_curve / DEG) as i32}°`
+                if g_curve < 0.001 {
+                    value = "Off"
+                }
+            }
+            label(value, 564.0 - text_width(value, 15.0), y + 9.0, 15.0, float4 {
+                1, 1, 1, 1
+            })
+        } else {
+            if row >= 6 {
+                let checked = g_hud_guide
+                if row == 7 {
+                    checked = g_hud_clock
+                }
+                ring(232.0, y + 9.0, 20.0, 20.0, 4.0, float4 {
+                    0.8, 0.8, 0.8, 0.6 + hot * 0.4
+                }, 1.2)
+                if checked {
+                    plate(236.0, y + 13.0, 12.0, 12.0, 2.0, float4 {
+                        0.9, 0.9, 0.9, 1
+                    })
+                }
+                let value = "Off"
+                if checked {
+                    value = "On"
+                }
+                label(value, 267.0, y + 9.0, 16.0, float4 {
+                    0.847, 0.847, 0.847, 1
+                })
+            } else {
+                plate(232.0, y, 332.0, 38.0, 7.0, float4 {
+                    0.123 + hot * 0.025, 0.123 + hot * 0.025, 0.123 + hot * 0.025, 1
+                })
+                label(menu_option(row, menu_value_index(row)), 246.0, y + 8.0, 16.0, float4 {
+                    0.907, 0.907, 0.907, 1
+                })
+                label("v", 542.0, y + 8.0, 14.0, float4 {
+                    0.7, 0.7, 0.7, 1
+                })
+            }
+        }
+    }
+    plate(36.0, 452.0, 528.0, 1.0, 0.0, float4 {
+        1, 1, 1, 0.12
+    })
+    label("Reset layout", 36.0, 466.0, 16.0, float4 {
+        0.887, 0.887, 0.887, 1
+    })
+    label("Quit", 530.0, 466.0, 16.0, float4 {
+        0.887, 0.887, 0.887, 1
+    })
+    centered_label("Drag to move  |  Right-drag to dolly  |  Esc to close", 300.0, 501.0, 11.0, float4 {
+        0.493, 0.493, 0.493, 1
+    })
+    if g_menu_hit.w > 0.5 {
+        let alpha: f32 = 0.35
+        if g_menu_hover == 9 {
+            alpha = 0.75
+        }
+        plate(570.0, 14.0, 16.0, 16.0, 8.0, float4 {
+            0.42, 0.42, 0.42, alpha
+        })
+        centered_label("x", 578.0, 14.0, 13.0, float4 {
+            1, 1, 1, 0.9
+        })
+    }
+    if g_menu_dropdown >= 0 {
+        let top = menu_popup_y(g_menu_dropdown)
+        let count = menu_option_count(g_menu_dropdown)
+        plate(232.0, top, 332.0, count as f32 * 32.0 + 8.0, 7.0, float4 {
+            0.157, 0.157, 0.157, 1
+        })
+        for i in 0 to count {
+            if g_menu_hover == 100 + i {
+                plate(236.0, top + 4.0 + i as f32 * 32.0, 324.0, 32.0, 4.0, float4 {
+                    0.247, 0.247, 0.247, 1
+                })
+            }
+            label(menu_option(g_menu_dropdown, i), 246.0, top + 11.0 + i as f32 * 32.0, 15.0, float4 {
+                0.927, 0.927, 0.927, 1
+            })
+            if menu_value_index(g_menu_dropdown) == i {
+                label("*", 543.0, top + 11.0 + i as f32 * 32.0, 15.0, float4 {
+                    1, 1, 1, 1
+                })
+            }
+        }
+    }
+}

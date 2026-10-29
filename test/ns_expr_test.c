@@ -23,6 +23,19 @@ static ns_bool ns_expr_error_contains(const char *src, const char *message) {
 }
 
 int main() {
+    ns_expect(ns_expr_eval_bool(
+        "struct entry { name: str, values: [i32] }\n"
+        "fn main() bool {\n"
+        "    let entries = [entry](2)\n"
+        "    entries[0] = entry { \"first\", [i32](2) }\n"
+        "    entries[0].values[1] = 42\n"
+        "    if entries[0].name != \"first\" { return false }\n"
+        "    entries[0].name = \"renamed\"\n"
+        "    let lookup = [str: entry](8)\n"
+        "    lookup[\"key\"] = entries[0]\n"
+        "    return lookup[\"key\"].name == \"renamed\" && lookup[\"key\"].values[1] == 42\n"
+        "}\n"), "heap struct reference fields load handles on reads and preserve lvalues on writes.");
+
     {
         const char *src =
             "struct resource_type { value_type: type }\n"

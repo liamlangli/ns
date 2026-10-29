@@ -1,0 +1,77 @@
+mod desktop
+
+use view
+
+// Desktop integration. Call from the application's main thread after creating
+// the GPU device. macOS 13+ uses ScreenCaptureKit and IOSurface/Metal textures.
+// Other hosts return DESKTOP_UNAVAILABLE; no synthetic windows are published.
+lit DESKTOP_UNAVAILABLE = -1
+lit DESKTOP_PENDING = 0
+lit DESKTOP_READY = 1
+lit DESKTOP_FAILED = -2
+lit DESKTOP_VISIBLE = 1
+lit DESKTOP_BACKGROUND = 2
+lit DESKTOP_ACTION_TOGGLE = 1
+lit DESKTOP_ACTION_PROGRAMS = 2
+lit DESKTOP_ACTION_BACKGROUND = 3
+lit DESKTOP_ACTION_QUIT = 4
+
+struct desktop_window {
+    id: u64,
+    pid: i32,
+    width: i32,
+    height: i32,
+    flags: i32
+}
+
+ref fn desktop_supported() bool
+ref fn desktop_permission() bool
+// Without permission, also opens System Settings > Privacy & Security >
+// Screen Recording. True when access is already granted.
+ref fn desktop_request_permission() bool
+// Accessibility lets the app raise and close other applications' windows.
+// With request, a missing grant also opens System Settings > Privacy &
+// Security > Accessibility. True when access is granted.
+ref fn desktop_accessibility(request: bool) bool
+// Refresh is asynchronous. The previous complete snapshot stays readable until
+// the next generation is published. Accessor strings are copied by ns.
+ref fn desktop_refresh()
+ref fn desktop_status() i32
+ref fn desktop_generation() i32
+ref fn desktop_window_count() i32
+ref fn desktop_window_at(index: i32) ref desktop_window
+ref fn desktop_window_title(index: i32) str
+ref fn desktop_window_key(index: i32) str
+ref fn desktop_window_path(index: i32) str
+// A bounded, newest-frame-only stream, 15/30 fps and at most max_width pixels.
+// The returned handle belongs to the caller. Zero denotes failure.
+ref fn desktop_capture_open(window: u64, max_width: i32, fps: i32) u64
+ref fn desktop_capture_status(handle: u64) i32
+// Borrowed bindless gpu texture. A call pins the IOSurface until this GPU frame
+// finishes; call once in every frame that samples it. Never destroy it yourself.
+ref fn desktop_capture_texture(handle: u64) u32
+// Pause stops capture while keeping the last texture. Resume reuses the stream.
+ref fn desktop_capture_pause(handle: u64, paused: bool)
+ref fn desktop_capture_close(handle: u64)
+// Wake/raise an existing window; never starts another process. Close needs
+// Accessibility permission on macOS; failed permission does not quit the app.
+ref fn desktop_window_activate(window: u64, pid: i32) bool
+ref fn desktop_window_close(window: u64, pid: i32) bool
+// Installed applications, scanned once; stable paths are their identities.
+ref fn desktop_apps_refresh() i32
+ref fn desktop_app_name(index: i32) str
+ref fn desktop_app_path(index: i32) str
+ref fn desktop_app_launch(path: str) bool
+// The caller owns the static icon texture and destroys it with gpu.
+ref fn desktop_app_icon(path: str, size: i32) u32
+ref fn desktop_pick_application() str
+// Alt+W/E/B/Q and Ctrl+Alt+F1, registered with the OS. False means a shortcut
+// conflicted; focused-window shortcuts can still be handled by the application.
+ref fn desktop_shortcuts_start(v: ref view) bool
+ref fn desktop_shortcuts_stop()
+ref fn desktop_take_action() i32
+ref fn desktop_overlay_visible(v: ref view, visible: bool)
+// Cover the current display without entering a separate macOS Space, so other
+// applications stay captureable. Windowed mode keeps native window controls.
+ref fn desktop_overlay_fullscreen(v: ref view, fullscreen: bool)
+ref fn desktop_last_error() str

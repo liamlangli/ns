@@ -1,0 +1,11 @@
+schema = "ns.mod/v2"
+name = "ns_vision"
+display_name = "NS Vision"
+version = "0.1.0"
+type = "app"
+target = "exec"
+description = "A live desktop window dome, written in Nano Script."
+source = "src"
+entry = "main.ns"
+icon = "assets/ns_vision.png"
+assets = ["assets"]

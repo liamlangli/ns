@@ -396,6 +396,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/gpu_fx_test
 	$(NS_BINDIR)/gpu_frame_write_test
 	$(NS_METAL_PSO_TEST)
+	$(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_BINDIR)/desktop_metal_test,)
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) run test/gpu_fx_test.ns
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) run test/shader_float_buffer_test.ns
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) run test/shader_instance_id_test.ns
@@ -417,6 +418,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_lens
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_tex
+	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_vision
 	sh nscode/ns_tex/test/integration.sh
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_cross_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -454,7 +456,13 @@ ifeq ($(NS_OS), $(NS_DARWIN))
 NS_METAL_PSO_TEST = $(NS_BINDIR)/gpu_metal_pso_test
 test: $(NS_METAL_PSO_TEST)
 $(NS_METAL_PSO_TEST): test/gpu_metal_pso_test.m lib/src/gpu.metal.m lib/src/gpu.c lib/include/gpu.h $(NS_HEADERS) $(NS_LIB)
-	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< lib/src/gpu.c $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns -framework Foundation -framework Metal -framework MetalKit -framework QuartzCore $(NS_LDFLAGS) -undefined dynamic_lookup $(NS_UI_TEST_LDFLAGS)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< lib/src/gpu.c $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns -framework Foundation -framework Metal -framework MetalKit -framework QuartzCore -framework CoreVideo $(NS_LDFLAGS) -undefined dynamic_lookup $(NS_UI_TEST_LDFLAGS)
+endif
+
+ifeq ($(NS_OS), $(NS_DARWIN))
+test: $(NS_BINDIR)/desktop_metal_test
+$(NS_BINDIR)/desktop_metal_test: test/desktop_metal_test.m lib/src/gpu.metal.m lib/src/gpu.c lib/include/gpu.h $(NS_HEADERS) $(NS_LIB)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< lib/src/gpu.c $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns -framework Foundation -framework Metal -framework MetalKit -framework QuartzCore -framework CoreVideo $(NS_LDFLAGS) -undefined dynamic_lookup $(NS_UI_TEST_LDFLAGS)
 endif
 
 include sample/c/Makefile
