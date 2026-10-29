@@ -198,7 +198,7 @@ fn fs_vision(input: vision_vertex) vision_pixel {
         let aa = maxf(absf(ddx(d)) + absf(ddy(d)), 0.7)
         alpha = clampf(0.5 - d / aa, 0.0, 1.0)
         let index = shader_root_f32(28) as i32
-        let scene = environment_sample(index, input.uv)
+        let scene = environment_sample(index, camera_ray(input.uv.x, input.uv.y, 0.0, 0.0, 0.62, 1.0), input.uv)
         let gx = fract_dot(input.uv.x * 9.0)
         let gy = fract_dot(input.uv.y * 9.0)
         let dot = clampf(1.0 - (gx * gx + gy * gy) / 0.02, 0.0, 1.0) * 0.62
@@ -259,13 +259,17 @@ fn vs_fullscreen() vision_vertex {
 // The current environment (root 44), crossfading from the previous one
 // (root 45) while root 46 rises to 1.
 fn fs_background(input: vision_vertex) float4 {
-    let c = environment_sample(shader_root_f32(44) as i32, input.uv)
+    let view = camera_ray(input.uv.x, input.uv.y, shader_root_f32(16), shader_root_f32(17), shader_root_f32(18), shader_root_f32(19))
+    let c = environment_sample(shader_root_f32(44) as i32, view, input.uv)
     let blend = shader_root_f32(46)
     if blend < 0.999 {
-        c = env_mix(environment_sample(shader_root_f32(45) as i32, input.uv), c, blend)
+        c = env_mix(environment_sample(shader_root_f32(45) as i32, view, input.uv), c, blend)
     }
+    // About one 8-bit step of dither over the scene target's pixels (roots
+    // 1 and 2).
+    let n = environment_dither(input.uv.x * shader_root_f32(1), input.uv.y * shader_root_f32(2)) * 0.006
     return float4 {
-        c.x, c.y, c.z, 1.0
+        c.x + n, c.y + n, c.z + n, 1.0
     }
 }
 

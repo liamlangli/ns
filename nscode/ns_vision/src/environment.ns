@@ -77,16 +77,24 @@ fn environment_dot(index: i32) f32 {
     return 0.52
 }
 
-// Void: a dark grey vertical gradient with a soft vignette. Light: near white
-// with a faint vignette.
-fn environment_sample(index: i32, uv: float2) float3 {
+// Both environments grade gently with the world up axis (view direction
+// `d`), so looking up reads brighter than looking down, under a soft
+// screen-space vignette. Void: dark grey. Light: soft grey.
+fn environment_sample(index: i32, d: float3, uv: float2) float3 {
+    let up = ease(d.y * 0.5 + 0.5)
     let dx = uv.x - 0.5
     let dy = uv.y - 0.46
     let r = clampf((dx * dx + dy * dy) * 0.95, 0.0, 1.0)
     if index == 1 {
-        let l = mixf(0.84, 0.74, clampf(uv.y, 0.0, 1.0)) * (1.0 - 0.10 * r)
+        let l = mixf(0.73, 0.83, up) * (1.0 - 0.10 * r)
         return env_rgb(l, l, l)
     }
-    let g = mixf(0.075, 0.012, clampf(uv.y, 0.0, 1.0)) * (1.0 - r)
+    let g = mixf(0.022, 0.070, up) * (1.0 - 0.6 * r)
     return env_rgb(g, g, g)
+}
+
+// Interleaved gradient noise at pixel (x, y): a cheap blue-noise-like
+// dither in [-0.5, 0.5) that breaks up 8-bit banding in the gradients.
+fn environment_dither(x: f32, y: f32) f32 {
+    return env_fract(52.9829189 * env_fract(0.06711056 * x + 0.00583715 * y)) - 0.5
 }
