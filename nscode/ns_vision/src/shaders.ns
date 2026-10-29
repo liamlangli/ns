@@ -128,6 +128,33 @@ fn rounded_sdf(uv: float2, width: f32, height: f32, radius: f32) f32 {
     return sqrt(maxf(x, 0.0) * maxf(x, 0.0) + maxf(y, 0.0) * maxf(y, 0.0)) as f32 + minf(maxf(x, y), 0.0) - radius
 }
 
+// Signed distance to a rounded regular pointy-top hexagon, sharp circumradius
+// 0.46 of the quad so the corners and a stroke stay inside it. Exact distance
+// in the flat-top frame (x and y swapped), shrunk by the corner radius.
+fn hex_distance(uv: float2, width: f32, height: f32) f32 {
+    let qx = absf((uv.y - 0.5) * height)
+    let qy = absf((uv.x - 0.5) * width)
+    // Corner radius 0.28 of the apothem, as mw's hover frame.
+    let outer = height * 0.46 * 0.8660254
+    let rounding = outer * 0.28
+    let apothem = outer - rounding
+    let k = minf(qx * -0.8660254 + qy * 0.5, 0.0) * 2.0
+    qx = qx + k * 0.8660254
+    qy = qy - k * 0.5
+    qx = qx - clampf(qx, 0.0 - 0.5773503 * apothem, 0.5773503 * apothem)
+    qy = qy - apothem
+    let d = sqrt(qx * qx + qy * qy) as f32
+    if qy < 0.0 {
+        d = 0.0 - d
+    }
+    return d - rounding
+}
+
+// Offset from the nearest cell centre of a unit grid, in [-0.5, 0.5).
+fn fract_dot(x: f32) f32 {
+    return env_fract(x) - 0.5
+}
+
 fn fs_vision(input: vision_vertex) vision_pixel {
     let mode = shader_root_f32(3) as i32
     let width = shader_root_f32(6)
@@ -161,27 +188,25 @@ fn fs_vision(input: vision_vertex) vision_pixel {
         }
     }
     if mode == 4 {
-        // Rounded regular pointy-top hexagon, sharp circumradius 0.46 of the quad so
-        // the corners and the stroke stay inside it. Exact distance in the
-        // flat-top frame (x and y swapped), shrunk by the corner radius.
-        let qx = absf((input.uv.y - 0.5) * height)
-        let qy = absf((input.uv.x - 0.5) * width)
-        // Corner radius 0.28 of the apothem, as mw's hover frame.
-        let outer = height * 0.46 * 0.8660254
-        let rounding = outer * 0.28
-        let apothem = outer - rounding
-        let k = minf(qx * -0.8660254 + qy * 0.5, 0.0) * 2.0
-        qx = qx + k * 0.8660254
-        qy = qy - k * 0.5
-        qx = qx - clampf(qx, 0.0 - 0.5773503 * apothem, 0.5773503 * apothem)
-        qy = qy - apothem
-        let d = sqrt(qx * qx + qy * qy) as f32
-        if qy < 0.0 {
-            d = 0.0 - d
-        }
-        d = d - rounding
+        let d = hex_distance(input.uv, width, height)
         let aa = maxf(absf(ddx(d)) + absf(ddy(d)), 0.7)
         alpha = clampf(0.5 - absf(d) / aa + shader_root_f32(28) / aa, 0.0, 1.0)
+    }
+    if mode == 6 {
+        // A filled hex window onto environment root 28, seen straight ahead.
+        let d = hex_distance(input.uv, width, height)
+        let aa = maxf(absf(ddx(d)) + absf(ddy(d)), 0.7)
+        alpha = clampf(0.5 - d / aa, 0.0, 1.0)
+        let index = shader_root_f32(28) as i32
+        let scene = environment_sample(index, input.uv)
+        let gx = fract_dot(input.uv.x * 9.0)
+        let gy = fract_dot(input.uv.y * 9.0)
+        let dot = clampf(1.0 - (gx * gx + gy * gy) / 0.02, 0.0, 1.0) * 0.62
+        let ink = environment_dot(index)
+        scene = env_mix(scene, env_rgb(ink, ink, ink), dot)
+        color = float4 {
+            scene.x, scene.y, scene.z, color.w
+        }
     }
     if mode == 5 {
         let x = (input.uv.x - 0.5) * 2.0
@@ -231,14 +256,16 @@ fn vs_fullscreen() vision_vertex {
     }
 }
 
-// Neutral backdrop: a grey vertical gradient with a soft vignette.
+// The current environment (root 44), crossfading from the previous one
+// (root 45) while root 46 rises to 1.
 fn fs_background(input: vision_vertex) float4 {
-    let c = mixf(0.075, 0.012, clampf(input.uv.y, 0.0, 1.0))
-    let dx = input.uv.x - 0.5
-    let dy = input.uv.y - 0.46
-    let g = c * (1.0 - clampf((dx * dx + dy * dy) * 0.95, 0.0, 1.0))
+    let c = environment_sample(shader_root_f32(44) as i32, input.uv)
+    let blend = shader_root_f32(46)
+    if blend < 0.999 {
+        c = env_mix(environment_sample(shader_root_f32(45) as i32, input.uv), c, blend)
+    }
     return float4 {
-        g, g, g, 1.0
+        c.x, c.y, c.z, 1.0
     }
 }
 
@@ -307,7 +334,7 @@ fn fs_dots(input: dot_vertex) vision_pixel {
     }
     return vision_pixel {
         float4 {
-            0.52, 0.52, 0.52, a
+            shader_root_f32(47), shader_root_f32(47), shader_root_f32(47), a
         }, depth
     }
 }
@@ -347,13 +374,17 @@ fn fs_lens(input: vision_vertex) vision_pixel {
             weight = weight + 1.0
         }
     }
-    let dim: f32 = 1.0
+    // Behind the launcher a dark scene dims and a light one (root 10) washes
+    // towards white, so its inverted ink keeps contrast.
+    let c = float3 {
+        sum.x / weight, sum.y / weight, sum.z / weight
+    }
     if shader_root_f32(8) > 0.5 {
-        dim = 0.58
+        c = env_mix(env_scale3(c, 0.58), env_mix(c, env_rgb(0.84, 0.84, 0.84), 0.62), shader_root_f32(10))
     }
     return vision_pixel {
         float4 {
-            sum.x / weight * dim, sum.y / weight * dim, sum.z / weight * dim, 1.0
+            c.x, c.y, c.z, 1.0
         }, 0.000001
     }
 }

@@ -47,6 +47,7 @@ fn main() {
     }
     if g_start_launcher > 0 {
         launcher_open(g_start_launcher)
+        g_launcher_view = g_start_view
     }
     v.on_frame({ frame in
         vision_frame(frame)

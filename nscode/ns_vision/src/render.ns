@@ -204,6 +204,12 @@ fn render_begin() {
     root_camera()
     render_targets((g_frame_w * g_scale) as i32, (g_frame_h * g_scale) as i32)
     gpu_pass_begin("vision live window dome", g_scene_color, 0u, 0u, 0u, g_scene_depth, 0u, 0.012, 0.012, 0.012, 1.0, GPU_DEPTH_CLEAR)
+    let blend = ease(g_environment_blend)
+    g_root[44] = g_environment as f32
+    g_root[45] = g_environment_previous as f32
+    g_root[46] = blend
+    // Dot grey, crossfading with the background.
+    g_root[47] = mixf(environment_dot(g_environment_previous), environment_dot(g_environment), blend)
     gpu_set_shader(g_background_shader)
     gpu_set_state(g_flat_state)
     gpu_set_root_data(g_root, ROOT_BYTES)
@@ -226,6 +232,7 @@ fn render_resolve() {
     if g_launcher_mode > 0 {
         g_root[8] = 1.0
     }
+    g_root[10] = g_theme
     g_root[9] = 0.0
     if g_ca {
         g_root[9] = 0.09

@@ -1,0 +1,92 @@
+// Environments behind the window dome, shared by the background pass and the
+// launcher's hex previews. Each is a screen-space gradient under the dot field.
+lit ENVIRONMENT_COUNT = 2
+
+fn environment_name(index: i32) str {
+    if index == 1 {
+        return "Light"
+    }
+    return "Void"
+}
+
+fn env_rgb(r: f32, g: f32, b: f32) float3 {
+    return float3 {
+        r, g, b
+    }
+}
+
+fn env_mix(a: float3, b: float3, t: f32) float3 {
+    return float3 {
+        mixf(a.x, b.x, t), mixf(a.y, b.y, t), mixf(a.z, b.z, t)
+    }
+}
+
+fn env_scale3(a: float3, k: f32) float3 {
+    return float3 {
+        a.x * k, a.y * k, a.z * k
+    }
+}
+
+fn env_fract(x: f32) f32 {
+    let i = (x as i32) as f32
+    if i > x {
+        i = i - 1.0
+    }
+    return x - i
+}
+
+// 0 for a dark environment (light ink), 1 for a light one (dark ink). Every
+// environment is one or the other; g_theme crossfades between them.
+let g_theme: f32 = 0.0
+
+fn environment_theme(index: i32) f32 {
+    if index == 1 {
+        return 1.0
+    }
+    return 0.0
+}
+
+// A UI grey authored for a dark environment, inverted on a light one.
+fn ink(gray: f32, alpha: f32) float4 {
+    let g = mixf(gray, 1.0 - gray, g_theme)
+    return float4 {
+        g, g, g, alpha
+    }
+}
+
+// Inside a system panel: panels are dark glass on every theme, so their
+// contents keep the dark-theme greys.
+fn panel_ink(gray: f32, alpha: f32) float4 {
+    return float4 {
+        gray, gray, gray, alpha
+    }
+}
+
+// Text drop shadows stay black on every theme.
+fn shade(alpha: f32) float4 {
+    return float4 {
+        0, 0, 0, alpha
+    }
+}
+
+// Grey of the dot field over each environment.
+fn environment_dot(index: i32) f32 {
+    if index == 1 {
+        return 0.08
+    }
+    return 0.52
+}
+
+// Void: a dark grey vertical gradient with a soft vignette. Light: near white
+// with a faint vignette.
+fn environment_sample(index: i32, uv: float2) float3 {
+    let dx = uv.x - 0.5
+    let dy = uv.y - 0.46
+    let r = clampf((dx * dx + dy * dy) * 0.95, 0.0, 1.0)
+    if index == 1 {
+        let l = mixf(0.84, 0.74, clampf(uv.y, 0.0, 1.0)) * (1.0 - 0.10 * r)
+        return env_rgb(l, l, l)
+    }
+    let g = mixf(0.075, 0.012, clampf(uv.y, 0.0, 1.0)) * (1.0 - r)
+    return env_rgb(g, g, g)
+}

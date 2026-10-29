@@ -12,6 +12,20 @@ let g_press_launcher_y: f32 = 0.0
 let g_lens_x: f32 = 380.0
 let g_lens_y: f32 = 400.0
 let g_lens_strength: f32 = 0.0
+let g_tab_hover = -1
+let g_tab_pressed = -1
+// Highlight position between the tabs, easing towards g_launcher_view.
+let g_tab_slide: f32 = 0.0
+// The Apps / Spaces view switch: two pill rows, icon then label, left of the
+// hex field.
+lit TAB_LEFT: f32 = -118.0
+lit TAB_W: f32 = 92.0
+lit TAB_H: f32 = 32.0
+lit TAB_GAP: f32 = 36.0
+
+fn tab_y(index: i32) f32 {
+    return 382.0 + index as f32 * TAB_GAP
+}
 
 fn save_launcher() {
     if g_demo {
@@ -145,6 +159,8 @@ fn launcher_open(mode: i32) {
     }
     g_menu = false
     g_launcher_mode = mode
+    g_launcher_view = 0
+    g_tab_slide = 0.0
     g_launcher_time = 0.0
     g_launcher_drag = -1
     g_launcher_pressed = -1
@@ -157,6 +173,9 @@ fn launcher_open(mode: i32) {
 fn launcher_count() i32 {
     if g_launcher_mode == 2 {
         return g_background_count
+    }
+    if g_launcher_view == 1 {
+        return ENVIRONMENT_COUNT
     }
     return minf(g_app_count as f32, 19.0) as i32
 }
@@ -176,14 +195,24 @@ fn launcher_update(dt: f32) {
     g_lens_x = mixf(g_lens_x, g_launcher_x, minf(1.0, dt * 18.0))
     g_lens_y = mixf(g_lens_y, g_launcher_y, minf(1.0, dt * 18.0))
     let target: f32 = 0.0
-    if g_launcher_x > -50.0 && g_launcher_x < 810.0 && g_launcher_y > 0.0 && g_launcher_y < 750.0 {
+    if g_launcher_x > TAB_LEFT - 20.0 && g_launcher_x < 810.0 && g_launcher_y > 0.0 && g_launcher_y < 750.0 {
         target = 1.0
     }
     g_lens_strength = mixf(g_lens_strength, target, minf(1.0, dt * 12.0))
     let count = launcher_count()
     g_cell_count = count
-    if g_launcher_mode == 1 {
+    if g_launcher_mode == 1 && g_launcher_view == 0 {
         g_cell_count = count + 1
+    }
+    g_tab_hover = -1
+    g_tab_slide = mixf(g_tab_slide, g_launcher_view as f32, minf(1.0, dt * 14.0))
+    if g_launcher_mode == 1 {
+        for i in 0 to 2 {
+            let dy = g_launcher_y - tab_y(i)
+            if g_launcher_x >= TAB_LEFT && g_launcher_x <= TAB_LEFT + TAB_W && absf(dy) <= TAB_GAP * 0.5 {
+                g_tab_hover = i
+            }
+        }
     }
     g_launcher_hover = -1
     g_drop_cell = -1
@@ -191,9 +220,12 @@ fn launcher_update(dt: f32) {
     if count > 19 {
         pitch = pitch * 0.72
     }
+    if g_launcher_mode == 1 && g_launcher_view == 1 {
+        pitch = pitch * 1.12
+    }
     for i in 0 to g_cell_count {
         let pos = hex_position(i)
-        if i == count && g_launcher_mode == 1 {
+        if i == count && g_launcher_mode == 1 && g_launcher_view == 0 {
             pos = float3 {
                 4.327, 1.5, 3.0
             }
@@ -296,10 +328,11 @@ fn launcher_remove(index: i32) {
 fn launcher_input(v: ref view) {
     if v.mouse_pressed {
         g_launcher_pressed = g_launcher_hover
+        g_tab_pressed = g_tab_hover
         g_press_launcher_x = g_launcher_x
         g_press_launcher_y = g_launcher_y
     }
-    if v.mouse_down && g_launcher_pressed >= 0 && g_launcher_pressed < launcher_count() && g_launcher_mode == 1 {
+    if v.mouse_down && g_launcher_pressed >= 0 && g_launcher_pressed < launcher_count() && g_launcher_mode == 1 && g_launcher_view == 0 {
         let dx = g_launcher_x - g_press_launcher_x
         let dy = g_launcher_y - g_press_launcher_y
         if dx * dx + dy * dy > 36.0 {
@@ -307,6 +340,15 @@ fn launcher_input(v: ref view) {
         }
     }
     if !v.mouse_released {
+        return
+    }
+    if g_tab_pressed >= 0 {
+        if g_tab_pressed == g_tab_hover && g_launcher_view != g_tab_hover {
+            g_launcher_view = g_tab_hover
+            g_launcher_time = 0.0
+        }
+        g_tab_pressed = -1
+        g_launcher_pressed = -1
         return
     }
     if g_launcher_drag >= 0 {
@@ -322,9 +364,13 @@ fn launcher_input(v: ref view) {
         }
     } else {
         if g_launcher_pressed == g_launcher_hover {
-            if g_launcher_hover == launcher_count() && g_launcher_mode == 1 {
+            if g_launcher_hover == launcher_count() && g_launcher_mode == 1 && g_launcher_view == 0 {
                 launcher_add()
             } else {
+                if g_launcher_view == 1 && g_launcher_hover >= 0 && g_launcher_mode == 1 {
+                    set_environment(g_launcher_hover)
+                    g_launcher_mode = 0
+                } else {
                 if g_launcher_hover >= 0 && g_launcher_hover < launcher_count() {
                     let app = launcher_app(g_launcher_hover)
                     let ok = false
@@ -342,6 +388,7 @@ fn launcher_input(v: ref view) {
                 } else {
                     g_launcher_mode = 0
                 }
+                }
             }
         }
     }
@@ -349,17 +396,72 @@ fn launcher_input(v: ref view) {
     g_launcher_pressed = -1
 }
 
-fn draw_launcher_icon(index: i32, cell: float4) {
-    let count = launcher_count()
-    if index == count {
-        draw_quad(4, 0u, cell.x - cell.z * 0.78, cell.y - cell.z * 0.78, cell.z * 1.56, cell.z * 1.56, 0.0, float4 {
-            1, 1, 1, cell.w * 0.5
-        }, 1.0, float4 {
+fn draw_environment_cell(index: i32, cell: float4) {
+    draw_quad(6, 0u, cell.x - cell.z * 0.82, cell.y - cell.z * 0.82, cell.z * 1.64, cell.z * 1.64, 0.0, ink(1.0, cell.w), index as f32, float4 {
+        0, 0, 1, 1
+    })
+    let current = index == g_environment
+    if current || index == g_launcher_hover {
+        let alpha: f32 = 0.6
+        if current {
+            alpha = 0.95
+        }
+        draw_quad(4, 0u, cell.x - cell.z * 0.9, cell.y - cell.z * 0.9, cell.z * 1.8, cell.z * 1.8, 0.0, ink(1.0, cell.w * alpha), 1.5, float4 {
             0, 0, 1, 1
         })
-        centered_label("+", cell.x, cell.y - cell.z * 0.29, cell.z * 0.6, float4 {
-            1, 1, 1, cell.w * 0.8
+    }
+    let gray: f32 = 0.78
+    if current {
+        gray = 1.0
+    }
+    let name = environment_name(index)
+    let y = cell.y + cell.z * 0.82 + 4.0
+    centered_label(name, cell.x + 1.0, y + 1.0, 12.0, shade(cell.w))
+    centered_label(name, cell.x, y, 12.0, ink(gray, cell.w * 0.95))
+}
+
+// Two stacked rows on the left edge, Apps (a 2x2 grid) and Spaces (a hex
+// window onto the current environment), under a highlight that slides
+// between them.
+fn draw_launcher_tabs() {
+    let pad: f32 = 4.0
+    plate(TAB_LEFT - pad, tab_y(0) - TAB_H * 0.5 - pad, TAB_W + pad * 2.0, TAB_H + TAB_GAP + pad * 2.0, TAB_H * 0.5 + pad, panel_ink(0.12, 0.5))
+    plate(TAB_LEFT, tab_y(0) + g_tab_slide * TAB_GAP - TAB_H * 0.5, TAB_W, TAB_H, TAB_H * 0.5, panel_ink(1.0, 0.14))
+    let names = split_lines("Apps\nSpaces")
+    let icon_x = TAB_LEFT + 18.0
+    for i in 0 to 2 {
+        let y = tab_y(i)
+        // Brightness follows the highlight, so the rows fade as it slides.
+        let alpha = mixf(0.45, 1.0, clampf(1.0 - absf(g_tab_slide - i as f32), 0.0, 1.0))
+        if i == g_tab_hover {
+            alpha = maxf(alpha, 0.75)
+        }
+        if i == 0 {
+            for k in 0 to 4 {
+                let ox = (k % 2) as f32 * 8.0 - 7.0
+                let oy = (k / 2) as f32 * 8.0 - 7.0
+                plate(icon_x + ox, y + oy, 6.0, 6.0, 1.5, panel_ink(1.0, alpha * 0.9))
+            }
+        } else {
+            draw_quad(6, 0u, icon_x - 11.0, y - 11.0, 22.0, 22.0, 0.0, panel_ink(1.0, alpha), g_environment as f32, float4 {
+                0, 0, 1, 1
+            })
+        }
+        label(names[i], icon_x + 16.0, y - 6.0, 12.0, panel_ink(1.0, alpha * 0.9))
+    }
+}
+
+fn draw_launcher_icon(index: i32, cell: float4) {
+    if g_launcher_mode == 1 && g_launcher_view == 1 {
+        draw_environment_cell(index, cell)
+        return
+    }
+    let count = launcher_count()
+    if index == count {
+        draw_quad(4, 0u, cell.x - cell.z * 0.78, cell.y - cell.z * 0.78, cell.z * 1.56, cell.z * 1.56, 0.0, ink(1.0, cell.w * 0.5), 1.0, float4 {
+            0, 0, 1, 1
         })
+        centered_label("+", cell.x, cell.y - cell.z * 0.29, cell.z * 0.6, ink(1.0, cell.w * 0.8))
         return
     }
     let app = launcher_app(index)
@@ -372,28 +474,18 @@ fn draw_launcher_icon(index: i32, cell: float4) {
         }
     }
     if index == g_launcher_hover || index == g_drop_cell {
-        draw_quad(4, 0u, cell.x - cell.z * 0.82, cell.y - cell.z * 0.82, cell.z * 1.64, cell.z * 1.64, 0.0, float4 {
-            1, 1, 1, cell.w * 0.55
-        }, 1.5, float4 {
+        draw_quad(4, 0u, cell.x - cell.z * 0.82, cell.y - cell.z * 0.82, cell.z * 1.64, cell.z * 1.64, 0.0, ink(1.0, cell.w * 0.55), 1.5, float4 {
             0, 0, 1, 1
         })
     }
     if app.icon != 0u {
         texture_quad(app.icon, cell.x - cell.z * 0.5, cell.y - cell.z * 0.5, cell.z, cell.z, 0.0, cell.w)
     } else {
-        plate(cell.x - cell.z * 0.4, cell.y - cell.z * 0.4, cell.z * 0.8, cell.z * 0.8, cell.z * 0.18, float4 {
-            0.21, 0.21, 0.21, cell.w
-        })
-        centered_label(substr(app.name, 0, 1), cell.x, cell.y - cell.z * 0.23, cell.z * 0.5, float4 {
-            1, 1, 1, cell.w
-        })
+        plate(cell.x - cell.z * 0.4, cell.y - cell.z * 0.4, cell.z * 0.8, cell.z * 0.8, cell.z * 0.18, ink(0.21, cell.w))
+        centered_label(substr(app.name, 0, 1), cell.x, cell.y - cell.z * 0.23, cell.z * 0.5, ink(1.0, cell.w))
     }
-    centered_label(short_title(app.name, 14), cell.x + 1.0, cell.y + cell.z * 0.65 + 1.0, 11.0, float4 {
-        0, 0, 0, cell.w
-    })
-    centered_label(short_title(app.name, 14), cell.x, cell.y + cell.z * 0.65, 11.0, float4 {
-        1, 1, 1, cell.w * 0.9
-    })
+    centered_label(short_title(app.name, 14), cell.x + 1.0, cell.y + cell.z * 0.65 + 1.0, 11.0, shade(cell.w))
+    centered_label(short_title(app.name, 14), cell.x, cell.y + cell.z * 0.65, 11.0, ink(1.0, cell.w * 0.9))
 }
 
 fn draw_launcher() {
@@ -405,31 +497,30 @@ fn draw_launcher() {
         title = "Background"
         hint = "Wake an existing application  |  Esc to return"
     }
-    centered_label(title, 380.0, 24.0, 28.0, float4 {
-        1, 1, 1, 1
-    })
-    centered_label(`{launcher_count()} applications`, 380.0, 63.0, 13.0, float4 {
-        0.7, 0.7, 0.7, 1
-    })
+    let subtitle = `{launcher_count()} applications`
+    if g_launcher_mode == 1 && g_launcher_view == 1 {
+        title = "Spaces"
+        subtitle = `{ENVIRONMENT_COUNT} environments`
+        hint = "Click a space to step into it  |  Esc to return"
+    }
+    centered_label(title, 380.0, 24.0, 28.0, ink(1.0, 1.0))
+    centered_label(subtitle, 380.0, 63.0, 13.0, ink(0.7, 1.0))
+    if g_launcher_mode == 1 {
+        draw_launcher_tabs()
+    }
     for i in 0 to g_cell_count {
         if i != g_launcher_drag {
             draw_launcher_icon(i, g_cells[i])
         }
     }
     if g_launcher_drag >= 0 {
-        draw_quad(5, 0u, 337.0, -88.0, 86.0, 86.0, 0.0, float4 {
-            1, 1, 1, 1
-        }, 0.0, float4 {
+        draw_quad(5, 0u, 337.0, -88.0, 86.0, 86.0, 0.0, ink(1.0, 1.0), 0.0, float4 {
             0, 0, 1, 1
         })
-        centered_label("Remove", 380.0, -108.0, 13.0, float4 {
-            1, 1, 1, 0.8
-        })
+        centered_label("Remove", 380.0, -108.0, 13.0, ink(1.0, 0.8))
         draw_launcher_icon(g_launcher_drag, float4 {
             g_launcher_x, g_launcher_y, 70.0, 0.95
         })
     }
-    centered_label(hint, 380.0, 683.0, 12.0, float4 {
-        0.7, 0.7, 0.7, 1
-    })
+    centered_label(hint, 380.0, 683.0, 12.0, ink(0.7, 1.0))
 }

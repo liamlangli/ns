@@ -72,6 +72,12 @@ let g_menu_e: f32 = 0.0
 let g_menu_radius: f32 = 1600.0
 let g_menu_dropdown = -1
 let g_launcher_mode = 0
+// 0 lists programs, 1 lists environments; Alt+E always opens on programs.
+let g_launcher_view = 0
+let g_start_view = 0
+let g_environment = 0
+let g_environment_previous = 0
+let g_environment_blend: f32 = 1.0
 let g_launcher_time: f32 = 0.0
 let g_hidden = false
 // A System Settings pane was opened; step out of its way on the first frame.
@@ -99,7 +105,7 @@ fn state_path(name: str) str {
 }
 
 fn settings_text() str {
-    return `scale {ftos(g_scale)}\nfov {ftos(g_target_fov)}\ndof {g_dof}\nfocus {ftos(g_focus_radius)}\nca {g_ca as i32}\ncurve {ftos(g_curve)}\nlast_curve {ftos(g_last_curve)}\nfont {g_font_choice}\nhud_guide {g_hud_guide as i32}\nhud_clock {g_hud_clock as i32}\n`
+    return `scale {ftos(g_scale)}\nfov {ftos(g_target_fov)}\ndof {g_dof}\nfocus {ftos(g_focus_radius)}\nca {g_ca as i32}\ncurve {ftos(g_curve)}\nlast_curve {ftos(g_last_curve)}\nfont {g_font_choice}\nhud_guide {g_hud_guide as i32}\nhud_clock {g_hud_clock as i32}\nenvironment {g_environment}\n`
 }
 
 fn save_settings() {
@@ -153,8 +159,21 @@ fn load_settings() {
         if key == "hud_clock" {
             g_hud_clock = value != 0.0
         }
+        if key == "environment" {
+            g_environment = clampf(value, 0.0, (ENVIRONMENT_COUNT - 1) as f32) as i32
+        }
     }
     g_fov = g_target_fov
+}
+
+fn set_environment(index: i32) {
+    if index == g_environment {
+        return
+    }
+    g_environment_previous = g_environment
+    g_environment = index
+    g_environment_blend = 0.0
+    save_settings()
 }
 
 fn save_layout() {
