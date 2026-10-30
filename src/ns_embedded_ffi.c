@@ -15,16 +15,6 @@ typedef struct {
     ns_bool hovered;
     ns_bool pressed;
 } ui_hit;
-typedef struct {
-    f64 x;
-    f64 y;
-    f64 w;
-    f64 h;
-} ui_rect;
-typedef struct {
-    f64 w;
-    f64 h;
-} ui_text_size;
 
 extern void * view_create(const char *, i32, i32);
 extern void * view_create_no_title(const char *, i32, i32);
@@ -175,13 +165,13 @@ extern void ui_draw_text_arc(void *, f64, f64, f64, f64, const char *, f64, u32,
 extern f64 ui_draw_text_wrapped(void *, f64, f64, f64, const char *, f64, u32, i32);
 extern f64 ui_text_line_height(void *, f64, i32);
 extern f64 ui_text_v_center_y(void *, f64, f64, f64, i32);
-extern ui_text_size * ui_measure_text(void *, const char *, f64, i32);
+extern void * ui_measure_text(void *, const char *, f64, i32);
 extern f64 ui_text_width(void *, const char *, f64, i32);
 extern f64 ui_mono_char_width(void *, f64, i32);
 extern i32 ui_text_vertical_column_count(const char *);
 extern i32 ui_text_vertical_max_run(const char *);
 extern f64 ui_text_vertical_column_width(void *, f64, i32);
-extern ui_text_size * ui_text_vertical_size(void *, const char *, f64, i32);
+extern void * ui_text_vertical_size(void *, const char *, f64, i32);
 extern void ui_draw_text_vertical(void *, f64, f64, const char *, f64, u32, i32);
 extern void * ui_widgets_create(void *);
 extern void ui_widgets_destroy(void *);
@@ -191,8 +181,8 @@ extern void ui_widgets_begin_view(void *, void *, void *, ns_bool);
 extern void ui_widgets_end_frame(void *);
 extern ns_bool ui_button(void *, const char *, f64, f64, f64, f64, const char *, ns_bool);
 extern f64 ui_slider(void *, const char *, f64, f64, f64, f64, f64, f64, f64, ns_bool);
-extern f64 ui_slider_rect(void *, const char *, ui_rect *, f64, f64, f64);
-extern f64 ui_slider_id(void *, i32, ui_rect *, f64, f64, f64);
+extern f64 ui_slider_rect(void *, const char *, void *, f64, f64, f64);
+extern f64 ui_slider_id(void *, i32, void *, f64, f64, f64);
 extern ui_hit * ui_hit_region(void *, f64, f64, f64, f64);
 extern ns_bool ui_is_escape_pressed(void *);
 extern ns_bool ui_is_enter_pressed(void *);
@@ -201,9 +191,9 @@ extern ns_bool ui_is_mouse_pressed(void *);
 extern ns_bool ui_has_keyboard_focus(void *);
 extern f64 ui_widgets_mouse_x(void *);
 extern f64 ui_widgets_mouse_y(void *);
-extern ui_color_rgba * ui_color_picker(void *, const char *, f64, f64, f64, f64, ui_color_rgba *);
-extern ui_color_rgba * ui_color_picker_rect(void *, const char *, ui_rect *, ui_color_rgba *);
-extern ui_color_rgba * ui_color_picker_id(void *, i32, ui_rect *, ui_color_rgba *);
+extern void * ui_color_picker(void *, const char *, f64, f64, f64, f64, void *);
+extern void * ui_color_picker_rect(void *, const char *, void *, void *);
+extern void * ui_color_picker_id(void *, i32, void *, void *);
 extern void * ui_text_sel_create(void);
 extern void ui_text_sel_clear(void *);
 extern ns_bool ui_text_sel_has(void *);
@@ -1485,20 +1475,20 @@ static ns_return_bool ns_embedded_sig138(ns_vm *vm, void *target) {
 }
 
 static ns_return_bool ns_embedded_sig139(ns_vm *vm, void *target) {
-    ui_color_rgba *result = ((ui_color_rgba * (*)(void *, const char *, f64, f64, f64, f64, ui_color_rgba *))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), (ui_color_rgba *)ns_embedded_arg_pointer(vm, 6));
-    ns_embedded_return_struct(vm, result);
+    void *result = ((void * (*)(void *, const char *, f64, f64, f64, f64, void *))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_embedded_arg_pointer(vm, 6));
+    ns_embedded_return_pointer(vm, result);
     return ns_return_ok(bool, true);
 }
 
 static ns_return_bool ns_embedded_sig140(ns_vm *vm, void *target) {
-    ui_color_rgba *result = ((ui_color_rgba * (*)(void *, i32, ui_rect *, ui_color_rgba *))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), (ui_rect *)ns_embedded_arg_pointer(vm, 2), (ui_color_rgba *)ns_embedded_arg_pointer(vm, 3));
-    ns_embedded_return_struct(vm, result);
+    void *result = ((void * (*)(void *, i32, void *, void *))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_embedded_arg_pointer(vm, 2), ns_embedded_arg_pointer(vm, 3));
+    ns_embedded_return_pointer(vm, result);
     return ns_return_ok(bool, true);
 }
 
 static ns_return_bool ns_embedded_sig141(ns_vm *vm, void *target) {
-    ui_color_rgba *result = ((ui_color_rgba * (*)(void *, const char *, ui_rect *, ui_color_rgba *))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), (ui_rect *)ns_embedded_arg_pointer(vm, 2), (ui_color_rgba *)ns_embedded_arg_pointer(vm, 3));
-    ns_embedded_return_struct(vm, result);
+    void *result = ((void * (*)(void *, const char *, void *, void *))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), ns_embedded_arg_pointer(vm, 2), ns_embedded_arg_pointer(vm, 3));
+    ns_embedded_return_pointer(vm, result);
     return ns_return_ok(bool, true);
 }
 
@@ -1623,8 +1613,8 @@ static ns_return_bool ns_embedded_sig159(ns_vm *vm, void *target) {
 }
 
 static ns_return_bool ns_embedded_sig160(ns_vm *vm, void *target) {
-    ui_text_size *result = ((ui_text_size * (*)(void *, const char *, f64, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)));
-    ns_embedded_return_struct(vm, result);
+    void *result = ((void * (*)(void *, const char *, f64, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)));
+    ns_embedded_return_pointer(vm, result);
     return ns_return_ok(bool, true);
 }
 
@@ -1755,13 +1745,13 @@ static ns_return_bool ns_embedded_sig179(ns_vm *vm, void *target) {
 }
 
 static ns_return_bool ns_embedded_sig180(ns_vm *vm, void *target) {
-    f64 result = ((f64 (*)(void *, i32, ui_rect *, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), (ui_rect *)ns_embedded_arg_pointer(vm, 2), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)));
+    f64 result = ((f64 (*)(void *, i32, void *, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_embedded_arg_pointer(vm, 2), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
 static ns_return_bool ns_embedded_sig181(ns_vm *vm, void *target) {
-    f64 result = ((f64 (*)(void *, const char *, ui_rect *, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), (ui_rect *)ns_embedded_arg_pointer(vm, 2), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)));
+    f64 result = ((f64 (*)(void *, const char *, void *, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), ns_embedded_arg_pointer(vm, 2), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
@@ -2529,15 +2519,15 @@ static u64 ns_embedded_cpu138(void *target, const u64 *a) {
 }
 
 static u64 ns_embedded_cpu139(void *target, const u64 *a) {
-    return (u64)(uintptr_t)((ui_color_rgba * (*)(void *, const char *, f64, f64, f64, f64, ui_color_rgba *))target)((void *)(uintptr_t)a[0], (const char *)(uintptr_t)a[1], ns_cpu_shim_f64(a[2]), ns_cpu_shim_f64(a[3]), ns_cpu_shim_f64(a[4]), ns_cpu_shim_f64(a[5]), (ui_color_rgba *)(uintptr_t)a[6]);
+    return (u64)(uintptr_t)((void * (*)(void *, const char *, f64, f64, f64, f64, void *))target)((void *)(uintptr_t)a[0], (const char *)(uintptr_t)a[1], ns_cpu_shim_f64(a[2]), ns_cpu_shim_f64(a[3]), ns_cpu_shim_f64(a[4]), ns_cpu_shim_f64(a[5]), (void *)(uintptr_t)a[6]);
 }
 
 static u64 ns_embedded_cpu140(void *target, const u64 *a) {
-    return (u64)(uintptr_t)((ui_color_rgba * (*)(void *, i32, ui_rect *, ui_color_rgba *))target)((void *)(uintptr_t)a[0], (i32)a[1], (ui_rect *)(uintptr_t)a[2], (ui_color_rgba *)(uintptr_t)a[3]);
+    return (u64)(uintptr_t)((void * (*)(void *, i32, void *, void *))target)((void *)(uintptr_t)a[0], (i32)a[1], (void *)(uintptr_t)a[2], (void *)(uintptr_t)a[3]);
 }
 
 static u64 ns_embedded_cpu141(void *target, const u64 *a) {
-    return (u64)(uintptr_t)((ui_color_rgba * (*)(void *, const char *, ui_rect *, ui_color_rgba *))target)((void *)(uintptr_t)a[0], (const char *)(uintptr_t)a[1], (ui_rect *)(uintptr_t)a[2], (ui_color_rgba *)(uintptr_t)a[3]);
+    return (u64)(uintptr_t)((void * (*)(void *, const char *, void *, void *))target)((void *)(uintptr_t)a[0], (const char *)(uintptr_t)a[1], (void *)(uintptr_t)a[2], (void *)(uintptr_t)a[3]);
 }
 
 static u64 ns_embedded_cpu142(void *target, const u64 *a) {
@@ -2625,7 +2615,7 @@ static u64 ns_embedded_cpu159(void *target, const u64 *a) {
 }
 
 static u64 ns_embedded_cpu160(void *target, const u64 *a) {
-    return (u64)(uintptr_t)((ui_text_size * (*)(void *, const char *, f64, i32))target)((void *)(uintptr_t)a[0], (const char *)(uintptr_t)a[1], ns_cpu_shim_f64(a[2]), (i32)a[3]);
+    return (u64)(uintptr_t)((void * (*)(void *, const char *, f64, i32))target)((void *)(uintptr_t)a[0], (const char *)(uintptr_t)a[1], ns_cpu_shim_f64(a[2]), (i32)a[3]);
 }
 
 static u64 ns_embedded_cpu161(void *target, const u64 *a) {
@@ -2717,11 +2707,11 @@ static u64 ns_embedded_cpu179(void *target, const u64 *a) {
 }
 
 static u64 ns_embedded_cpu180(void *target, const u64 *a) {
-    return ns_cpu_shim_f64_bits(((f64 (*)(void *, i32, ui_rect *, f64, f64, f64))target)((void *)(uintptr_t)a[0], (i32)a[1], (ui_rect *)(uintptr_t)a[2], ns_cpu_shim_f64(a[3]), ns_cpu_shim_f64(a[4]), ns_cpu_shim_f64(a[5])));
+    return ns_cpu_shim_f64_bits(((f64 (*)(void *, i32, void *, f64, f64, f64))target)((void *)(uintptr_t)a[0], (i32)a[1], (void *)(uintptr_t)a[2], ns_cpu_shim_f64(a[3]), ns_cpu_shim_f64(a[4]), ns_cpu_shim_f64(a[5])));
 }
 
 static u64 ns_embedded_cpu181(void *target, const u64 *a) {
-    return ns_cpu_shim_f64_bits(((f64 (*)(void *, const char *, ui_rect *, f64, f64, f64))target)((void *)(uintptr_t)a[0], (const char *)(uintptr_t)a[1], (ui_rect *)(uintptr_t)a[2], ns_cpu_shim_f64(a[3]), ns_cpu_shim_f64(a[4]), ns_cpu_shim_f64(a[5])));
+    return ns_cpu_shim_f64_bits(((f64 (*)(void *, const char *, void *, f64, f64, f64))target)((void *)(uintptr_t)a[0], (const char *)(uintptr_t)a[1], (void *)(uintptr_t)a[2], ns_cpu_shim_f64(a[3]), ns_cpu_shim_f64(a[4]), ns_cpu_shim_f64(a[5])));
 }
 
 static u64 ns_embedded_cpu182(void *target, const u64 *a) {

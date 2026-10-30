@@ -17,8 +17,8 @@ automatically.
 // this is a comment
 
 // use modules
-use math
 use std
+use simd
 
 // define a variable
 let a = 1 // default int literal type is i32; default float literal type is f32
@@ -42,7 +42,7 @@ fn add(a: f64, b: f64): f64 {
 }
 
 // define a struct
-struct Point {
+struct point {
    x: f32,
    y: f32
 }
@@ -58,12 +58,12 @@ let raw: u8 = platform
 let restored = raw as os_platform
 
 // operator override
-fn ops(+)(lhs: Point, rhs: Point): Point {
-    return Point(lhs.x + rhs.x, lhs.y + rhs.y)
+fn ops(+)(lhs: point, rhs: point): point {
+    return point(lhs.x + rhs.x, lhs.y + rhs.y)
 }
 
 // to string fn
-fn to_str(p: Point): str {
+fn to_str(p: point): str {
     return `{p.x}, {p.y}`  // str formatter
 }
 
@@ -71,9 +71,9 @@ fn to_str(p: Point): str {
 fn length(v: float3) f32 { return sqrt((v.x * v.x + v.y * v.y + v.z * v.z) as f64) as f32 }
 fn length(v: float2) f32 { return sqrt((v.x * v.x + v.y * v.y) as f64) as f32 }
 
-let point_a = Point(0, 0)
-let point_b = Point(1, 1)
-print(a + b) // use override add fn, expect result [1, 1]
+let point_a = point(0, 0)
+let point_b = point(1, 1)
+print(`{point_a + point_b}\n`) // use the operator override, prints 1.00, 1.00
 
 // typealias
 type number = f32
@@ -81,17 +81,12 @@ type number = f32
 // union type: a value may be any one of the member types
 type num = i32 | f64
 let some_num: num = 1       // holds an i32
-let other_num: num = 3.14   // holds an f64
+let other_num: num = 3.14d  // holds an f64
 let n = some_num as i32     // narrow to a member with `as`
 
 // block[closure]
 // define a block or fn type
 type op_fn = (i32, i32) -> i32
-
-// define a block
-let add_op: op_fn = { a, b in 
-    return a + b
-}
 
 fn sub(a: i32, b: i32): i32 {
     return a - b
@@ -101,18 +96,24 @@ fn do_op(a: i32, b: i32, op: op_fn): i32 {
     return op(a, b)
 }
 
-fn main() {
-    let ret_add = do_op(1, 2, add_op)
-    let ret_sub = do_op(2, 1, sub)
-    print(`1 + 2 = {ret_add}`)
-    print(`2 - 1 = {ret_sub}`)
+// define an asynchronous function
+async fn twice(n: i32): i32 {
+    return n * 2
 }
 
-// define a asynchronous function
-async fn download(url: str, on_data: (data: Data) to void): Data {
-    let d = await do_download(url)
-    on_data(d)
-    return d
+fn main() {
+    // define a block
+    let add_op: op_fn = { a, b in
+        return a + b
+    }
+    let ret_add = do_op(1, 2, add_op)
+    let ret_sub = do_op(2, 1, sub)
+    print(`1 + 2 = {ret_add}\n`)
+    print(`2 - 1 = {ret_sub}\n`)
+
+    let pending = twice(21)
+    let value = await pending
+    print(`answer = {value}\n`)
 }
 ```
 

@@ -66,6 +66,19 @@ ns_str ns_token_type_to_string(ns_token_type t) {
         ns_str_case(NS_TOKEN_LOGIC_OP);
         ns_str_case(NS_TOKEN_RETURN_TYPE);
         ns_str_case(NS_TOKEN_ENUM);
+        ns_str_case(NS_TOKEN_ANY);
+        ns_str_case(NS_TOKEN_BREAK);
+        ns_str_case(NS_TOKEN_CONTINUE);
+        ns_str_case(NS_TOKEN_DO);
+        ns_str_case(NS_TOKEN_LOOP);
+        ns_str_case(NS_TOKEN_FALSE);
+        ns_str_case(NS_TOKEN_NIL);
+        ns_str_case(NS_TOKEN_REF);
+        ns_str_case(NS_TOKEN_TRUE);
+        ns_str_case(NS_TOKEN_QUESTION_MARK);
+        ns_str_case(NS_TOKEN_BIT_INVERT_OP);
+        ns_str_case(NS_TOKEN_UNKNOWN);
+        ns_str_case(NS_TOKEN_INVALID);
     default:
         ns_error("token", "unknown token %d\n", t);
     }
@@ -193,17 +206,6 @@ i32 ns_token_float_literal(ns_token_t *t, char *s, i32 i) {
         }
     }
     j = ns_token_float_suffix(t, s, j);
-    i32 len = j - i;
-    t->val = ns_str_range(s + i, len);
-    return j;
-}
-
-i32 ns_token_int_literal(ns_token_t *t, char *s, i32 i) {
-    i32 j = i;
-    while (s[j] >= '0' && s[j] <= '9') {
-        j++;
-    }
-    j = ns_token_number_suffix(t, s, j);
     i32 len = j - i;
     t->val = ns_str_range(s + i, len);
     return j;

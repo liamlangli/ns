@@ -166,7 +166,6 @@ static u32 ns_aarch_cset_r(i32 rd, u32 inv_cond) {
 static u32 ns_aarch_ret(void) { return 0xD65F03C0u; }
 
 /* NOP */
-static u32 ns_aarch_nop(void) { return 0xD503201Fu; }
 
 /* BRK #0 */
 static u32 ns_aarch_brk0(void) { return 0xD4200000u; }
@@ -223,6 +222,9 @@ static const char *ns_aarch_ffi_convert(ns_type t) {
     if (ns_type_is_array(t)) return "ns_rt_array_ptr";
     if (ns_aarch_is_string(t)) return "ns_rt_to_cstr";
     if (ns_type_is_ref(t)) return "ns_rt_native_ptr";
+    // A struct passed by value reaches C as a pointer to it (`ui_color_rgba
+    // *clear`), the ABI the interpreter, ns_cpu and wasm hosts use too.
+    if (ns_type_is(t, NS_TYPE_STRUCT)) return "ns_rt_native_ptr";
     return NULL;
 }
 
@@ -1146,9 +1148,10 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
     } break;
     default:
-        ns_warn("aarch", "unsupported ssa op %d in fn %.*s, emitting nop\n",
+        // A nop in place of an unknown op would build a program that silently
+        // computes the wrong thing; fail the build the way the wasm emitter does.
+        ns_exit(1, "aarch", "unsupported ssa op %d in fn %.*s.\n",
             inst->op, c->fn->name.len, c->fn->name.data);
-        ns_aarch_emit_u32(c, ns_aarch_nop());
         break;
     }
 }

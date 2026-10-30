@@ -34,6 +34,16 @@ typedef struct ffi_ctx {
     u64 stack_offset;
 } ffi_ctx;
 
+// One prepared cif per ref fn symbol. The ffi_type storage is owned here and
+// stays put for the life of the symbol.
+typedef struct ns_ffi_signature {
+    ffi_cif cif;
+    ffi_type ret;
+    ffi_type *arg_storage;
+    ffi_type **arg_ptrs;
+    i32 arg_count;
+} ns_ffi_signature;
+
 // A blocking FFI call may hand the VM lock to another task, which can enter
 // FFI on a different worker thread. Keep argument staging private per thread.
 static _Thread_local ffi_ctx _ffi_ctx = {0};
@@ -45,11 +55,12 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         ns_value arg = vm->symbol_stack[call->arg_offset].val;
         // Resolve through ns_eval_str so both immediate (str_list index in .o)
         // and stack-resident strings (index stored in a stack slot, e.g. the
-        // result of string concatenation) are handled correctly.
-        ns_str s = ns_fmt_eval(vm, ns_eval_str(vm, arg));
-        ns_str_printf(s);
+        // result of string concatenation) are handled correctly. The value is
+        // already a runtime string: interpolating its braces again would
+        // evaluate data (for example printed JSON) as source.
+        ns_str s = ns_eval_str(vm, arg);
+        if (s.len > 0 && s.data != ns_null) ns_str_printf(s);
         fflush(stdout);
-        ns_str_free(s);
         call->ret = ns_nil;
     } else if (ns_str_equals_STR(call->callee->name, "open")) {
         ns_str path = ns_eval_str(vm, vm->symbol_stack[call->arg_offset].val);
@@ -70,8 +81,7 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
         ns_str ret = {.data = ns_null, .len = 0, .dynamic = true};
         i32 requested = -1;
-        if (call->arg_count > 1) requested = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 1].val);
-        if (requested < 0 && f) {
+        if (f) {
             long pos = ftell(f);
             if (pos >= 0 && fseek(f, 0, SEEK_END) == 0) {
                 long end = ftell(f);
@@ -283,8 +293,6 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_symbol *fn = call->callee;
 
-    ffi_cif cif;
-
     if (call->arg_count > NS_MAX_FFI_ARGS) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "too many args.");
     }
@@ -350,6 +358,24 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
                 _ffi_ctx.value_refs[i] = data;
                 _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
             } break;
+            case NS_TYPE_STRUCT: {
+                // A struct passed by value reaches C as a pointer to a copy -
+                // the same ABI the embedded table, ns_cpu and wasm hosts use
+                // (`ui_color_rgba *clear`). Passing the copy's first 8 bytes as
+                // that pointer made every such callee read a wild address.
+                u64 offset = (u64)ns_type_size(vm, v.t);
+                u64 start = (_ffi_ctx.stack_offset + 7) & ~7;
+                u64 end = start + offset;
+                if (end > NS_MAX_FFI_STACK) {
+                    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ffi stack overflow.");
+                }
+                i8 *dst = (i8 *)_ffi_ctx.stack + start;
+                const void *src = ns_type_in_stack(v.t) ? (const void *)((i8 *)vm->stack + v.o) : (const void *)v.o;
+                memcpy(dst, src, offset);
+                _ffi_ctx.stack_offset = end;
+                _ffi_ctx.value_refs[i] = dst;
+                _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
+            } break;
             default: {
                 u64 offset = (u64)ns_type_size(vm, v.t);
                 u64 start = (_ffi_ctx.stack_offset + 7) & ~7; // Align to 8 bytes
@@ -370,9 +396,44 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     ns_scope_exit(vm);
 
     ffi_type ret_type = ns_ffi_map_type(vm, fn->fn.ret);
-    ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, call->arg_count, &ret_type, _ffi_ctx.types);
-    if (status != FFI_OK) {
-        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to prep ffi call.");
+    ns_ffi_signature *sig = (ns_ffi_signature *)fn->fn.ffi_cache;
+    ns_bool sig_ok = sig != ns_null && sig->arg_count == call->arg_count && sig->ret.type == ret_type.type;
+    // The staged types follow each call's values; reuse the cif only while
+    // they match what it was prepared with.
+    for (i32 a = 0; sig_ok && a < call->arg_count; ++a) {
+        if (sig->arg_storage[a].type != _ffi_ctx.type_refs[a].type ||
+            sig->arg_storage[a].size != _ffi_ctx.type_refs[a].size) sig_ok = false;
+    }
+    if (!sig_ok) {
+        if (sig != ns_null) {
+            free(sig->arg_storage);
+            free(sig->arg_ptrs);
+            free(sig);
+        }
+        sig = (ns_ffi_signature *)calloc(1, sizeof(ns_ffi_signature));
+        if (sig == ns_null) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "out of memory preparing ffi call.");
+        sig->arg_count = call->arg_count;
+        sig->ret = ret_type;
+        i32 slots = call->arg_count > 0 ? call->arg_count : 1;
+        sig->arg_storage = (ffi_type *)calloc((size_t)slots, sizeof(ffi_type));
+        sig->arg_ptrs = (ffi_type **)calloc((size_t)slots, sizeof(ffi_type *));
+        if (sig->arg_storage == ns_null || sig->arg_ptrs == ns_null) {
+            free(sig->arg_storage);
+            free(sig->arg_ptrs);
+            free(sig);
+            return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "out of memory preparing ffi call.");
+        }
+        for (i32 i = 0; i < call->arg_count; ++i) {
+            sig->arg_storage[i] = _ffi_ctx.type_refs[i];
+            sig->arg_ptrs[i] = &sig->arg_storage[i];
+        }
+        if (ffi_prep_cif(&sig->cif, FFI_DEFAULT_ABI, call->arg_count, &sig->ret, sig->arg_ptrs) != FFI_OK) {
+            free(sig->arg_storage);
+            free(sig->arg_ptrs);
+            free(sig);
+            return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to prep ffi call.");
+        }
+        fn->fn.ffi_cache = sig;
     }
 
     ns_type t = fn->fn.ret;
@@ -413,7 +474,7 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
          ns_str_equals_STR(fn->name, "net_udp_send_bytes") ||
          ns_str_equals_STR(fn->name, "net_send_file"));
     void *ffi_owner = (blocking_os_sync || blocking_net) ? ns_task_ffi_leave(vm) : ns_null;
-    ffi_call(&cif, FFI_FN(fn_ptr), result, _ffi_ctx.values);
+    ffi_call(&sig->cif, FFI_FN(fn_ptr), result, _ffi_ctx.values);
     ns_task_ffi_reenter(vm, ffi_owner);
     // Another task may have grown the call stack while the lock was handed
     // off, so refresh this pointer before storing the result.
@@ -431,6 +492,12 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
         const char *s = *(const char **)&vm->stack[v.o];
         call->ret.t = ns_type_str;
         call->ret.o = ns_vm_push_string(vm, s ? ns_str_cstr((char *)s) : ns_str_null);
+    } else if (ns_type_is(t, NS_TYPE_STRUCT) && !ns_type_is_array(t)) {
+        // A by-value struct return comes back as a pointer to the struct, as
+        // in the embedded table; copy the pointee rather than the pointer bits.
+        const void *src = *(const void **)&vm->stack[v.o];
+        if (src && size > 0) memcpy(&vm->stack[v.o], src, (szt)size);
+        if (size > 0) ns_eval_copy(vm, call->ret, v, size);
     } else {
         if (size > 0) ns_eval_copy(vm, call->ret, v, size);
     }

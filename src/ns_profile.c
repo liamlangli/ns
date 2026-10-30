@@ -923,10 +923,6 @@ void ns_profile_write_report(FILE *f, const char *path, f64 elapsed_ms, i32 argc
     }
 }
 
-void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
-    ns_profile_write_report(f, ns_null, elapsed_ms, argc, argv);
-}
-
 static const char *ns_profile_pct_color(f64 pct) {
     if (pct >= 25.0) return ns_color_err;
     if (pct >= 10.0) return ns_color_wrn;

@@ -1,5 +1,6 @@
 """Exercise real encoders and packaging invariants without starting an app."""
 import importlib.util
+import os
 from pathlib import Path
 import shutil
 import struct
@@ -19,6 +20,10 @@ class CookTest(unittest.TestCase):
             import tomllib
             from PIL import Image
         except ImportError:
+            # CI sets NS_REQUIRE_COOK_TESTS=1 so a missing dependency fails
+            # instead of skipping every case and exiting 0.
+            if os.environ.get("NS_REQUIRE_COOK_TESTS") == "1":
+                raise
             self.skipTest("texture cooking requires Python 3.11+ and Pillow")
         self.Image = Image
         self.temp = tempfile.TemporaryDirectory(prefix="ns-cook-test ' ")

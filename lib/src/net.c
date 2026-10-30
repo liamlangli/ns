@@ -270,7 +270,9 @@ int net_buf_byte(int i) {
 
 // ---- send -----------------------------------------------------------------
 
-// Send the whole buffer, looping over partial writes.
+// Send the whole buffer, looping over partial writes. A peer that closes mid
+// write is an error: reporting the partial count as success made HTTP bodies
+// look complete while their Content-Length promised more.
 static int net_send_all(int fd, const char *data, int len) {
     int sent = 0;
     while (sent < len) {
@@ -279,7 +281,7 @@ static int net_send_all(int fd, const char *data, int len) {
 #else
         int n = (int)send(fd, data + sent, (size_t)(len - sent), 0);
 #endif
-        if (n <= 0) return sent > 0 ? sent : -1;
+        if (n <= 0) return -1;
         sent += n;
     }
     return sent;
@@ -380,7 +382,7 @@ int net_send_file(int fd, const char *path) {
     int total = 0;
     size_t n;
     while ((n = fread(chunk, 1, sizeof(chunk), f)) > 0) {
-        if (net_send_all(fd, chunk, (int)n) < 0) {
+        if (net_send_all(fd, chunk, (int)n) != (int)n) {
             fclose(f);
             return -1;
         }

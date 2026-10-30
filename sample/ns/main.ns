@@ -1,25 +1,29 @@
-let a = 1
-let pi: f64 = 3.141592653
-let hello = 'hello world'
-let empty = nil
+use std
 
-// define a function
-fn add(a: f64, b: f64) {
-    return a + b
+struct point {
+    x: f32,
+    y: f32
 }
 
-// define a struct
-struct Point {
-   x: f32
-   y: f32
+fn ops(+)(lhs: point, rhs: point): point {
+    return point(lhs.x + rhs.x, lhs.y + rhs.y)
 }
 
-// define a asynchronous function 
-async fn download(url: str) {
-    return await do_download(url)
+fn to_str(p: point): str {
+    return `{p.x}, {p.y}`
 }
 
-// define a type
-type Shape {
-    area(): f64
+enum os_platform: u8 {
+    unknown = 0,
+    macos,
+}
+
+let platform = os_platform.macos
+let raw: u8 = platform
+let restored = raw as os_platform
+
+fn main() {
+    let a = point(0, 0)
+    let b = point(1, 1)
+    print(`{a + b}\n`)
 }

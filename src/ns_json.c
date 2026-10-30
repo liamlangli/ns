@@ -105,10 +105,6 @@ ns_bool ns_json_number_is_int(f64 n) {
     return n == (i32)n;
 }
 
-ns_json *ns_json_top() {
-    return ns_array_length(_ns_json_stack) > 0 ? ns_array_last(_ns_json_stack) : ns_null;
-}
-
 i32 ns_json_skip_whitespace(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
     i32 i = ctx->i;
@@ -384,7 +380,6 @@ ns_json_ref ns_json_parse(ns_str s) {
 #define NS_JSON_FLT_PRECISION 8
 static const i8 *_ns_json_hex = "0123456789abcdef";
 
-#define ns_printf_wrap(fmt, ...) (printf("%*.s"fmt, (wrap ? depth * NS_JSON_PAD : 0), "", ##__VA_ARGS__))
 #define ns_str_append_char(a, c) (ns_array_push((a).data, c), (a).len++)
 
 static void ns_json_append_escaped(ns_str s) {
@@ -409,58 +404,6 @@ static void ns_json_append_escaped(ns_str s) {
                 break;
         }
     }
-}
-
-ns_bool ns_json_print_node(ns_json *json, i32 depth,ns_bool wrap) {
-    if (!json) return false;
-    switch (json->type)
-    {
-    case NS_JSON_FALSE: ns_printf_wrap("false"); break;
-    case NS_JSON_TRUE: ns_printf_wrap("true"); break;
-    case NS_JSON_NULL: ns_printf_wrap("null"); break;
-    case NS_JSON_NUMBER: {
-        if (ns_json_number_is_int(json->n)) {
-            ns_printf_wrap("%d", (i32)json->n);
-        } else {
-            ns_printf_wrap("%.2f", json->n);
-        }
-    } break;
-    case NS_JSON_STRING: ns_printf_wrap("\"%.*s\"", json->str.len, json->str.data); break;
-    case NS_JSON_ARRAY: {
-        ns_printf_wrap("[");
-        i32 c = json->prop;
-        while (c) {
-            ns_json *child = ns_json_get(c);
-            ns_json_print_node(child, depth + 1, wrap);
-            c = child->next;
-            if (c == 0) break; else printf(",");
-        }
-        ns_printf_wrap("]");
-    } break;
-    case NS_JSON_OBJECT: {
-        ns_printf_wrap("{");
-        i32 c = json->prop;
-        while (c) {
-            ns_json *child = ns_json_get(c);
-            ns_printf_wrap("\"%.*s\":", child->key.len, child->key.data);
-            ns_json_print_node(child, depth + 1, false);
-            c = child->next;
-            if (c == 0) break; else printf(",");
-        }
-        ns_printf_wrap("}");
-    } break;
-    case NS_JSON_RAW:
-        ns_info("ns_json", "raw\n");
-        break;
-    default:
-        ns_error("ns_json", "invalid json type\n");
-        break;
-    }
-    return true;
-}
-
-ns_bool ns_json_print(ns_json *json) {
-    return ns_json_print_node(json, 0, false);
 }
 
 ns_str ns_json_stringify_append(ns_json *json) {

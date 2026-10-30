@@ -366,6 +366,10 @@ typedef struct ui_renderer {
     i32 command_count;
     ui_clip clips[UI_MAX_CLIPS];
     i32 clip_count;
+    // Pushes dropped because the stack was full. The matching pop consumes
+    // one of these instead, so an over-deep tree cannot unbalance the stack
+    // and leave the rest of the frame unclipped.
+    i32 clip_skipped;
     ui_gpu_clip gpu_clips[UI_MAX_GPU_CLIPS];
     i32 gpu_clip_count;
     i32 current_texture_id;
@@ -2390,6 +2394,7 @@ void ui_begin_frame(ui_renderer *r) {
     r->vertex_count = 0;
     r->command_count = 0;
     r->clip_count = 1;
+    r->clip_skipped = 0;
     r->gpu_clip_count = 0;
     r->clips[0] = ui_surface_clip(r);
     r->current_texture_id = UI_WHITE_TEXTURE;
@@ -2942,6 +2947,8 @@ void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 sp
     // start unbounded rather than at the screen's edges.
     if (r->clip_count < UI_MAX_CLIPS) {
         r->clips[r->clip_count++] = (ui_clip){-1.0e7, -1.0e7, 2.0e7, 2.0e7};
+    } else {
+        r->clip_skipped++;
     }
 }
 
@@ -3448,10 +3455,16 @@ static void ui_composite_focus(ui_renderer *r, const ui_flush_frame *f, u32 plan
 
 void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     if (!r || !r->gpu_ready) return;
-    // ui_color_rgba is passed by value at the ns surface and the native FFI
-    // adapter retains the historical opaque pointer ABI. The old renderer did
-    // not dereference it either; keep that ABI and use the established default.
-    ns_unused(clear);
+    // ui_color_rgba is by value at the ns surface and arrives here as a
+    // pointer to the caller's copy on every host (libffi, embedded, ns_cpu).
+    // A null pointer keeps the opaque black default.
+    f64 clear_r = 0.0, clear_g = 0.0, clear_b = 0.0, clear_a = 1.0;
+    if (clear) {
+        clear_r = ui_clamp_f64(clear->r, 0.0, 1.0);
+        clear_g = ui_clamp_f64(clear->g, 0.0, 1.0);
+        clear_b = ui_clamp_f64(clear->b, 0.0, 1.0);
+        clear_a = ui_clamp_f64(clear->a, 0.0, 1.0);
+    }
     static ui_flush_frame f;
     f.hud = ui_hud_solve(&f.hud_frame);
     // The immersive HUD places itself; a 3D panel otherwise.
@@ -3488,8 +3501,8 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             gpu_pass_end();
         }
         if (!screen) {
-            if (f.hud) gpu_screen_pass_begin("ui", 0.0, 0.0, 0.0, 1.0);
-            else gpu_screen_pass_begin_depth("ui", 0.0, 0.0, 0.0, 1.0, 0.0);
+            if (f.hud) gpu_screen_pass_begin("ui", clear_r, clear_g, clear_b, clear_a);
+            else gpu_screen_pass_begin_depth("ui", clear_r, clear_g, clear_b, clear_a, 0.0);
             screen = true;
         }
         if (focus) ui_composite_focus(r, &f, planes);
@@ -3651,7 +3664,11 @@ ui_rect *ui_layout(f64 x, f64 y, f64 w, f64 h, f64 child_w, f64 child_h, i32 ali
 }
 
 void ui_push_clip(ui_renderer *r, f64 x, f64 y, f64 w, f64 h) {
-    if (!r || r->clip_count >= UI_MAX_CLIPS) return;
+    if (!r) return;
+    if (r->clip_count >= UI_MAX_CLIPS) {
+        r->clip_skipped++;
+        return;
+    }
     ui_clip a = ui_current_clip(r);
     f64 x0 = fmax(a.x, x);
     f64 y0 = fmax(a.y, y);
@@ -3666,7 +3683,12 @@ void ui_push_clip_round(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius) 
 }
 
 void ui_pop_clip(ui_renderer *r) {
-    if (r && r->clip_count > 1) r->clip_count--;
+    if (!r) return;
+    if (r->clip_skipped > 0) {
+        r->clip_skipped--;
+        return;
+    }
+    if (r->clip_count > 1) r->clip_count--;
 }
 
 void ui_flush_overlay(ui_renderer *r, ui_color_rgba *clear) {
@@ -4013,13 +4035,15 @@ static f64 ui_missing_glyph_advance(i32 font_type, f64 font_px) {
     return font_type == UI_FONT_BITMAP ? font_px * 0.6 : font_px * 0.55;
 }
 
-void ui_draw_text_scaled(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type, f64 scale_x, f64 scale_y) {
-    if (!r || !text || font_px <= 0 || scale_x <= 0 || scale_y <= 0) return;
+static void ui_draw_text_scaled_n(ui_renderer *r, f64 x, f64 y, const char *text, i32 len,
+                                  f64 font_px, u32 rgba, i32 font_type, f64 scale_x, f64 scale_y) {
+    if (!r || !text || len <= 0 || font_px <= 0 || scale_x <= 0 || scale_y <= 0) return;
     ui_font *primary = ui_primary_font(r, font_type);
     f64 cx = x;
     f64 cy = y;
     const unsigned char *p = (const unsigned char*)text;
-    while (*p) {
+    const unsigned char *end = p + len;
+    while (p < end) {
         i32 code = ui_utf8_next(&p);
         if (code == '\n') {
             cx = x;
@@ -4053,6 +4077,11 @@ void ui_draw_text_scaled(ui_renderer *r, f64 x, f64 y, const char *text, f64 fon
         }
         cx += g->x_advance * scale * scale_x;
     }
+}
+
+void ui_draw_text_scaled(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type, f64 scale_x, f64 scale_y) {
+    if (!text) return;
+    ui_draw_text_scaled_n(r, x, y, text, (i32)strlen(text), font_px, rgba, font_type, scale_x, scale_y);
 }
 
 void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type) {
@@ -4201,13 +4230,7 @@ void ui_draw_text_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 center_ang
 }
 
 static void ui_draw_text_range(ui_renderer *r, f64 x, f64 y, const char *text, i32 len, f64 font_px, u32 rgba, i32 font_type) {
-    if (!r || !text || len <= 0) return;
-    char *line = (char*)malloc((size_t)len + 1);
-    if (!line) return;
-    memcpy(line, text, (size_t)len);
-    line[len] = '\0';
-    ui_draw_text(r, x, y, line, font_px, rgba, font_type);
-    free(line);
+    ui_draw_text_scaled_n(r, x, y, text, len, font_px, rgba, font_type, 1.0, 1.0);
 }
 
 f64 ui_draw_text_wrapped(ui_renderer *r, f64 x, f64 y, f64 w, const char *text, f64 font_px, u32 rgba, i32 font_type) {

@@ -56,6 +56,57 @@ printf '%s\n' '# project-specific agent rules' > preserved/AGENTS.md
 test "$(cat preserved/AGENTS.md)" = '# project-specific agent rules'
 
 cd "$root"
+
+# A call missing a required argument is a parse error, not a read of an
+# uninitialized call frame (print() used to segfault).
+printf '%s\n' 'use std' 'fn main() {' '    print()' '}' > "$run_tmp/missing_arg.ns"
+if "$ns" run "$run_tmp/missing_arg.ns" > "$run_tmp/missing_arg.out" 2>&1; then
+    printf '%s\n' 'FAIL: print() with no argument was accepted.' >&2
+    exit 1
+fi
+if ! grep -q 'missing a required argument' "$run_tmp/missing_arg.out"; then
+    printf '%s\n' 'FAIL: print() with no argument did not report the missing argument.' >&2
+    cat "$run_tmp/missing_arg.out" >&2
+    exit 1
+fi
+
+# print writes a runtime string verbatim: braces built at run time are data,
+# not interpolation. Only a literal's {expr} is formatted.
+cat > "$run_tmp/print_braces.ns" <<'NS'
+use std
+fn main() {
+    let json = "{" + "\"a\": 1" + "}"
+    print(json)
+    print("\n")
+    let empty = "{" + "}"
+    print(empty)
+    print("\n")
+    let x = 3
+    print("x={x}\n")
+}
+NS
+for mode in "" "--cpu"; do
+    # shellcheck disable=SC2086
+    "$ns" run $mode "$run_tmp/print_braces.ns" > "$run_tmp/print_braces.out" 2>&1 || {
+        cat "$run_tmp/print_braces.out" >&2; exit 1; }
+    printf '%s\n' '{"a": 1}' '{}' 'x=3' > "$run_tmp/print_braces.want"
+    if ! cmp -s "$run_tmp/print_braces.want" "$run_tmp/print_braces.out"; then
+        printf 'FAIL: print reinterpreted runtime braces (ns run %s).\n' "$mode" >&2
+        cat "$run_tmp/print_braces.out" >&2
+        exit 1
+    fi
+done
+
+# --token names every token the lexer produces instead of asserting.
+printf '%s\n' 'ref fn f(a: i32) i32' 'let q = true' 'let n = nil' 'let b = ~1' \
+    'do { break } loop q' 'loop false { continue }' 'let v: any = 1' > "$run_tmp/tokens.ns"
+"$ns" --token "$run_tmp/tokens.ns" > "$run_tmp/tokens.out" 2>&1 || {
+    cat "$run_tmp/tokens.out" >&2
+    printf '%s\n' 'FAIL: ns --token failed on ordinary syntax.' >&2
+    exit 1
+}
+printf '%s\n' 'PASS: missing arguments, runtime braces and --token behave.'
+
 "$ns" run test/lang_test.ns
 "$ns" run test/container_test.ns
 "$ns" run test/gen_expr_test.ns
@@ -65,6 +116,7 @@ cd "$root"
 "$ns" run test/fn_overload_test.ns
 "$ns" run test/os_file_test.ns
 "$ns" run test/io_glb_test.ns
+"$ns" run test/io_image_test.ns
 "$ns" run test/gpu_pipeline_test.ns
 "$ns" run test/gpu_v2_test.ns
 "$ns" run test/gpu_compressed_test.ns

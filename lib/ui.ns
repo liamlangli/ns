@@ -4,12 +4,10 @@ use view
 use gpu
 
 // Immediate-mode UI builder, modelled on the @liamlangli/ui WebGPU toolkit
-// (ui_renderer + ui_widgets + theme). This module exposes the full builder
-// function API to Nano Script: a batched renderer for rectangles, rounded
-// rects, circles, lines, SDF text and images, an immediate-mode widget layer
-// (buttons, toggles, sliders, dropdowns, text/number inputs, color pickers,
-// scroll regions, lists, text views) drawn through that renderer, and the
-// palette/CSS-variable theming helpers.
+// (ui_renderer + ui_widgets + theme). This module exposes a batched renderer
+// for rectangles, rounded rects, circles, lines, SDF text and images, an
+// immediate-mode widget layer (buttons, sliders, colour pickers) drawn through
+// that renderer, and the palette helpers the renderer needs.
 //
 // Like the other native lib modules the interface is the FFI-safe subset:
 // scalars, `str`, `ref` pointers, arrays and small flat structs. The renderer
@@ -20,13 +18,9 @@ use gpu
 // Geometry (x/y/w/h, radii, thickness, font sizes) is given in physical
 // pixels as `f64`. Colours are packed `0xAABBGGRR` values held in a `u32`.
 //
-// The declarations below fall into two groups. Everything lib/src/ui.c backs
-// runs on native desktop, generated Apple apps, and the Wasm target, which
-// draws through a Canvas 2D backend in lib/ns-wasm.js (doc/wasm.md). The rest
-// -- themes, text views, dropdowns, toggles, lists, scrollbars, sections,
-// managed textures, recorded layers, and the wrap/columns helpers -- is a
-// declared surface with no backend on any platform yet, so a call to one of
-// them fails to resolve.
+// The declarations below are the entry points lib/src/ui.c backs. They run on
+// native desktop, generated Apple apps, and the Wasm target, which draws
+// through a Canvas 2D backend in lib/ns-wasm.js (doc/wasm.md).
 
 // ---- font primitives ------------------------------------------------------
 
@@ -35,7 +29,7 @@ use gpu
 // back to its optional bitmap Chinese atlas for non-Latin code points.
 // The English (Latin) font ships in the standard library:
 //   lib/assets/latin_mono.json - glyph atlas metrics (FONT_MAIN + FONT_MONO)
-//   lib/assets/latin_mono.webp - the signed-distance-field atlas image
+//   lib/assets/latin_mono.png - the signed-distance-field atlas image
 // FONT_ZH (PingFang SC, Chinese) is NOT bundled here; load it at runtime if
 // CJK glyphs are required.
 lit UI_FONT_MAIN = 0
@@ -100,8 +94,6 @@ struct ui_theme {
 //   bg, panel, panel_alt, border, border_strong, text, text_dim, hover,
 //   active, selected, accent, accent_dim, scene_outline, gizmo_axis_x,
 //   gizmo_axis_y, gizmo_axis_z, gizmo_center, track, overlay, ghost
-type ui_theme_slot = str
-
 // ---- per-frame input snapshot ---------------------------------------------
 
 // Host-supplied pointer + keyboard state for the current frame. Edge fields
@@ -151,18 +143,6 @@ ref fn ui_theme_empty() ref ui_theme
 
 // ---- widget state ---------------------------------------------------------
 
-// Persistent vertical scroll offset for list / scroll-area widgets.
-struct ui_scroll_state {
-    offset_y: f64
-}
-
-// Caret + selection state for a single-line text input.
-struct ui_input_text_state {
-    cursor: i32,
-    sel_anchor: i32,
-    sel_head: i32
-}
-
 // Shared selection for one or more read-only labels drawn with ui_draw_text_sel.
 // `active` is the caller's field id (-1 = none); `anchor`/`head` are UTF-8 byte
 // offsets into that field's string. Dragging tracks an in-progress mouse drag.
@@ -171,50 +151,6 @@ struct ui_text_sel {
     anchor: i32,
     head: i32,
     dragging: bool
-}
-
-// Caret + selection + in-progress edit text for a numeric input.
-struct ui_number_input_state {
-    cursor: i32,
-    sel_anchor: i32,
-    sel_head: i32,
-    draft: str
-}
-
-// A logical caret/selection endpoint inside a text view.
-struct ui_text_pos {
-    line: i32,
-    col: i32
-}
-
-// One line of content for a text view. `color` is a packed 0xAABBGGRR value;
-// pass 0 to fall back to the theme text colour.
-struct ui_text_view_line {
-    text: str,
-    color: u32
-}
-
-// Persistent per-frame state for a text view. Create with
-// ui_create_text_view_state. `scroll_to_line` of -1 means "no pending scroll".
-struct ui_text_view_state {
-    scroll_top: f64,
-    anchor: ui_text_pos,
-    focus: ui_text_pos,
-    focused: bool,
-    scroll_to_line: i32,
-    last_click_ms: f64,
-    last_click_line: i32,
-    last_click_col: i32,
-    click_streak: i32
-}
-
-// Display options for a text view.
-struct ui_text_view_options {
-    font_px: f64,
-    wrap: bool,
-    background: bool,
-    line_pad: f64,
-    read_only: bool
 }
 
 // ---- opaque handles -------------------------------------------------------
@@ -226,12 +162,6 @@ struct ui_renderer {
 
 // Immediate-mode widget layer drawn through a ui_renderer.
 struct ui_widgets {
-    handle: any
-}
-
-// A recorded draw layer captured between ui_begin_layer / ui_end_layer and
-// replayed cheaply with ui_replay_layer.
-struct ui_layer {
     handle: any
 }
 
@@ -492,21 +422,13 @@ ref fn ui_stroke_line(r: ref ui_renderer, x0: f64, y0: f64, x1: f64, y1: f64, th
 ref fn ui_stroke_polyline(r: ref ui_renderer, points: [f64], point_count: i32, thickness: f64, rgba: u32, feather: f64)
 
 // HSV colour-picker panels.
-ref fn ui_draw_hsv_saturation_square(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, value: f64)
-ref fn ui_draw_hsv_value_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, hue: f64, saturation: f64, alpha: f64)
 
 // ===========================================================================
 // Renderer: textures / images
 // ===========================================================================
 
 // Create a managed RGBA texture; returns its texture id (0 is the font atlas).
-ref fn ui_create_texture(r: ref ui_renderer, width: i32, height: i32) i32
-ref fn ui_update_texture(r: ref ui_renderer, texture_id: i32, data: [u8], width: i32, height: i32)
-ref fn ui_destroy_texture(r: ref ui_renderer, texture_id: i32)
 
-ref fn ui_draw_texture(r: ref ui_renderer, texture_id: i32, x: f64, y: f64, w: f64, h: f64)
-ref fn ui_draw_texture_round_rect(r: ref ui_renderer, texture_id: i32, x: f64, y: f64, w: f64, h: f64, radius: f64)
-ref fn ui_draw_texture_region(r: ref ui_renderer, texture_id: i32, x: f64, y: f64, w: f64, h: f64, u0: f64, v0: f64, u1: f64, v1: f64, rgba: u32)
 
 // ===========================================================================
 // Renderer: clipping, cursor, layers
@@ -562,9 +484,6 @@ ref fn ui_rect_batch_vertex_count(r: ref ui_renderer, batch_id: i32) i32
 ref fn ui_rect_batch_draw_range(r: ref ui_renderer, batch_id: i32, first: i32, count: i32, dx: f64, dy: f64, scale_x: f64, scale_y: f64)
 
 // Record commands into a reusable layer and replay it at an offset.
-ref fn ui_begin_layer(r: ref ui_renderer, origin_x: f64, origin_y: f64)
-ref fn ui_end_layer(r: ref ui_renderer) ref ui_layer
-ref fn ui_replay_layer(r: ref ui_renderer, layer: ref ui_layer, dx: f64, dy: f64)
 
 // ===========================================================================
 // Renderer: text
@@ -581,20 +500,18 @@ ref fn ui_text_index_at_x(r: ref ui_renderer, text: str, font_px: f64, font_type
 // the renderer's screen coordinate system.
 ref fn ui_draw_text_arc(r: ref ui_renderer, cx: f64, cy: f64, radius: f64, center_angle: f64, text: str, font_px: f64, rgba: u32, font_type: i32)
 ref fn ui_draw_text_wrapped(r: ref ui_renderer, x: f64, y: f64, w: f64, text: str, font_px: f64, rgba: u32, font_type: i32) f64
-ref fn ui_wrap_text(r: ref ui_renderer, text: str, font_px: f64, max_w: f64, font_type: i32) [str]
 ref fn ui_text_line_height(r: ref ui_renderer, font_px: f64, font_type: i32) f64
 ref fn ui_text_v_center_y(r: ref ui_renderer, y: f64, h: f64, font_px: f64, font_type: i32) f64
-ref fn ui_measure_text(r: ref ui_renderer, text: str, font_px: f64, font_type: i32) ui_text_size
+ref fn ui_measure_text(r: ref ui_renderer, text: str, font_px: f64, font_type: i32) ref ui_text_size
 ref fn ui_text_width(r: ref ui_renderer, text: str, font_px: f64, font_type: i32) f64
 ref fn ui_mono_char_width(r: ref ui_renderer, font_px: f64, font_type: i32) f64
-ref fn ui_columns_for_width(r: ref ui_renderer, width: f64, font_px: f64, font_type: i32) i32
 // Traditional Chinese vertical set. Glyphs stack top-to-bottom; a newline
 // starts a new column to the left. (x, y) is the top-right of the first
 // column. Spaces are omitted so a name such as "乾 · 天行" reads as one run.
 ref fn ui_text_vertical_column_count(text: str) i32
 ref fn ui_text_vertical_max_run(text: str) i32
 ref fn ui_text_vertical_column_width(r: ref ui_renderer, font_px: f64, font_type: i32) f64
-ref fn ui_text_vertical_size(r: ref ui_renderer, text: str, font_px: f64, font_type: i32) ui_text_size
+ref fn ui_text_vertical_size(r: ref ui_renderer, text: str, font_px: f64, font_type: i32) ref ui_text_size
 ref fn ui_draw_text_vertical(r: ref ui_renderer, x: f64, y: f64, text: str, font_px: f64, rgba: u32, font_type: i32)
 
 // ===========================================================================
@@ -613,34 +530,27 @@ ref fn ui_widgets_begin_view(w: ref ui_widgets, theme: ref ui_theme, v: ref view
 ref fn ui_widgets_end_frame(w: ref ui_widgets)
 
 // A section header; returns the y just below it.
-ref fn ui_section(w: ref ui_widgets, x: f64, y: f64, width: f64, label: str) f64
 
 // Push button; returns true on the frame it is clicked.
 ref fn ui_button(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, label: str, active: bool) bool
 
 // Checkbox-style toggle; returns the (possibly flipped) value.
-ref fn ui_toggle(w: ref ui_widgets, id: str, x: f64, y: f64, value: bool, label: str) bool
 
 // Horizontal slider; returns the (possibly dragged) value.
 ref fn ui_slider(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, value: f64, min: f64, max: f64, show_value: bool) f64
-ref fn ui_slider_rect(w: ref ui_widgets, id: str, rect: ui_rect, value: f64, min: f64, max: f64) f64
-ref fn ui_slider_id(w: ref ui_widgets, id: i32, rect: ui_rect, value: f64, min: f64, max: f64) f64
+ref fn ui_slider_rect(w: ref ui_widgets, id: str, rect: ref ui_rect, value: f64, min: f64, max: f64) f64
+ref fn ui_slider_id(w: ref ui_widgets, id: i32, rect: ref ui_rect, value: f64, min: f64, max: f64) f64
 
 // Scrollable selection list; returns the selected index.
-ref fn ui_list(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, items: [str], selected: i32, scroll: ref ui_scroll_state) i32
 
 // Popup dropdown; returns the selected index.
-ref fn ui_dropdown(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, items: [str], selected: i32) i32
-ref fn ui_set_dropdown_value(w: ref ui_widgets, id: str, value: i32)
 
 // Standalone scrollbar driving `scroll` for `content_h` of content.
-ref fn ui_scrollbar(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, scroll: ref ui_scroll_state, content_h: f64)
 
 // Generic hit-test region (hover + pressed this frame).
 ref fn ui_hit_region(w: ref ui_widgets, x: f64, y: f64, width: f64, height: f64) ui_hit
 
 // Apply wheel scrolling for a hovered scroll area.
-ref fn ui_handle_scroll_area(w: ref ui_widgets, x: f64, y: f64, width: f64, height: f64, scroll: ref ui_scroll_state, content_h: f64)
 
 // Frame input queries.
 ref fn ui_is_escape_pressed(w: ref ui_widgets) bool
@@ -652,22 +562,15 @@ ref fn ui_widgets_mouse_x(w: ref ui_widgets) f64
 ref fn ui_widgets_mouse_y(w: ref ui_widgets) f64
 
 // Single-line text inputs; return the edited string.
-ref fn ui_focus_text_input(w: ref ui_widgets, id: str, state: ref ui_input_text_state, cursor: i32)
-ref fn ui_input_text(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, buf: str, placeholder: str, state: ref ui_input_text_state) str
-ref fn ui_input_field(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, buf: str, placeholder: str, state: ref ui_input_text_state) str
 
 // Numeric input with drag/scroll edit; returns the new value.
-ref fn ui_number_input(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, value: f64, state: ref ui_number_input_state, min: f64, max: f64, step: f64, decimals: i32) f64
 
 // HSV colour picker; returns the chosen colour.
-ref fn ui_color_picker(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, value: ui_color_rgba) ui_color_rgba
-ref fn ui_color_picker_rect(w: ref ui_widgets, id: str, rect: ui_rect, value: ui_color_rgba) ui_color_rgba
-ref fn ui_color_picker_id(w: ref ui_widgets, id: i32, rect: ui_rect, value: ui_color_rgba) ui_color_rgba
+ref fn ui_color_picker(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, value: ref ui_color_rgba) ref ui_color_rgba
+ref fn ui_color_picker_rect(w: ref ui_widgets, id: str, rect: ref ui_rect, value: ref ui_color_rgba) ref ui_color_rgba
+ref fn ui_color_picker_id(w: ref ui_widgets, id: i32, rect: ref ui_rect, value: ref ui_color_rgba) ref ui_color_rgba
 
 // Multi-line, selectable text view.
-ref fn ui_create_text_view_state() ui_text_view_state
-ref fn ui_text_view(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, lines: [ui_text_view_line], state: ref ui_text_view_state, options: ui_text_view_options)
-ref fn ui_text_view_selected_text(lines: [ui_text_view_line], state: ref ui_text_view_state) str
 
 // ---- read-only selectable label -------------------------------------------
 // Shared across several labels: pick a stable `field` id per label, call
@@ -695,22 +598,15 @@ ref fn ui_text_sel_copy(v: ref view, s: ref ui_text_sel, text: str) bool
 // ===========================================================================
 
 // Load a theme definition from a JSON document at `url`.
-ref fn ui_load_theme(url: str) ui_theme
 
 // Push the theme's palette to the host CSS variables.
-ref fn ui_apply_theme(theme: ui_theme)
 
 // Look up a slot as a `#rrggbb(aa)` string or a packed 0xAABBGGRR value.
-ref fn ui_theme_color(theme: ui_theme, slot: ui_theme_slot) str
-ref fn ui_theme_rgba(theme: ui_theme, slot: ui_theme_slot) u32
 
 // Pack a `#rrggbb(aa)` string, or four 0..1 floats, into 0xAABBGGRR.
 ref fn ui_pack_color(hex: str) u32
 ref fn ui_pack_rgba_floats(r: f64, g: f64, b: f64, a: f64) u32
 
 // Normalise a `#rrggbb(aa)` string into 0..1 float channels.
-ref fn ui_hex_to_normalized_rgba(color: str) ui_color_rgba
 
 // Interpolate colours / whole themes by `t` in 0..1.
-ref fn ui_lerp_hex(a: str, b: str, t: f64) str
-ref fn ui_lerp_theme(src_theme: ui_theme, dst_theme: ui_theme, t: f64) ui_theme

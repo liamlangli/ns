@@ -317,11 +317,6 @@ static u8 ns_wasm_type_valtype(ns_type t) {
 
 // An entry on the label stack.  depth 0 = top (innermost open label).
 typedef struct {
-    i32      block_idx; // SSA block this label corresponds to
-    ns_bool  is_loop;   // true → `loop` (br goes to start), false → `block` (br goes past end)
-} ns_wasm_label;
-
-typedef struct {
     u32 offset;
     i32 ast;
 } ns_wasm_source_mapping;
@@ -335,7 +330,6 @@ typedef struct {
     i32            pc_local;    // dispatcher local used for structured CFG lowering
     u8            *vtypes;      // WASM valtype for each SSA value index
     u8            *unsigneds;   // integer signedness for each SSA value index
-    ns_wasm_label *labels;      // label stack (index 0 = bottom, top = last element)
     ns_ssa_fn     *all_fns;     // all functions in the module (for CALL lookup)
     i32            n_fns;
     ns_ssa_import *imports;
@@ -504,29 +498,6 @@ static ns_type ns_wasm_value_ns_type(ns_ssa_fn *fn, i32 value) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Label stack helpers
-// ──────────────────────────────────────────────────────────────────────────
-
-static void ns_wasm_push_label(ns_wasm_fn_ctx *ctx, i32 block_idx, ns_bool is_loop) {
-    ns_wasm_label l = {block_idx, is_loop};
-    ns_array_push(ctx->labels, l);
-}
-
-static void ns_wasm_pop_label(ns_wasm_fn_ctx *ctx) {
-    i32 len = (i32)ns_array_length(ctx->labels);
-    if (len > 0) ns_array_splice(ctx->labels, len - 1);
-}
-
-// depth 0 = top of stack (last element = innermost)
-static i32 ns_wasm_br_depth(ns_wasm_fn_ctx *ctx, i32 block_idx) {
-    i32 len = (i32)ns_array_length(ctx->labels);
-    for (i32 d = 0; d < len; d++) {
-        if (ctx->labels[len - 1 - d].block_idx == block_idx) return d;
-    }
-    return -1;
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Emit helpers
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -538,29 +509,6 @@ static void ns_wasm_local_get(ns_wasm_fn_ctx *ctx, i32 idx) {
 static void ns_wasm_local_set(ns_wasm_fn_ctx *ctx, i32 idx) {
     ns_wasm_u8(&ctx->code, NS_WASM_LOCAL_SET);
     ns_wasm_u32leb(&ctx->code, (u32)idx);
-}
-
-static void ns_wasm_br(ns_wasm_fn_ctx *ctx, u32 depth) {
-    ns_wasm_u8(&ctx->code, NS_WASM_BR);
-    ns_wasm_u32leb(&ctx->code, depth);
-}
-
-static void ns_wasm_br_if(ns_wasm_fn_ctx *ctx, u32 depth) {
-    ns_wasm_u8(&ctx->code, NS_WASM_BR_IF);
-    ns_wasm_u32leb(&ctx->code, depth);
-}
-
-// Emit branch to block_idx.  If it equals fallthrough_next, emit nothing.
-static void ns_wasm_jump_to(ns_wasm_fn_ctx *ctx, i32 block_idx, i32 fallthrough_next) {
-    if (block_idx == fallthrough_next) return; // natural fall-through
-    i32 depth = ns_wasm_br_depth(ctx, block_idx);
-    if (depth < 0) {
-        ns_warn("wasm", "fn %.*s: no label for block %d, emitting unreachable\n",
-                ctx->fn->name.len, ctx->fn->name.data, block_idx);
-        ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
-        return;
-    }
-    ns_wasm_br(ctx, (u32)depth);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1290,225 +1238,6 @@ static void ns_wasm_emit_dispatch(ns_wasm_fn_ctx *ctx) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Control-flow emission
-// ──────────────────────────────────────────────────────────────────────────
-
-// Forward declarations
-static void ns_wasm_emit_range(ns_wasm_fn_ctx *ctx, i32 start, i32 end,
-                               i32 *loop_heads, i32 *loop_ends, i32 n_loops,
-                               i32 fallthrough_after);
-
-// Emit all non-terminator instructions for block block_idx, then the terminator.
-// fallthrough_next: the block index that immediately follows in the emission order
-// (-1 if nothing follows; caller handles the end-of-function).
-static void ns_wasm_emit_block(ns_wasm_fn_ctx *ctx, i32 block_idx, i32 fallthrough_next) {
-    ns_ssa_block *bb = &ctx->fn->blocks[block_idx];
-    i32 n_insts = (i32)ns_array_length(bb->insts);
-
-    // Emit non-terminator instructions
-    i32 term_idx = n_insts - 1;
-    for (i32 ii = 0; ii < term_idx; ii++) {
-        ns_ssa_inst *inst = &ctx->fn->insts[bb->insts[ii]];
-        ns_wasm_emit_inst(ctx, inst);
-    }
-
-    if (term_idx < 0) return; // empty block
-
-    ns_ssa_inst *term = &ctx->fn->insts[bb->insts[term_idx]];
-    ns_wasm_mark_source(ctx, term->ast);
-
-    switch (term->op) {
-    case NS_SSA_OP_RET:
-        if (term->a >= 0) {
-            ns_wasm_local_get(ctx, term->a);
-        }
-        ns_wasm_u8(&ctx->code, NS_WASM_RETURN);
-        break;
-
-    case NS_SSA_OP_JMP:
-        ns_wasm_jump_to(ctx, term->target0, fallthrough_next);
-        break;
-
-    case NS_SSA_OP_BR: {
-        // BR cond → target0 (true), target1 (false)
-        i32 t0 = term->target0;
-        i32 t1 = term->target1;
-        i32 cond = term->a;
-
-        if (t0 == fallthrough_next) {
-            // If true: fall through to t0.  If false: jump to t1.
-            // Condition is already non-zero for true → negate and br_if
-            ns_wasm_local_get(ctx, cond);
-            ns_wasm_u8(&ctx->code, NS_WASM_I32_EQZ); // negate
-            i32 d1 = ns_wasm_br_depth(ctx, t1);
-            if (d1 >= 0) {
-                ns_wasm_br_if(ctx, (u32)d1);
-            } else {
-                // t1 not in label stack, just emit unreachable path
-                ns_wasm_u8(&ctx->code, NS_WASM_IF);
-                ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
-                ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
-                ns_wasm_u8(&ctx->code, NS_WASM_END);
-            }
-            // Fall through to t0
-        } else if (t1 == fallthrough_next) {
-            // If true: jump to t0.  If false: fall through to t1.
-            ns_wasm_local_get(ctx, cond);
-            i32 d0 = ns_wasm_br_depth(ctx, t0);
-            if (d0 >= 0) {
-                ns_wasm_br_if(ctx, (u32)d0);
-            } else {
-                ns_wasm_u8(&ctx->code, NS_WASM_IF);
-                ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
-                ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
-                ns_wasm_u8(&ctx->code, NS_WASM_END);
-            }
-            // Fall through to t1
-        } else {
-            // Neither target falls through.  Emit if/else/end.
-            i32 d0 = ns_wasm_br_depth(ctx, t0);
-            i32 d1 = ns_wasm_br_depth(ctx, t1);
-            ns_wasm_local_get(ctx, cond);
-            ns_wasm_u8(&ctx->code, NS_WASM_IF);
-            ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
-            if (d0 >= 0) ns_wasm_br(ctx, (u32)(d0 + 1)); // +1 for the if block
-            else ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
-            ns_wasm_u8(&ctx->code, NS_WASM_ELSE);
-            if (d1 >= 0) ns_wasm_br(ctx, (u32)(d1 + 1));
-            else ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
-            ns_wasm_u8(&ctx->code, NS_WASM_END);
-        }
-    } break;
-
-    case NS_SSA_OP_TRAP:
-        ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
-        break;
-
-    default:
-        // Non-terminator treated as last instruction (shouldn't happen)
-        ns_wasm_emit_inst(ctx, term);
-        break;
-    }
-}
-
-// Emit blocks [start..end] as a DAG (no back edges within this range).
-// The label stack must already contain any outer context labels.
-// fallthrough_after: block index that comes right after `end` in the emission;
-// -1 if nothing follows.
-static void ns_wasm_emit_dag(ns_wasm_fn_ctx *ctx, i32 start, i32 end,
-                             i32 fallthrough_after) {
-    if (start > end) return;
-
-    // Emit nested `block` wrappers: outermost first.
-    // After all wrappers + B[start]'s code, closing wrapper j (depth j-start-1 from B[start])
-    // exposes B[j]'s code area.
-    // Wrapper for B[j] is at label depth j-start-1 from B[start].
-    for (i32 j = end; j >= start + 1; j--) {
-        ns_wasm_u8(&ctx->code, NS_WASM_BLOCK);
-        ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
-        ns_wasm_push_label(ctx, j, false);
-    }
-
-    // Emit B[start]
-    i32 ft = (start < end) ? start + 1 : fallthrough_after;
-    ns_wasm_emit_block(ctx, start, ft);
-
-    // Close wrappers and emit subsequent blocks
-    for (i32 k = start; k < end; k++) {
-        ns_wasm_u8(&ctx->code, NS_WASM_END);
-        ns_wasm_pop_label(ctx);
-        i32 ft_k = (k + 1 < end) ? k + 2 : fallthrough_after;
-        ns_wasm_emit_block(ctx, k + 1, ft_k);
-    }
-}
-
-// Emit blocks [start..end] with loop detection and proper nesting.
-static void ns_wasm_emit_range(ns_wasm_fn_ctx *ctx, i32 start, i32 end,
-                               i32 *loop_heads, i32 *loop_ends, i32 n_loops,
-                               i32 fallthrough_after) {
-    if (start > end) return;
-
-    // Find the first (smallest) loop header within [start, end]
-    i32 found_h = -1, found_k = -1;
-    for (i32 li = 0; li < n_loops; li++) {
-        i32 h = loop_heads[li];
-        i32 k = loop_ends[li];
-        if (h >= start && h <= end && k <= end) {
-            if (found_h < 0 || h < found_h) {
-                found_h = h;
-                found_k = k;
-            }
-        }
-    }
-
-    if (found_h < 0) {
-        // No loops: emit as DAG
-        ns_wasm_emit_dag(ctx, start, end, fallthrough_after);
-        return;
-    }
-
-    // Emit blocks before the loop
-    if (found_h > start) {
-        // These are forward-only blocks; their fallthrough lands at found_h.
-        // We need a label for found_h so these blocks can jump to it.
-        // Add a block wrapper for found_h visible to [start, found_h-1].
-        ns_wasm_u8(&ctx->code, NS_WASM_BLOCK);
-        ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
-        ns_wasm_push_label(ctx, found_h, false);
-        ns_wasm_emit_range(ctx, start, found_h - 1,
-                           loop_heads, loop_ends, n_loops, found_h);
-        ns_wasm_u8(&ctx->code, NS_WASM_END);
-        ns_wasm_pop_label(ctx);
-    }
-
-    // Emit the loop
-    i32 exit_block = found_k + 1; // first block after the loop
-
-    // Outer block: breaking out of it (br 1 from inside the loop) goes to exit_block
-    ns_wasm_u8(&ctx->code, NS_WASM_BLOCK);
-    ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
-    ns_wasm_push_label(ctx, exit_block, false);
-
-    // Inner loop: br 0 from inside goes back to found_h
-    ns_wasm_u8(&ctx->code, NS_WASM_LOOP);
-    ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
-    ns_wasm_push_label(ctx, found_h, true);
-
-    // Emit the loop body [found_h .. found_k].
-    // Exclude the current loop from the table to prevent infinite re-detection.
-    i32 cur_li = -1;
-    for (i32 li = 0; li < n_loops; li++) {
-        if (loop_heads[li] == found_h && loop_ends[li] == found_k) { cur_li = li; break; }
-    }
-    if (cur_li >= 0 && cur_li < n_loops - 1) {
-        i32 t;
-        t = loop_heads[cur_li]; loop_heads[cur_li] = loop_heads[n_loops-1]; loop_heads[n_loops-1] = t;
-        t = loop_ends[cur_li];  loop_ends[cur_li]  = loop_ends[n_loops-1];  loop_ends[n_loops-1]  = t;
-    }
-    i32 body_n_loops = (cur_li >= 0) ? n_loops - 1 : n_loops;
-    ns_wasm_emit_range(ctx, found_h, found_k,
-                       loop_heads, loop_ends, body_n_loops, found_h);
-    // Restore swapped entry
-    if (cur_li >= 0 && cur_li < n_loops - 1) {
-        i32 t;
-        t = loop_heads[cur_li]; loop_heads[cur_li] = loop_heads[n_loops-1]; loop_heads[n_loops-1] = t;
-        t = loop_ends[cur_li];  loop_ends[cur_li]  = loop_ends[n_loops-1];  loop_ends[n_loops-1]  = t;
-    }
-
-    ns_wasm_u8(&ctx->code, NS_WASM_END); // end loop
-    ns_wasm_pop_label(ctx);
-
-    ns_wasm_u8(&ctx->code, NS_WASM_END); // end outer block
-    ns_wasm_pop_label(ctx);
-
-    // Emit blocks after the loop
-    if (exit_block <= end) {
-        ns_wasm_emit_range(ctx, exit_block, end,
-                           loop_heads, loop_ends, n_loops, fallthrough_after);
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Function signature collection
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1747,69 +1476,6 @@ static void ns_wasm_build_element_section(u8 **out) {
     ns_array_free(sec);
 }
 
-// DFS color codes for back-edge detection
-#define NS_WASM_COLOR_WHITE 0   // unvisited
-#define NS_WASM_COLOR_GRAY  1   // on DFS stack (edge to GRAY = true back-edge)
-#define NS_WASM_COLOR_BLACK 2   // finished
-
-static void ns_wasm_dfs_visit(ns_ssa_fn *fn, i32 bi, u8 *color,
-                               i32 **lh, i32 **le) {
-    color[bi] = NS_WASM_COLOR_GRAY;
-
-    ns_ssa_block *bb = &fn->blocks[bi];
-    i32 n_insts = (i32)ns_array_length(bb->insts);
-    if (n_insts > 0) {
-        ns_ssa_inst *term = &fn->insts[bb->insts[n_insts - 1]];
-        i32 targets[2] = {term->target0, term->target1};
-        for (i32 t = 0; t < 2; t++) {
-            i32 j = targets[t];
-            if (j < 0) continue;
-            if (color[j] == NS_WASM_COLOR_GRAY) {
-                // True back-edge bi → j: j is a loop header, bi is the loop end
-                ns_bool found = false;
-                for (i32 li = 0, ll = (i32)ns_array_length(*lh); li < ll; li++) {
-                    if ((*lh)[li] == j) {
-                        if ((*le)[li] < bi) (*le)[li] = bi;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    ns_array_push(*lh, j);
-                    ns_array_push(*le, bi);
-                }
-            } else if (color[j] == NS_WASM_COLOR_WHITE) {
-                ns_wasm_dfs_visit(fn, j, color, lh, le);
-            }
-            // BLACK: forward/cross edge — not a loop back-edge
-        }
-    }
-
-    color[bi] = NS_WASM_COLOR_BLACK;
-}
-
-// Detect loop back-edges and collect (header, end) pairs using DFS.
-// A back-edge is an edge to a GRAY (on DFS stack) node; forward/cross
-// edges to BLACK nodes (e.g., merge blocks in if/else chains) are NOT loops.
-static void ns_wasm_detect_loops(ns_ssa_fn *fn,
-                                 i32 **loop_heads_out, i32 **loop_ends_out,
-                                 i32 *n_loops_out) {
-    i32 *lh = ns_null;
-    i32 *le = ns_null;
-
-    i32 n_blocks = (i32)ns_array_length(fn->blocks);
-    if (n_blocks > 0) {
-        u8 *color = (u8 *)ns_malloc((szt)n_blocks * sizeof(u8));
-        memset(color, NS_WASM_COLOR_WHITE, (szt)n_blocks * sizeof(u8));
-        ns_wasm_dfs_visit(fn, 0, color, &lh, &le);
-        ns_free(color);
-    }
-
-    *loop_heads_out = lh;
-    *loop_ends_out  = le;
-    *n_loops_out    = (i32)ns_array_length(lh);
-}
-
 // Emit the code section
 static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
                                        u8 **all_vtypes, u8 **all_unsigneds, i32 *all_nvals,
@@ -1824,11 +1490,6 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
         u8  *vt = all_vtypes[fi];
         i32  nv = all_nvals[fi];
         i32  np = ns_wasm_fn_param_count(fn);
-
-        // Keep the structured lowering helpers compiled while the dispatcher
-        // is the authoritative path; the dispatcher handles all CFG shapes.
-        i32 *lheads = ns_null, *lends = ns_null, n_loops = 0;
-        ns_wasm_detect_loops(fn, &lheads, &lends, &n_loops);
 
         // Build function body
         ns_wasm_fn_ctx ctx = {0};
@@ -1884,7 +1545,6 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
 
         // Emit function body instructions
         i32 n_blocks = (i32)ns_array_length(fn->blocks);
-        if (false && n_blocks > 0) ns_wasm_emit_range(&ctx, 0, n_blocks - 1, lheads, lends, n_loops, -1);
         if (n_blocks > 0) ns_wasm_emit_dispatch(&ctx);
 
         // WASM functions must end with END opcode
@@ -1905,11 +1565,8 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
 
         // Cleanup
         ns_array_free(ctx.code);
-        ns_array_free(ctx.labels);
         ns_array_free(ctx.mappings);
         ns_array_free(locals_sec);
-        ns_array_free(lheads);
-        ns_array_free(lends);
     }
 
     // __ns_alloc: aligned bump allocation with checked memory growth.
@@ -2380,7 +2037,8 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "view_take_gamepad_button_press|view_on_pointer_event|view_on_tool_action|"
             "view_on_gesture|view_input_count|view_input_at|view_gesture|view_is_active|view_input_pending|"
             "view_input_reset|view_get_clipboard|view_set_clipboard|view_request_frame|"
-            "view_request_frame_after|view_set_frame_per_second|view_set_safe_area");
+            "view_request_frame_after|view_set_frame_per_second|view_set_safe_area|"
+            "view_set_title|view_set_app_name|view_set_cursor|view_set_fullscreen");
     }
     if (ns_str_equals(module, ns_str_cstr("gpu"))) {
         return ns_wasm_name_in(name,
@@ -2400,10 +2058,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "gpu_pixel_format_row_pitch|gpu_pixel_format_surface_pitch");
     }
     if (ns_str_equals(module, ns_str_cstr("ui"))) {
-        // Every ui entry point lib/src/ui.c implements. The declarations the
-        // native library does not back either (themes, text views, dropdowns,
-        // managed textures, layers) have no browser backend for the same
-        // reason they have no desktop one.
+        // Every ui entry point lib/src/ui.c and lib/ns-wasm.js implement.
         return ns_wasm_name_in(name,
             // renderer lifecycle and frames
             "ui_renderer_create|ui_renderer_destroy|ui_resize|ui_resize_to|"
@@ -2435,6 +2090,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "ui_rect_batch_add|ui_rect_batch_add_smooth|ui_rect_batch_add_text|ui_rect_batch_end|ui_rect_batch_draw|"
             "ui_rect_batch_draw_at|ui_rect_batch_draw_scaled|ui_rect_batch_vertex_count|"
             "ui_rect_batch_draw_range|ui_begin_plane|ui_end_plane|ui_set_plane_focus|"
+            "ui_begin_overlay|ui_end_overlay|"
             // text
             "ui_draw_text|ui_draw_text_scaled|ui_draw_text_arc|ui_draw_text_wrapped|ui_draw_text_vertical|"
             "ui_text_line_height|ui_text_v_center_y|ui_text_width|ui_text_index_at_x|"

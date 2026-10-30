@@ -41,6 +41,17 @@ static char storage_error[STORAGE_ERROR_CAPACITY];
 static char storage_root[STORAGE_PATH_CAPACITY];
 static char storage_json_path[STORAGE_PATH_CAPACITY];
 static i32 storage_ready;
+// A set/remove marks the in-memory table dirty; the file is written by
+// storage_kv_sync() or once at process exit. Writing and fsyncing the whole
+// document per key made a settings load O(n^2) and synchronous.
+static ns_bool storage_dirty;
+
+static i32 storage_write_json(void);
+static void storage_flush_at_exit(void) {
+    if (storage_ready && storage_dirty) {
+        if (storage_write_json()) storage_dirty = false;
+    }
+}
 
 static char *storage_copy_string(const char *value) {
     if (!value) value = "";
@@ -340,6 +351,7 @@ static i32 storage_load_json(void) {
 
 i32 storage_init(const char *app_name) {
     storage_clear_error();
+    if (storage_ready && storage_dirty) storage_flush_at_exit();
     storage_free_entries();
     storage_ready = 0;
     const char *input = app_name && app_name[0] ? app_name : "ns";
@@ -369,6 +381,12 @@ i32 storage_init(const char *app_name) {
         return 0;
     }
     storage_ready = 1;
+    storage_dirty = false;
+    static ns_bool exit_flush_registered = false;
+    if (!exit_flush_registered) {
+        exit_flush_registered = true;
+        atexit(storage_flush_at_exit);
+    }
     return storage_load_json();
 }
 
@@ -380,7 +398,8 @@ static i32 storage_set_entry(storage_kv_entry *entry, i32 type) {
     if (!entry) return 0;
     if (type != STORAGE_KV_STRING) { free(entry->string_value); entry->string_value = NULL; }
     entry->type = type;
-    return storage_write_json();
+    storage_dirty = true;
+    return 1;
 }
 
 i32 storage_kv_set_str(const char *key, const char *value) {
@@ -446,16 +465,21 @@ i32 storage_kv_remove(const char *key) {
     free(storage_entries[index].string_value);
     for (i32 i = index; i + 1 < storage_entry_count; ++i) storage_entries[i] = storage_entries[i + 1];
     storage_entries[--storage_entry_count] = (storage_kv_entry){0};
-    return storage_write_json();
+    storage_dirty = true;
+    return 1;
 }
 
 i32 storage_kv_clear(void) {
     storage_clear_error();
     storage_free_entries();
-    return storage_write_json();
+    storage_dirty = true;
+    return 1;
 }
 
 i32 storage_kv_sync(void) {
     storage_clear_error();
-    return storage_write_json();
+    if (!storage_dirty) return 1;
+    if (!storage_write_json()) return 0;
+    storage_dirty = false;
+    return 1;
 }

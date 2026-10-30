@@ -700,6 +700,9 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     ns_str r_name = ns_vm_get_type_name(vm, r.t);
     ns_str fn_name = ns_ops_override_name(l_name, r_name, op);
     ns_symbol *fn = ns_vm_find_symbol(vm, fn_name, false);
+    // The lookup key is a fresh allocation per evaluation; the symbol keeps its
+    // own name, so release the key here instead of leaking one per operation.
+    ns_str_free(fn_name);
     if (!fn) return ns_return_ok(value, (ns_value){.t = ns_type_unknown});
 
     i32 ret_size = ns_type_size(vm, fn->fn.ret);
@@ -1011,9 +1014,13 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     // Container membership builtins: has(c, k) / insert(s, v) / remove(c, k).
-    // A user fn with the same name shadows the builtin (mirrors the parse-side
-    // routing in ns_vm_parse_call_expr).
-    if (callee_n->type == NS_AST_PRIMARY_EXPR && callee_n->primary_expr.token.type == NS_TOKEN_IDENTIFIER &&
+    // A user fn with the same name shadows the builtin; ns_vm_parse_call_expr
+    // resolves that once and records the builtin in call_expr.rt. The name
+    // check below only covers a node that skipped the parse pass.
+    if (n->call_expr.rt <= NS_CALL_RT_CONTAINER && n->call_expr.rt >= NS_CALL_RT_CONTAINER - 2) {
+        return ns_eval_container_builtin(vm, ctx, i, NS_CALL_RT_CONTAINER - n->call_expr.rt);
+    }
+    if (n->call_expr.rt == -1 && callee_n->type == NS_AST_PRIMARY_EXPR && callee_n->primary_expr.token.type == NS_TOKEN_IDENTIFIER &&
         n->call_expr.arg_count == 2) {
         ns_str bname = callee_n->primary_expr.token.val;
         i32 kind = ns_str_equals_STR(bname, "has")      ? 0
@@ -1702,6 +1709,7 @@ ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_va
         ns_str r_t = ns_vm_get_type_name(vm, r.t);
         ns_str fn_name = ns_ops_override_name(l_t, r_t, n->binary_expr.op);
         ns_symbol *fn = ns_vm_find_symbol(vm, fn_name, false);
+        ns_str_free(fn_name);
         if (fn) {
             return ns_eval_call_ops_fn(vm, ctx, i, l, r, fn);
         }

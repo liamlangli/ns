@@ -1,4 +1,4 @@
-use io
+use std
 
 struct point {
     x: f64,
@@ -6,5 +6,6 @@ struct point {
 }
 
 fn main() {
+    let p = point(1.0, 2.0)
     print(`{p.x}, {p.y}\n`)
 }

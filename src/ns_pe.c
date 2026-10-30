@@ -248,7 +248,13 @@ ns_return_bool ns_pe_emit(ns_ssa_module *ssa, ns_str output_path) {
                     break;
                 }
             }
-            if (callee_idx < 0) continue;
+            if (callee_idx < 0) {
+                ns_array_free(fn_off);
+                ns_array_free(out);
+                ns_amd64_free(amd64);
+                return ns_return_error(bool, ns_code_loc_nil, NS_ERR_RUNTIME,
+                    "PE output cannot resolve a symbol outside the module; Windows native output is not supported yet.");
+            }
             /*
              * CALL rel32: the rel32 field is at file offset
              *   text_file_base + fn_off[fi] + cf->off

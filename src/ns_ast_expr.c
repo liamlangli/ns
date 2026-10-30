@@ -89,22 +89,6 @@ ns_bool ns_parse_stack_leading_operator(ns_ast_ctx *ctx) {
     return !ns_parse_is_operand(ctx->nodes[scope->pre]);
 }
 
-ns_bool ns_token_is_operator(ns_token_t token) {
-    switch (token.type) {
-    case NS_TOKEN_ADD_OP:
-    case NS_TOKEN_MUL_OP:
-    case NS_TOKEN_BITWISE_OP:
-    case NS_TOKEN_SHIFT_OP:
-    case NS_TOKEN_REL_OP:
-    case NS_TOKEN_EQ_OP:
-    case NS_TOKEN_LOGIC_OP:
-    case NS_TOKEN_REF:
-        return true;
-    default:
-        return false;
-    }
-}
-
 // Shunting Yard Algorithm
 ns_return_bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
@@ -186,11 +170,11 @@ done:
     return result;
 }
 
-// `print` interpolates `{expr}` in its argument, so a literal argument that
-// holds such a placeholder is the backtick format string it spells: every
-// backend then sees an ordinary format expression, where otherwise only the
-// interpreter could evaluate the text at run time (ns_fmt_eval). A `{` that is
-// escaped, never closed, or closed on a later line stays literal, as there.
+// `print` interpolates `{expr}` in a literal argument, so a literal that holds
+// such a placeholder is parsed as the backtick format string it spells: every
+// backend then sees an ordinary format expression. A `{` that is escaped,
+// never closed, or closed on a later line stays literal. Runtime strings are
+// printed verbatim; print never re-parses its argument as source.
 ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx);
 
 static ns_bool ns_parse_literal_has_interp(ns_str s) {

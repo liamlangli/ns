@@ -9,4 +9,3 @@ fn main() bool {
     }
     return a >= 0 && b >= 0
 }
-asds

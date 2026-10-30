@@ -64,7 +64,6 @@ typedef struct ns_compile_option_t {
     ns_bool ssa_only: 2;
     ns_bool aarch_only: 2;
     ns_bool amd64_only: 2;
-    ns_bool macho_only: 2;
     ns_bool macho_obj_only: 2;
     ns_bool elf_obj_only: 2;
     ns_bool wasm_only: 2;
@@ -166,8 +165,6 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.amd64_only = true;
         } else if (strcmp(argv[i], "--elf-o") == 0 || strcmp(argv[i], "--elf-obj") == 0) {
             option.elf_obj_only = true;
-        } else if (strcmp(argv[i], "--macho") == 0) {
-            option.macho_only = true;
         } else if (strcmp(argv[i], "--macho-o") == 0 || strcmp(argv[i], "--macho-obj") == 0) {
             option.macho_obj_only = true;
         } else if (strcmp(argv[i], "--embed-main") == 0) {
@@ -293,14 +290,12 @@ void ns_help() {
     printf("  --ssa             lower ast to ssa blocks\n");
     printf("  --aarch           lower ssa to aarch64 machine words\n");
     printf("  --amd64           lower ssa to amd64 machine bytes\n");
-    printf("  --macho           emit mach-o executable (arm64)\n");
     printf("  --macho-o         emit mach-o object file (.o, arm64)\n");
     printf("  --elf-o           emit elf object file (.o, amd64)\n");
     printf("  --embed-main      with --macho-o, export fn main as ns_program_main\n");
     printf("  --strtab <path>   with --macho-o or --elf-o, write the string-table constructor\n");
     printf("  --macho-platform  with --macho-o, Xcode PLATFORM_NAME for LC_BUILD_VERSION\n");
     printf("  --wasm            emit webassembly module (.wasm)\n");
-    printf("  --pe              emit windows pe executable (.exe, amd64)\n");
     printf("  --cpu             emit an ns_cpu bytecode image (.nsc, default bin/a.nsc);\n");
     printf("                    with run, execute on the ns_cpu interpreter instead\n");
     printf("  --cpu-dis         print the ns_cpu code of a .ns file or .nsc image\n");
@@ -321,7 +316,8 @@ void ns_help() {
     printf("                    writes ns.mod, src/main.ns, README.md, AGENTS.md and .gitignore\n");
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  update [path]     migrate ns.mod and refresh project support files\n");
-    printf("  run  [file|target] [args...] run native source; link = true builds and launches\n");
+    printf("  run  [file|target] [args...] run source directly, or a target's mode\n");
+    printf("                    target = \"exec\" builds and launches a native binary;\n");
     printf("                    a .nsc image runs on the ns_cpu interpreter; so does\n");
     printf("                    source with --cpu (ns run --cpu [file|target])\n");
     printf("                    wasm projects build and serve bin/\n");
@@ -330,7 +326,8 @@ void ns_help() {
     printf("       --port <n>    wasm server port (default 9001; 0 chooses an available port)\n");
     printf("       --patch       eval/emu: install the patch ns.mod `patch` publishes, run it\n");
     printf("  profile [path]    run like `ns run` with profiling; print a CLI hot-path summary\n");
-    printf("                    the report is written to bin/ns.profile\n");
+    printf("                    the report is written to bin/ns.profile; the viewer opens\n");
+    printf("                    afterwards unless NS_PROFILE_NO_VIEW=1 is set\n");
     printf("  profiler [file]   open the GUI viewer for bin/ns.profile (or file)\n");
     printf("                    --live [path|target] instead runs the project and streams\n");
     printf("                    live frames to the viewer over loopback tcp\n");
@@ -349,9 +346,9 @@ void ns_help() {
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
     printf("                    --cpu writes an ns_cpu image bin/<name>.nsc instead\n");
     printf("                    --target x86_64-linux-gnu cross-compiles a native build\n");
-    printf("  ns cook [path] --platform <ios|macos|windows|linux|android|visionos> --output <resources>\n");
-    printf("                    app manifests may set icon = \"path/to/image.png\"\n");
-    printf("                    keeps the artifact when no input changed; --force rebuilds\n");
+    printf("  cook [path]       cook an app's textures into --output <dir>\n");
+    printf("                    --platform <ios|macos|windows|linux|android|visionos>\n");
+    printf("                    uses ns_tex beside ns, else lib/ns-cook.py\n");
     printf("  patch [path|target] write the eval/emu target's over-the-air patch to\n");
     printf("                    bin/<name>_patch: <name>.nsapp and its .nsbundle files;\n");
     printf("                    --label <text> publishes free text with the version, else\n");
@@ -681,32 +678,6 @@ void ns_exec_cpu_dis(ns_str filename) {
     ns_cpu_disasm(m);
     ns_cpu_unload(m);
     ns_array_free(image);
-}
-
-void ns_exec_macho(ns_str filename, ns_str output) {
-    if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_os_read_file(filename);
-    if (source.len == 0) {
-        ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
-        return;
-    }
-
-    if (output.len == 0) {
-        output = ns_str_cstr("bin/a.out");
-    }
-
-    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
-    ns_return_assert(ret);
-
-    ns_return_ptr ssa_ret = ns_ssa_build_native_for_cli(&ctx);
-    if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
-    ns_ssa_module *ssa = ssa_ret.r;
-
-    ns_return_bool emit_ret = ns_macho_emit(ssa, output);
-    ns_ssa_module_free(ssa);
-    if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
-
-    ns_info("macho", "output %.*s\n", output.len, output.data);
 }
 
 void ns_exec_macho_object(ns_str filename, ns_str output, ns_bool embed_main, ns_str strtab, ns_str platform) {
@@ -1908,6 +1879,17 @@ static ns_str ns_manifest_read(ns_str root) {
     return mod;
 }
 
+// ns.mod/v1 `link` / `platform` keys still read, but the next schema drops
+// them. Say so once per process, on stderr so program output stays clean.
+static void ns_manifest_warn_legacy_keys(ns_str root) {
+    static ns_bool warned = false;
+    if (warned) return;
+    warned = true;
+    fprintf(stderr, "ns: ns.mod at %.*s uses the v1 `link` / `platform` keys; "
+                    "run `ns update` to rewrite them as `target`, `target_os` and `target_arch`.\n",
+            root.len, root.data);
+}
+
 // Resolve what `root/ns.mod` declares for `target_name`. An empty name selects
 // the default target, or the top-level `entry` when no `[[targets]]` table is
 // declared. An unknown name is a usage error that lists what is declared.
@@ -1936,6 +1918,12 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
         ns_exit(1, "ns", "unknown target `%.*s`; ns.mod at %.*s declares %.*s.\n",
                 target_name.len, target_name.data, root.len, root.data, names.len, names.data);
     }
+
+    ns_bool legacy = top_keys.has_link || top_keys.legacy_platform.len > 0;
+    for (i32 t = 0; t < (i32)ns_array_length(targets); ++t) {
+        if (targets[t].has_link || targets[t].legacy_platform.len > 0) legacy = true;
+    }
+    if (legacy) ns_manifest_warn_legacy_keys(root);
 
     ns_str entry = ns_str_null;
     if (index >= 0) {
@@ -3064,15 +3052,36 @@ static ns_build_kind ns_build_resolve_kind(ns_build_input *in, u8 requested) {
 }
 
 #if defined(NS_DARWIN)
+// True when `candidate` exists and is at least as new as `reference`. Used to
+// keep a bundle's generated .icns when the icon input did not change.
+static ns_bool ns_path_newer_or_equal(ns_str candidate, ns_str reference) {
+    struct stat a, b;
+    if (stat(candidate.data, &a) != 0 || stat(reference.data, &b) != 0) return false;
+    if (a.st_mtime != b.st_mtime) return a.st_mtime > b.st_mtime;
+#if defined(__APPLE__)
+    return a.st_mtimespec.tv_nsec >= b.st_mtimespec.tv_nsec;
+#else
+    return true;
+#endif
+}
+
 static ns_bool ns_build_darwin_make_icns(ns_str icon, ns_str resources_dir, ns_str *out_icon_file) {
     if (icon.data == ns_null) return false;
     if (!ns_file_exists(icon)) ns_exit(1, "build", "icon file not found: %.*s.\n", icon.len, icon.data);
 
     ns_str icon_file = ns_str_cstr("AppIcon.icns");
     ns_str icns_path = ns_path_join(resources_dir, icon_file);
+    // A source edit rebuilds the bundle but normally leaves the icon alone.
+    // Reusing the .icns skips ten sips processes plus iconutil on that path.
+    if (ns_path_newer_or_equal(icns_path, icon)) {
+        *out_icon_file = icon_file;
+        ns_str_free(icns_path);
+        return true;
+    }
     if (ns_str_ends_with(icon, ns_str_cstr(".icns"))) {
         ns_copy_file_or_exit(icon, icns_path);
         *out_icon_file = icon_file;
+        ns_str_free(icns_path);
         return true;
     }
 
@@ -3134,6 +3143,7 @@ static ns_bool ns_build_darwin_make_icns(ns_str icon, ns_str resources_dir, ns_s
     ns_str_free(q_icns);
     ns_str_free(iconutil);
     ns_str_free(rm);
+    ns_str_free(icns_path);
     *out_icon_file = icon_file;
     return true;
 }
@@ -4497,9 +4507,8 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
         ns_info("build", "executable %.*s\n", output.len, output.data);
         return;
 #else
-        f64 executable_start = ns_build_profile_begin("emit_executable");
-        emit_ret = ns_macho_emit(ssa, output);
-        ns_build_profile_end("emit_executable", executable_start);
+        ns_ssa_module_free(ssa);
+        ns_exit(1, "build", "darwin executables are built on a Darwin host.\n");
 #endif
     } else if (target.os == NS_OS_WINDOWS) {
         f64 executable_start = ns_build_profile_begin("emit_executable");
@@ -6757,6 +6766,10 @@ static void ns_exec_test_dir_parallel(ns_str dir, char **names, i32 count, i32 w
     if (retried != ns_null) {
         for (i32 i = 0; i < count; i++) {
             if (codes[i] == 0) continue;
+            // Only the GPU-service entries are retried: native GPU tests can
+            // lose the first connection when several start at once. A normal
+            // test failure stays a failure instead of being masked by a rerun.
+            if (strstr(names[i], "gpu") == ns_null && strstr(names[i], "shader") == ns_null) continue;
             FILE *retry = tmpfile();
             if (retry == ns_null) continue;
             ns_str file = ns_path_join(dir, ns_str_cstr(names[i]));
@@ -6828,8 +6841,7 @@ static void ns_exec_test_dir(ns_str dir) {
 
     i32 count = (i32)ns_array_length(names);
     if (count == 0) {
-        ns_warn("test", "no *_test.ns files under %.*s\n", dir.len, dir.data);
-        return;
+        ns_exit(1, "test", "no *_test.ns files under %.*s.\n", dir.len, dir.data);
     }
     qsort(names, count, sizeof(char *), ns_cstr_cmp);
 
@@ -6863,6 +6875,10 @@ void ns_exec_test(ns_str path) {
     ns_str test_dir = ns_project_test_dir(path);
     if (test_dir.data != ns_null) {
         if (!ns_is_dir(test_dir)) {
+            // An explicit project path is a request to run its suite; a missing
+            // directory is a failure, not a silent success (bare `ns test`
+            // still tolerates a project without tests).
+            if (path.len > 0) ns_exit(1, "test", "no test directory at %.*s.\n", test_dir.len, test_dir.data);
             ns_warn("test", "no test directory at %.*s\n", test_dir.len, test_dir.data);
             return;
         }
@@ -7440,8 +7456,6 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_ssa(option.filename);
     } else if (option.aarch_only) {
         ns_exec_aarch(option.filename);
-    } else if (option.macho_only) {
-        ns_exec_macho(option.filename, option.output);
     } else if (option.amd64_only) {
         ns_exec_amd64(option.filename);
     } else if (option.macho_obj_only) {

@@ -57,7 +57,6 @@ int http_send_file(int fd, const char *path);
 // Send a status-only response (e.g. 404, 500) with a small HTML body describing
 // the status. Returns 0 on success, -1 on error.
 int http_send_status(int fd, int status);
-int http_send_static_request(int fd, const char *root);
 
 // ---- complete static file server ------------------------------------------
 

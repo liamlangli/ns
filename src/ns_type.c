@@ -378,23 +378,26 @@ ns_bool ns_number_literal_bits(ns_str s, ns_num_suffix suffix, u64 *out) {
     return true;
 }
 
-i32 ns_str_to_i32(ns_str s) {
-    return (i32)ns_str_to_i64(s);
-}
-
-static i8 _ns_str_buff[128];
 f64 ns_str_to_f64(ns_str s) {
-    i32 size = s.len;
-    memcpy(_ns_str_buff, s.data, size);
-    _ns_str_buff[size] = '\0';
-    return atof(_ns_str_buff);
+    i8 local[128];
+    i8 *buf = local;
+    if (s.len + 1 > (i32)sizeof(local)) {
+        buf = (i8 *)ns_malloc((szt)s.len + 1);
+        if (buf == ns_null) return 0.0;
+    }
+    if (s.len > 0) memcpy(buf, s.data, (szt)s.len);
+    buf[s.len] = '\0';
+    f64 value = atof(buf);
+    if (buf != local) ns_free(buf);
+    return value;
 }
 
 ns_str ns_str_from_i32(i32 i) {
+    i8 local[32];
     ns_str s = {.dynamic = 1};
-    szt len = snprintf(_ns_str_buff, sizeof(_ns_str_buff), "%d", i);
-    ns_array_set_length(s.data, len);
-    strcpy(s.data, _ns_str_buff);
+    szt len = snprintf(local, sizeof(local), "%d", i);
+    ns_array_set_length(s.data, len + 1);
+    memcpy(s.data, local, len + 1);
     s.len = len;
     return s;
 }
@@ -535,9 +538,16 @@ ns_str ns_str_unescape(ns_str s) {
 }
 
 i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len) {
-    for (i32 i = 0; i < len; i++) {
-        ns_array_push(a->data, data[i]);
-    }
+    if (len <= 0) return a->len;
+    // Grow once and copy, instead of one push per byte. `data` may point into
+    // a->data itself, so keep its offset across a possible reallocation.
+    szt old = ns_array_length(a->data);
+    ns_bool self = a->data && data >= a->data && data < a->data + old;
+    szt from = self ? (szt)(data - a->data) : 0;
+    ns_array_ensure(a->data, (szt)len);
+    if (self) data = a->data + from;
+    memmove(a->data + old, data, (szt)len);
+    ns_array_header(a->data)->len = old + (szt)len;
     a->len += len;
     return a->len;
 }

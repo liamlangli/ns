@@ -160,8 +160,6 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_task.c \
 	src/ns_vm_lib.c \
 	src/ns_vm_print.c \
-	src/ns_net.c \
-	src/ns_json.c \
 	src/ns_shader.c \
 	src/ns_lint.c \
 	src/ns_project.c \
@@ -193,11 +191,9 @@ NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
 	src/ns_vm_lib.c \
 	src/ns_embedded_ffi.c \
 	src/ns_vm_print.c \
-	src/ns_json.c \
 	src/ns_shader.c \
 	src/ns_native_rt.c \
 	src/ns_cpu.c \
-	src/ns_def.c \
 	src/ns_patch.c
 
 # The generator is Nano Script (tools/gen_embedded_ffi.ns); the embedded
@@ -206,6 +202,20 @@ NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
 .PHONY: regen-embedded-ffi
 regen-embedded-ffi: $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/term$(NS_DYLIB_SUFFIX)
 	$(TARGET)$(NS_SUFFIX) run tools/gen_embedded_ffi.ns
+
+# Fail when src/ns_embedded_ffi.c is stale against lib/*.ns or the native
+# sources: regenerate it, compare with the checked-in file, then restore it.
+.PHONY: check-embedded-ffi
+check-embedded-ffi: $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/term$(NS_DYLIB_SUFFIX)
+	$(Q)cp src/ns_embedded_ffi.c $(NS_BINDIR)/ns_embedded_ffi.c.checked
+	$(Q)$(TARGET)$(NS_SUFFIX) run tools/gen_embedded_ffi.ns > /dev/null
+	$(Q)if cmp -s $(NS_BINDIR)/ns_embedded_ffi.c.checked src/ns_embedded_ffi.c; then \
+		rm -f $(NS_BINDIR)/ns_embedded_ffi.c.checked; \
+	else \
+		diff -u $(NS_BINDIR)/ns_embedded_ffi.c.checked src/ns_embedded_ffi.c | head -40; \
+		mv -f $(NS_BINDIR)/ns_embedded_ffi.c.checked src/ns_embedded_ffi.c; \
+		echo "src/ns_embedded_ffi.c is stale: run make regen-embedded-ffi"; exit 1; \
+	fi
 
 # iOS subset: exclude the REPL (readline is unavailable). NS_XCLIB keeps the
 # VM's libffi/dlopen path out and selects its generated, statically bound FFI
@@ -231,11 +241,8 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_vm_lib.c \
 	src/ns_embedded_ffi.c \
 	src/ns_vm_print.c \
-	src/ns_net.c \
-	src/ns_json.c \
 	src/ns_shader.c \
 	src/ns_native_rt.c \
-	src/ns_cpu.c \
 	src/ns_def.c \
 	src/ns_asm.c \
 	src/ns_patch.c
@@ -263,23 +270,6 @@ $(NS_BINDIR)/src/ns_appimage.o: NS_CFLAGS += $(NS_HOST_ZLIB_CFLAGS)
 # which is shipped for executables produced by `ns build`.
 $(NS_BINDIR)/src/ns_native_rt.o: NS_CFLAGS += -DNS_HOST_TOOL
 
-# Native feature modules (lib/*) are compiled position-independent and built as
-# dynamic libraries. Keep them out of bin/ns so the interpreter remains
-# language-only; ref fn calls resolve them through dlopen()/dlsym().
-NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/wasm_dev.c lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c
-ifeq ($(NS_OS), $(NS_LINUX))
-	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c lib/src/storage.json.c
-else ifeq ($(NS_OS), $(NS_DARWIN))
-	# Apple: force the Metal backend.
-	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/view.gamepad.apple.m lib/src/os.osx.m lib/src/os.haptic.apple.m lib/src/os.motion.apple.m lib/src/term.posix.c lib/src/gpu.metal.m lib/src/audio.apple.m lib/src/storage.apple.m
-else ifeq ($(NS_OS), $(NS_WIN))
-	# Windows: force the DirectX 12 backend.
-	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c lib/src/term.win.c lib/src/gpu.dx12.c lib/src/storage.json.c
-endif
-NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
-NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
-NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
-
 NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_cpu_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_build_cache_test.c test/ns_lint_test.c test/ns_profile_test.c test/ns_patch_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
@@ -288,12 +278,31 @@ NS_ENTRY_OBJ = $(NS_BINDIR)/src/ns.o
 
 TARGET = $(NS_BINDIR)/ns
 
-NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
 NS_DIRS = bin bin/src bin/lib
 
+# `make install` builds every app through install-apps; leave the duplicate
+# pass out of `all` when install is on the command line.
+NS_ALL_APPS = apps
+ifneq ($(filter install,$(MAKECMDGOALS)),)
+NS_ALL_APPS =
+endif
+
 ifeq ($(NS_OS), $(NS_DARWIN))
-all: $(NS_DIRS) $(TARGET) $(NS_LIB) std apps
-test: apps
+all: $(NS_DIRS) $(TARGET) $(NS_LIB) std $(NS_ALL_APPS)
+# Only the profiler viewer is needed by the test suite; other apps stay on
+# `make apps` / `make install`.
+test: test-viewer
+
+.PHONY: test-viewer
+test-viewer: $(TARGET) std
+	$(Q)$(TARGET)$(NS_SUFFIX) build nscode/ns_profiler
+
+# Embedded libgit2/libssh2 checks: builds the pinned dependencies into
+# bin/git-deps (slow on first run) and starts a throwaway loopback sshd, so it
+# stays out of `make test`.
+.PHONY: test-embedded
+test-embedded:
+	sh scripts/test_embedded_git.sh
 else ifeq ($(NS_OS), $(NS_LINUX))
 all: $(NS_DIRS) $(TARGET) $(NS_LIB) std $(NS_APPIMAGE_RUNTIME)
 test: $(NS_APPIMAGE_RUNTIME)
@@ -367,11 +376,17 @@ $(NS_LIB): $(NS_LIB_OBJS)
 so: $(NS_LIB_OBJS)
 	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(NS_BINDIR)/ns$(NS_DYLIB_SUFFIX) $(NS_LDFLAGS)
 
+# src/ns_json.c is a test-only helper: no shipped tool or runtime calls it, so
+# it is linked into its own test rather than into libns and bin/ns.
+NS_TEST_EXTRA_SRCS =
+$(NS_BINDIR)/ns_json_test: NS_TEST_EXTRA_SRCS = src/ns_json.c
+$(NS_BINDIR)/ns_json_test: src/ns_json.c
+
 $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 # libns.a must precede $(NS_LDFLAGS): with ld's default --as-needed, shared
 # libs listed before the archive that references them (ffi, readline) are
 # dropped and the link fails with undefined references.
-	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_TEST_EXTRA_SRCS) $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
 .PHONY: test
 # CI runs `make test` without `make all`. Depend on `std` so every native
@@ -403,7 +418,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) run --cpu test/shader_float_buffer_test.ns
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) build --exe test/shader_float_buffer_test.ns -o $(NS_BINDIR)/shader_float_buffer_test
 	$(NS_BINDIR)/shader_float_buffer_test
-	python3 test/ns_cook_test.py
+	NS_REQUIRE_COOK_TESTS=$${NS_REQUIRE_COOK_TESTS:-0} python3 test/ns_cook_test.py
 	sh nscode/ns_lens/test/batch_native_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_project_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -419,6 +434,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_lens
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_tex
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_vision
+	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/nn
 	sh nscode/ns_tex/test/integration.sh
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_cross_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -520,7 +536,7 @@ install: all
 		lib/include/storage.h lib/include/storage.internal.h lib/include/compress.h lib/include/audio.h lib/include/camera.h \
 		lib/include/sono.h lib/include/stb_image.h lib/include/stb_image_resize2.h lib/include/stb_image_write.h \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/
-	$(Q)cp lib/assets/latin_mono.json lib/assets/latin_mono.webp lib/assets/latin_mono.png \
+	$(Q)cp lib/assets/latin_mono.json lib/assets/latin_mono.png \
 		lib/assets/bitmap_font.json lib/assets/bitmap_font.png \
 		lib/assets/bitmap_zh_cn.json lib/assets/bitmap_zh_cn.png \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets/

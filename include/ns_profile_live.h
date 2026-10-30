@@ -79,8 +79,5 @@ i32 ns_profile_device_relay(const char *selector, const char *host, i32 port);
 // false when the viewer cannot be reached; capture then stays local.
 ns_bool ns_profile_live_connect(const char *host, i32 port, const char *title);
 
-// True once connect succeeded and the socket is still usable.
-ns_bool ns_profile_live_active(void);
-
 // Flush what is queued, send BYE, and close. Safe to call when not connected.
 void ns_profile_live_close(u32 reason);

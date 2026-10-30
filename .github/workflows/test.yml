@@ -30,8 +30,24 @@ jobs:
         if: runner.os == 'Linux'
         run: make deps
 
+      # test/ns_cook_test.py needs Python 3.11+ (tomllib) and Pillow; with
+      # NS_REQUIRE_COOK_TESTS=1 a missing dependency fails instead of skipping.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python test dependencies
+        run: python3 -m pip install Pillow
+
       # `make test` builds the interpreter, required native modules and C test
       # binaries, then runs the core suites. The compile/interpret parity suite
       # runs on both hosts: mach-o AArch64 there, ELF AMD64 here.
       - name: Test
         run: make test
+        env:
+          NS_REQUIRE_COOK_TESTS: '1'
+
+      # The statically bound FFI table must match lib/*.ns and the native
+      # sources it was generated from.
+      - name: Check embedded FFI table
+        if: runner.os == 'macOS'
+        run: make check-embedded-ffi

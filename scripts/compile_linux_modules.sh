@@ -24,7 +24,8 @@ cc() {
 "$gcc" -c $cflags -I"${root}/third_party/zlib" -DZ_PREFIX=1 -DZ_HAVE_UNISTD_H \
     -o "$obj/compress.o" "${root}/lib/src/compress.c"
 
-for src in io os os.linux net http wasm_dev term.posix view view.linux xdg-shell-protocol gpu gpu.vulkan ui audio.stub storage.db storage.cache storage.json sono; do
+# Keep this list in step with the Linux modules lib/Makefile builds natively.
+for src in io os os.linux net http wasm_dev term.posix view view.linux xdg-shell-protocol gpu gpu.vulkan ui audio.stub storage.db storage.cache storage.json sono secure desktop.stub; do
     cc "$obj/${src}.o" "" "${root}/lib/src/${src}.c"
 done
 
@@ -49,12 +50,20 @@ link http "$obj/http.o" "$out/net.so"
 link wasm_dev "$obj/wasm_dev.o"
 link term "$obj/term.posix.o"
 link view "$obj/view.o" "$obj/view.linux.o" "$obj/xdg-shell-protocol.o" -lwayland-client -lwayland-cursor
-link gpu "$obj/gpu.o" "$obj/gpu.vulkan.o" -lvulkan -lshaderc_shared
+# The LunarG SDK names the shaderc runtime libshaderc_shared.so, distro
+# packages libshaderc.so; link whichever this gcc finds (as lib/Makefile does).
+shaderc=-lshaderc
+case "$("$gcc" -print-file-name=libshaderc_shared.so)" in
+    /*) shaderc=-lshaderc_shared ;;
+esac
+link gpu "$obj/gpu.o" "$obj/gpu.vulkan.o" -lvulkan "$shaderc"
 link ui "$obj/ui.o" "$out/io.so" "$out/gpu.so" "$out/view.so"
 link audio "$obj/audio.stub.o"
 link storage "$obj/storage.db.o" "$obj/storage.cache.o" "$obj/storage.json.o" -lsqlite3
 link compress "$obj/compress.o" "$obj/zlib"/*.o
 link sono "$obj/sono.o"
+link secure "$obj/secure.o" -lssl -lcrypto -ldl
+link desktop "$obj/desktop.stub.o"
 
 # The launcher `ns build` puts in front of every Linux AppImage.
 echo "cc ns-appimage-runtime"

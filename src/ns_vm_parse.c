@@ -115,9 +115,15 @@ ns_bool ns_type_match(ns_vm *vm, ns_type r, ns_type p) {
         i32 arg_required_r = fn_r->arg_required;
         i32 arg_required_p = fn_p->arg_required;
 
-        for (i32 i = 0; i < arg_required_r; ++i) {
-            if (i > arg_required_p) return false;
+        // A value of fn type p can stand in for fn type r only when p accepts
+        // every required argument of r. Comparing against the declared count
+        // (not just the required count) also keeps the args[] reads below in
+        // bounds for zero-arg functions, whose args pointer is NULL.
+        if (arg_required_r > arg_required_p) return false;
+        if (arg_required_r > (i32)ns_array_length(fn_r->args) ||
+            arg_required_r > (i32)ns_array_length(fn_p->args)) return false;
 
+        for (i32 i = 0; i < arg_required_r; ++i) {
             ns_type arg_r = fn_r->args[i].t;
             ns_type arg_p = fn_p->args[i].t;
 
@@ -308,12 +314,6 @@ i32 ns_vm_push_string(ns_vm *vm, ns_str s) {
     return i;
 }
 
-i32 ns_vm_push_data(ns_vm *vm, ns_data d) {
-    i32 i = ns_array_length(vm->data_list);
-    ns_array_push(vm->data_list, d);
-    return i;
-}
-
 ns_str ns_ops_name(ns_token_t op) {
     switch (op.type) {
     case NS_TOKEN_ADD_OP:
@@ -439,13 +439,10 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     case NS_TYPE_SET:
     case NS_TYPE_TASK: {
         u64 ti = ns_type_index(t);
-        if (ti > ns_array_length(vm->symbols)) {
+        if (ti >= ns_array_length(vm->symbols)) {
             return ns_str_null;
         }
-
-        ns_symbol *r = &vm->symbols[ti];
-        if (!r) return ns_str_null;
-        return r->name;
+        return vm->symbols[ti].name;
     } break;
     default:
         return ns_str_cstr("unknown");
@@ -1226,7 +1223,7 @@ ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
         }
 
         if (ret.r.type == NS_TYPE_INFER) {
-            if (n->var_def.expr == -1) {
+            if (n->var_def.expr == 0) {
                 return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "implicit var def.");
             }
             ns_return_type ret_expr = ns_vm_parse_expr(vm, ctx, n->var_def.expr, ret.r);
@@ -1528,6 +1525,11 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                     return ns_return_error(type, ns_ast_state_loc(ctx, arg1.state), NS_ERR_EVAL,
                                            ns_vm_type_mismatch_msg(vm, "container key type mismatch.", key_t, ret_k.r));
                 }
+                // Record the resolution so evaluation does not repeat the
+                // shadowing lookup on every call.
+                i32 kind = ns_str_equals_STR(bname, "has") ? 0 : is_insert ? 1 : 2;
+                n = &ctx->nodes[i];
+                n->call_expr.rt = NS_CALL_RT_CONTAINER - kind;
                 return ns_return_ok(type, ns_type_bool);
             }
         }
@@ -1572,10 +1574,18 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                 if ((i32)ns_array_length(vm->symbols[chosen_i].fn.args) > 0) {
                     chosen_arg = vm->symbols[chosen_i].fn.args[0].val.t;
                 }
-                ret_first = ns_vm_parse_expr(vm, ctx, n->next, chosen_arg);
-                if (ns_return_is_error(ret_first)) return ret_first;
+                // The infer pass already produced exactly the parameter type in
+                // the common case; parsing again there only doubled the work at
+                // every level of a nested call (2^depth for f(g(h(x)))).
+                ns_bool same = first_arg_t.type == chosen_arg.type && first_arg_t.index == chosen_arg.index &&
+                               first_arg_t.array == chosen_arg.array && first_arg_t.ref == chosen_arg.ref &&
+                               first_arg_t.stack == chosen_arg.stack && first_arg_t.mut == chosen_arg.mut;
+                if (!same) {
+                    ret_first = ns_vm_parse_expr(vm, ctx, n->next, chosen_arg);
+                    if (ns_return_is_error(ret_first)) return ret_first;
+                    first_arg_t = ret_first.r;
+                }
                 first_arg_parsed = true;
-                first_arg_t = ret_first.r;
             }
             n->call_expr.rt = chosen_i;
             fn_record = &vm->symbols[chosen_i];
@@ -1634,6 +1644,10 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     if (n->call_expr.arg_count > (i32)ns_array_length(fn_record->fn.args)) {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "call expr argument count mismatch.");
+    }
+    if (n->call_expr.arg_count < fn_record->fn.arg_required) {
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL,
+                               "call expr is missing a required argument.");
     }
 
     i32 next = n->next;
@@ -2077,6 +2091,7 @@ ns_type ns_vm_parse_binary_override(ns_vm *vm, ns_type l, ns_type r, ns_token_t 
     ns_str r_name = ns_vm_get_type_name(vm, r);
     ns_str fn_name = ns_ops_override_name(l_name, r_name, op);
     ns_symbol *fn = ns_vm_find_symbol(vm, fn_name, true);
+    ns_str_free(fn_name);
     return fn ? fn->fn.ret : ns_type_unknown;
 }
 

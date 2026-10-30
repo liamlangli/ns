@@ -7,6 +7,26 @@
 #define NS_CPU_ERROR(t, l, err, m) ((ns_return_##t){.s = (err), .e = {.msg = ns_str_cstr(m), .loc = (l)}})
 #include "ns_ssa.h"
 
+// Comparison and float lowering below map an op to its sibling by offset
+// (EQ -> BEQ, FADD64 -> FADD32). Pin the ISA order those offsets rely on so a
+// new opcode inserted in between fails to compile instead of mistranslating.
+_Static_assert(NS_CPU_NE - NS_CPU_EQ == NS_CPU_BNE - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_LTS - NS_CPU_EQ == NS_CPU_BLTS - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_LES - NS_CPU_EQ == NS_CPU_BLES - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_LTU - NS_CPU_EQ == NS_CPU_BLTU - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_LEU - NS_CPU_EQ == NS_CPU_BLEU - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_FEQ64 - NS_CPU_EQ == NS_CPU_BFEQ64 - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_FNE64 - NS_CPU_EQ == NS_CPU_BFNE64 - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_FLT64 - NS_CPU_EQ == NS_CPU_BFLT64 - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_FLE64 - NS_CPU_EQ == NS_CPU_BFLE64 - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_FEQ32 - NS_CPU_EQ == NS_CPU_BFEQ32 - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_FNE32 - NS_CPU_EQ == NS_CPU_BFNE32 - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_FLT32 - NS_CPU_EQ == NS_CPU_BFLT32 - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_FLE32 - NS_CPU_EQ == NS_CPU_BFLE32 - NS_CPU_BEQ, "ns_cpu compare/branch order");
+_Static_assert(NS_CPU_FSUB32 - NS_CPU_FSUB64 == NS_CPU_FADD32 - NS_CPU_FADD64, "ns_cpu f32/f64 order");
+_Static_assert(NS_CPU_FMUL32 - NS_CPU_FMUL64 == NS_CPU_FADD32 - NS_CPU_FADD64, "ns_cpu f32/f64 order");
+_Static_assert(NS_CPU_FDIV32 - NS_CPU_FDIV64 == NS_CPU_FADD32 - NS_CPU_FADD64, "ns_cpu f32/f64 order");
+
 /*
  * SSA → ns_cpu image (doc/cpu.md).
  *
@@ -506,7 +526,9 @@ static void ns_cpu_gen_call(ns_cpu_gen *g, i32 inst_pos, ns_ssa_inst *inst) {
         for (i32 i = 0; i < nargs; ++i) {
             ns_type at = im && i < (i32)ns_array_length(im->params) ? im->params[i]
                                                                     : ns_cpu_gen_type(g, args[i]);
-            ns_array_push(site.params, ns_cpu_ffi_kind_of(at));
+            // A struct passed by value reaches C as a pointer to it, like a ref.
+            ns_bool by_value_struct = ns_type_is(at, NS_TYPE_STRUCT) && !ns_type_is_array(at) && !ns_type_is_ref(at);
+            ns_array_push(site.params, by_value_struct ? NS_CPU_FFI_REF : ns_cpu_ffi_kind_of(at));
             if (site.params[i] == NS_CPU_FFI_VOID) site.params[i] = NS_CPU_FFI_I64;
         }
         i32 index = -1;

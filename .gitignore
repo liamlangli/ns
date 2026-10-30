@@ -10,6 +10,8 @@ bin
 *.log
 ns.profile
 .ns/chat/
+__pycache__/
+*.pyc
 
 # cmake
 build

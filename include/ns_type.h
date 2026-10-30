@@ -145,7 +145,6 @@ i32 ns_utf8_encode(u32 cp, i8 *buf);          // encode cp into buf (>= 4 bytes)
 i32 ns_str_utf8_len(ns_str s);                // codepoint count (each invalid byte counts as one)
 ns_bool ns_str_utf8_valid(ns_str s);          // true when every byte belongs to a well-formed utf8 sequence
 
-i32 ns_str_to_i32(ns_str s);
 i64 ns_str_to_i64(ns_str s);
 f64 ns_str_to_f64(ns_str s);
 ns_str ns_str_from_i32(i32 i);
@@ -155,8 +154,6 @@ i32 ns_str_append_i32(ns_str *a, i32 i);
 i32 ns_str_append_f64(ns_str *s, f64 n, i32 precision);
 i32 ns_str_index_of(ns_str s, ns_str sub);
 ns_str ns_str_sub_expr(ns_str s); // get inplace sub expr from first space to end of line
-
-#define ns_str_case(type) case type: return ns_str_cstr(#type);
 
 // ns_data
 typedef struct ns_data {
@@ -348,7 +345,6 @@ typedef struct ns_type {
 #define ns_type_is_array(t) (t.array != 0)
 #define ns_type_is_const(t) (t.mut == 0)
 #define ns_type_in_stack(t) (t.stack != 0)
-#define ns_type_in_heap(t) (t.heap != 0)
 #define ns_type_index(t) (t.index)
 #define ns_type_set_mut(t, c) ((ns_type){.ref = t.ref, .stack = c && t.stack, .mut = c, .type = t.type, .array = t.array, .index = t.index})
 #define ns_type_set_stack(t, s) ((ns_type){.ref = t.ref, .stack = s, .mut = s || t.mut, .type = t.type, .array = t.array, .index = t.index})

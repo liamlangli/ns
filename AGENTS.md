@@ -54,7 +54,9 @@ The common commands are:
   write `bin/ns.profile`, then print a colored CLI hot-path summary of VM scopes
   and FFI calls. The report always lands in a `bin/` directory - the project's
   own `bin/` when the run resolves a project, otherwise `bin/` beside the
-  working directory - never at the project root. `ns build --profile` writes the
+  working directory - never at the project root. The GUI viewer then opens on
+  the report; set `NS_PROFILE_NO_VIEW=1` (for example in CI) to skip it.
+  `ns build --profile` writes the
   same `bin/ns.profile` and
   records nested compiler phases, including cache validation, source linking,
   parsing, SSA lowering, emission,
@@ -166,6 +168,9 @@ The common commands are:
   The same files published again with only that clock moved, at the same
   precision and channel, keep the label and the version. The program reads the
   label with `os_patch_label()`. See `doc/patch.md`.
+- `ns cook [path]`: cook an app's textures for one platform into
+  `--output <dir>` (`--platform ios|macos|windows|linux|android|visionos`),
+  with the installed `ns_tex` beside `ns`, else `lib/ns-cook.py`.
 - `ns clean [path]`: remove what `ns` generates for the nearest project: the
   `bin/` output directory, which also holds generated IDE projects and the
   build cache and build profile, plus legacy `ns.profile` beside the manifest.

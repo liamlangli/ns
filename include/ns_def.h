@@ -16,13 +16,4 @@ typedef struct ns_fn_def {
     void *fn;
 } ns_fn_def;
 
-typedef struct ns_struct_def {
-    ns_str name;
-    ns_str lib;
-
-    ns_arg_def *fields;
-    i32 field_count;
-} ns_struct_def;
-
 void ns_vm_def_fn(ns_vm *vm, ns_fn_def *fn);
-void ns_vm_def_struct(ns_vm *vm, ns_struct_def *st);

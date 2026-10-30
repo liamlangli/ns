@@ -63,7 +63,8 @@ for p in pts {
 }
 
 // ---- the print() format-string path uses to_str too ------------------------
-// (exercises ns_fmt_eval, not just backtick interpolation)
+// (a literal with {expr} parses as a format string, so this checks to_str
+// through that path, not just through backtick interpolation)
 print("segment {seg} head {seg.a}\n")
 
 print("to_str test passed\n")

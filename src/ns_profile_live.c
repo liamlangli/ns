@@ -436,8 +436,6 @@ ns_bool ns_profile_live_connect(const char *host, i32 port, const char *title) {
     return ns_live_attach(fd, title);
 }
 
-ns_bool ns_profile_live_active(void) { return ns_live.connected; }
-
 void ns_profile_live_close(u32 reason) {
     if (!ns_live.connected) return;
     ns_profile.frame_sink = ns_null;

@@ -2,47 +2,6 @@
 
 #include <limits.h>
 
-// os
-ns_str ns_os_exec(ns_str cmd) {
-#ifdef NS_XCLIB
-    // Embedded Apple runtimes are language-only and cannot spawn host
-    // processes. Keep path/file helpers available without importing popen,
-    // which is unavailable on iOS and visionOS.
-    (void)cmd;
-    return ns_str_null;
-#else
-    FILE *pipe = popen(cmd.data, "r");
-    if (!pipe) {
-        return ns_str_null;
-    }
-    i8 buffer[128];
-    ns_str data = ns_str_null;
-    while (!feof(pipe)) {
-        if (fgets(buffer, 128, pipe) != NULL) {
-            data = ns_str_concat(data, ns_str_cstr(buffer));
-        }
-    }
-    pclose(pipe);
-    return data;
-#endif
-}
-
-ns_str ns_os_mkdir(ns_str path) {
-#ifdef NS_XCLIB
-    (void)path;
-    return ns_str_null;
-#else
-    i8 *buffer = (i8 *)ns_malloc(path.len + 8);
-    memcpy(buffer, "mkdir -p ", 9);
-    memcpy(buffer + 9, path.data, path.len);
-    buffer[path.len + 9] = '\0';
-    ns_str cmd = ns_str_cstr(buffer);
-    ns_str data = ns_os_exec(cmd);
-    free(buffer);
-    return data;
-#endif
-}
-
 // path
 ns_str ns_path_filename(ns_str src) {
     // filename between path separator and extention separator
@@ -61,20 +20,6 @@ ns_str ns_path_filename(ns_str src) {
     }
 
     return ns_str_slice(src, start, end);
-}
-
-ns_str ns_path_dirname(ns_str src) {
-    // dirname is the path before the last path separator
-    // create new buffer to save dirname
-    i32 end = src.len;
-    for (i32 i = src.len - 1; i >= 0; i--) {
-        if (src.data[i] == NS_PATH_SEPARATOR) {
-            end = i;
-            break;
-        }
-    }
-
-    return ns_str_slice(src, 0, end);
 }
 
 ns_str ns_path_join(ns_str lhs, ns_str rhs) {

@@ -68,14 +68,6 @@ ns_bool ns_token_require_type(ns_ast_ctx *ctx) {
     return false;
 }
 
-ns_bool ns_token_look_ahead(ns_ast_ctx *ctx, ns_token_type t) {
-    ns_ast_state state = ns_save_state(ctx);
-    ns_parse_next_token(ctx);
-    ns_bool result = ctx->token.type == t;
-    ns_restore_state(ctx, state);
-    return result;
-}
-
 ns_bool ns_token_skip_eol(ns_ast_ctx *ctx) {
     ns_ast_state state;
     do {
@@ -247,60 +239,6 @@ ns_bool ns_parse_identifier(ns_ast_ctx *ctx) {
     }
     ns_restore_state(ctx, state);
     return false;
-}
-
-ns_return_bool ns_primary_expr(ns_ast_ctx *ctx) {
-    ns_return_bool ret;
-    ns_ast_state state = ns_save_state(ctx);
-    ns_parse_next_token(ctx);
-
-    // literal
-    ns_bool is_literal = false;
-    switch (ctx->token.type) {
-    case NS_TOKEN_INT_LITERAL:
-    case NS_TOKEN_FLT_LITERAL:
-    case NS_TOKEN_STR_LITERAL:
-    case NS_TOKEN_STR_FORMAT:
-    case NS_TOKEN_TRUE:
-    case NS_TOKEN_FALSE:
-    case NS_TOKEN_NIL:
-        is_literal = true;
-        break;
-    default:
-        break;
-    }
-
-    if (is_literal) {
-        ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .state = state, .primary_expr = {.token = ctx->token} };
-        ns_ast_push(ctx, n);
-        return ns_return_ok(bool, true);
-    }
-
-    // identifier
-    ns_restore_state(ctx, state);
-    if (ns_parse_identifier(ctx)) {
-        ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .state = state,.primary_expr = {.token = ctx->token} };
-        ns_ast_push(ctx, n);
-        return ns_return_ok(bool, true);
-    }
-
-    // ( expression )
-    ns_restore_state(ctx, state);
-    ns_parse_next_token(ctx);
-    if (ctx->token.type == NS_TOKEN_OPEN_PAREN) {
-        ret = ns_parse_expr(ctx);
-        if (ns_return_is_error(ret)) return ret;
-
-        if (ret.r) {
-            ns_parse_next_token(ctx);
-            if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
-                return ns_return_ok(bool, true);
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return ns_return_ok(bool, false);
 }
 
 // [a in b] [a in n to m]
@@ -559,7 +497,10 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
             break;
         }
     } while(1);
-    if (val_assigned > 0) fn.fn_def.arg_required = fn.fn_def.arg_count - val_assigned;
+    // Every parameter is required: default expressions are parsed for syntax
+    // but never evaluated, so accepting a missing argument would read an
+    // uninitialized call frame (e.g. print() used to crash).
+    fn.fn_def.arg_required = fn.fn_def.arg_count - val_assigned;
 
     if (fn.fn_def.arg_count == 0)
         ns_parse_next_token(ctx);
@@ -742,18 +683,6 @@ ns_return_bool ns_parse_enum_def(ns_ast_ctx *ctx) {
 
     ns_ast_push(ctx, def);
     return ns_return_ok(bool, true);
-}
-
-i32 ns_ast_struct_field_index(ns_ast_ctx *ctx, i32 st, ns_str name) {
-    ns_ast_t *n = &ctx->nodes[st];
-    i32 count = n->struct_def.count;
-    for (i32 i = 0; i < count; i++) {
-        n = &ctx->nodes[n->next];
-        if (ns_str_equals(n->arg.name.val, name)) {
-            return i;
-        }
-    }
-    return -1;
 }
 
 /**

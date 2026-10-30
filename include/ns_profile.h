@@ -216,10 +216,6 @@ void ns_profile_callback_return(void);
 // inspect aggregates).
 void ns_profile_write_report(FILE *f, const char *path, f64 elapsed_ms, i32 argc, i8 **argv);
 
-// Compatibility wrapper: write aggregates + an uncompressed `.tl` beside a
-// temp-less text-only path when `path` is unknown. Prefer write_report.
-void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv);
-
 // Switch timeline storage to the 128-frame ring. Aggregates (fns/flames) stay
 // cumulative for the whole run; only retained samples become a moving window.
 void ns_profile_ring_enable(void);

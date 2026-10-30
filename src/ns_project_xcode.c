@@ -649,7 +649,6 @@ static const char *const ns_xcode_runtime_sources[] = {
     "ns_vm_lib.c",
     "ns_embedded_ffi.c",
     "ns_vm_print.c",
-    "ns_json.c",
     "ns_shader.c",
     "ns_native_rt.c",
     "ns_cpu.c",
@@ -709,7 +708,7 @@ static const char *const ns_xcode_resource_modules[] = {
 };
 
 static const char *const ns_xcode_ui_assets[] = {
-    "latin_mono.json", "latin_mono.webp", "latin_mono.png",
+    "latin_mono.json", "latin_mono.png",
     "bitmap_font.json", "bitmap_font.png", "bitmap_zh_cn.json", "bitmap_zh_cn.png",
 };
 
@@ -719,7 +718,6 @@ static const char *const ns_xcode_runtime_headers[] = {
     "ns_token.h",
     "ns_ast.h",
     "ns_vm.h",
-    "os/ns_json.h",
     "ns_shader.h",
     "ns_profile.h",
     "ns_profile_live.h",

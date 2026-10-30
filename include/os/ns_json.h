@@ -63,7 +63,5 @@ ns_json_ref ns_json_make_string(ns_str s);
 ns_json_ref ns_json_make_array();
 ns_json_ref ns_json_make_object();
 
-ns_bool ns_json_print(ns_json *json);
-
 ns_json_ref ns_json_parse(ns_str s);
 ns_str ns_json_stringify(ns_json *json);

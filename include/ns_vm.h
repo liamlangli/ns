@@ -37,6 +37,10 @@ typedef struct ns_fn_symbol {
     // its module's context here so calls from another context evaluate the
     // body against the right nodes; NULL means the caller's context.
     ns_ast_ctx *ctx;
+    // Cached libffi signature for a ref fn (ns_vm_lib.c). The argument and
+    // return types of one symbol never change, so rebuilding the cif on every
+    // call only repeated work.
+    void *ffi_cache;
 } ns_fn_symbol;
 
 typedef struct ns_struct_field {
@@ -52,25 +56,12 @@ typedef struct ns_struct_symbol {
     ns_struct_field *fields;
 } ns_struct_symbol;
 
-typedef struct ns_scope_symbol {
-    ns_symbol *vars;
-} ns_scope_symbol;
-
-typedef struct ns_array_symbol {
-    ns_type element_type;
-    ns_bool stack;
-} ns_array_symbol;
-
 typedef struct ns_block_symbol {
     i32 ast;
     ns_value val;
     ns_struct_symbol st;
     ns_fn_symbol fn;
 } ns_block_symbol;
-
-typedef struct ns_type_symbol {
-    ns_type t;
-} ns_type_symbol;
 
 // A union type (`type T = A | B | C`) carries its own union type tag plus the
 // list of member types it admits. A value is assignable to the union when its
@@ -223,7 +214,6 @@ void ns_task_ffi_reenter(ns_vm *vm, void *owner);
 // vm parse stage
 void ns_vm_push_symbol_global(ns_vm *vm, ns_symbol r);
 i32 ns_vm_push_string(ns_vm *vm, ns_str s);
-i32 ns_vm_push_data(ns_vm *vm, ns_data d);
 i32 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 i32 ns_vm_get_last_call(ns_vm *vm);
@@ -263,8 +253,6 @@ void *ns_eval_array_raw(ns_vm *vm, ns_value n);
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);
 ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
 
-ns_call *ns_call_enter(ns_vm *vm, ns_symbol *callee);
-ns_call *ns_call_exit(ns_vm *vm);
 ns_scope *ns_scope_enter(ns_vm *vm);
 ns_scope *ns_scope_exit(ns_vm *vm);
 

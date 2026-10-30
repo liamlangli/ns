@@ -254,8 +254,12 @@ typedef struct ns_ast_member_expr {
 typedef struct ns_ast_call_expr {
     i32 callee;
     i32 arg_count;
-    i32 rt; // direct callee/constructor symbol index, -1 for a dynamic callee
+    i32 rt; // direct callee/constructor symbol index, -1 for a dynamic callee,
+            // NS_CALL_RT_CONTAINER - kind for a has/insert/remove builtin
 } ns_ast_call_expr;
+
+// call_expr.rt for the container builtins: has = -2, insert = -3, remove = -4.
+#define NS_CALL_RT_CONTAINER (-2)
 
 typedef struct ns_ast_index_expr {
     i32 table;
