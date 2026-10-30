@@ -239,7 +239,7 @@ fn menu_input(v: ref view) bool {
 
 fn draw_settings() {
     draw_space(MENU_WIDTH, MENU_HEIGHT, g_menu_a, g_menu_e, g_menu_radius, MENU_WPP, curve_radius(g_curve), false, true)
-    plate(0.0, 0.0, MENU_WIDTH, MENU_HEIGHT, 18.0, panel_ink(0.074, 0.5))
+    plate(0.0, 0.0, MENU_WIDTH, MENU_HEIGHT, 18.0, panel_ink(0.074, 0.7))
     if g_menu_hit.w > 0.5 {
         ring(-5.0, -5.0, 610.0, 530.0, 23.0, ink(1.0, 0.65), 3.0)
     }
