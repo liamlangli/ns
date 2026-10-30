@@ -1009,6 +1009,51 @@ int main() {
         "}\n"), "later fn defs with the same name compile as name_FirstArgType.");
 #endif
 
+    // The register cache: two loop values swapped through phis, more live
+    // values than cached registers, more than eight arguments, compares fused
+    // into their branch, and constants rebuilt where they are read.
+    ns_expect(ns_compile_returns(
+        "fn many(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32) i32 {\n"
+        "    return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8 + i * 9 + j * 10\n"
+        "}\n"
+        "fn main() i32 {\n"
+        "    let a = 1\n"
+        "    let b = 2\n"
+        "    let i = 0\n"
+        "    loop i < 7 {\n"
+        "        let t = a\n"
+        "        a = b\n"
+        "        b = t + i\n"
+        "        i += 1\n"
+        "    }\n"
+        "    let v0 = a\n"
+        "    let v1 = v0 + b\n"
+        "    let v2 = v1 * 3\n"
+        "    let v3 = v2 - v0\n"
+        "    let v4 = v3 * v1\n"
+        "    let v5 = v4 + v2\n"
+        "    let v6 = v5 % 97\n"
+        "    let v7 = v6 - v3\n"
+        "    let v8 = v7 + v4\n"
+        "    let v9 = v8 / v1\n"
+        "    let v10 = v9 - v5\n"
+        "    let v11 = v10 + v6\n"
+        "    let total = v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11\n"
+        "    let m = many(v0, v1, v2, v3, v4, v5, v6, v7, v8, v9)\n"
+        "    let acc = 0\n"
+        "    let j = 0\n"
+        "    loop j < 100 {\n"
+        "        if j % 3 == 0 && j != 12 {\n"
+        "            acc += j\n"
+        "        } else if !(j > 50) {\n"
+        "            acc -= 1\n"
+        "        }\n"
+        "        j += 1\n"
+        "    }\n"
+        "    return a * 1000000 + b * 10000 + (total % 100) * 100 + (m + acc) % 100\n"
+        "}\n",
+        11134584), "values cached in registers keep parallel phis, spills, and fused branches.");
+
     return 0;
 }
 

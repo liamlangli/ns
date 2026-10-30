@@ -137,6 +137,15 @@ typedef struct ns_ssa_module {
 ns_str ns_ssa_op_to_string(ns_ssa_op op);
 i32 ns_ssa_phi_incoming(ns_ssa_inst *phi, i32 pred);
 void ns_ssa_phi_set_incoming(ns_ssa_inst *phi, i32 pred, i32 value);
+// For each of the first `nvalues` values of `fn`, the index in its defining
+// block of the last instruction that reads it, for a backend that keeps values
+// in registers within a block: -1 when nothing reads it, NS_SSA_LIVE_OUT when
+// it is read by another block, or is defined more than once. An ARG counts as
+// read by the CALL it feeds, and a phi input on the edge leaving its own block
+// as read one past that block's last instruction, by the edge copies. The
+// caller frees the ns_array.
+#define NS_SSA_LIVE_OUT 0x7FFFFFFF
+i32 *ns_ssa_last_uses(ns_ssa_fn *fn, i32 nvalues);
 ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx);
 ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
                                               ns_str lib_path, ns_str lib_fallback_path);
