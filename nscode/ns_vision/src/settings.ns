@@ -9,11 +9,22 @@ let g_slider = -1
 let g_slider_start_x: f32 = 0.0
 let g_slider_start_value: f32 = 0.0
 let g_slider_mapping: f32 = 1.0
+// 0 shows the settings rows, 1 the About page.
+let g_menu_tab = 0
+// The About contact row last copied to the clipboard, or -1.
+let g_menu_copied = -1
+lit MENU_TAB_Y: f32 = 20.0
+lit MENU_TAB_H: f32 = 32.0
+lit MENU_TAB_W: f32 = 100.0
+lit MENU_TAB_X: f32 = 340.0
+lit MENU_ABOUT_EMAIL = "lilang8936@gmail.com"
+lit MENU_ABOUT_X_ACCOUNT = "@liam_langli"
 
 fn menu_open() {
     g_menu = !g_menu
     g_launcher_mode = 0
     g_menu_dropdown = -1
+    g_menu_copied = -1
     g_menu_a = g_yaw
     g_menu_e = g_pitch
     g_menu_radius = 1600.0
@@ -145,14 +156,33 @@ fn menu_pick(ray: float3) {
         g_menu_hover = 9
         return
     }
-    if g_menu_dropdown >= 0 {
+    if y >= MENU_TAB_Y && y < MENU_TAB_Y + MENU_TAB_H {
+        for tab in 0 to 2 {
+            let left = MENU_TAB_X + tab as f32 * (MENU_TAB_W + 8.0)
+            if x >= left && x < left + MENU_TAB_W {
+                g_menu_hover = 12 + tab
+                return
+            }
+        }
+    }
+    if g_menu_tab == 1 {
+        // The email and X rows of the About page.
+        for row in 0 to 2 {
+            let top = 220.0 + row as f32 * 44.0
+            if x >= 36.0 && x <= 564.0 && y >= top && y < top + 38.0 {
+                g_menu_hover = 14 + row
+            }
+        }
+    } else if g_menu_dropdown >= 0 {
         let top = menu_popup_y(g_menu_dropdown)
         if x >= 232.0 && x <= 564.0 && y >= top && y < top + menu_option_count(g_menu_dropdown) as f32 * 32.0 + 8.0 {
             g_menu_hover = 100 + clampf((y - top - 4.0) / 32.0, 0.0, (menu_option_count(g_menu_dropdown) - 1) as f32) as i32
             return
         }
     }
-    g_menu_hover = menu_row_at(x, y)
+    if g_menu_tab == 0 {
+        g_menu_hover = menu_row_at(x, y)
+    }
     if y >= 460.0 && y <= 495.0 {
         if x >= 36.0 && x <= 215.0 {
             g_menu_hover = 10
@@ -203,6 +233,21 @@ fn menu_input(v: ref view) bool {
         g_menu = false
         return true
     }
+    if g_menu_hover == 12 || g_menu_hover == 13 {
+        g_menu_tab = g_menu_hover - 12
+        g_menu_dropdown = -1
+        g_menu_copied = -1
+        return true
+    }
+    if g_menu_hover == 14 || g_menu_hover == 15 {
+        g_menu_copied = g_menu_hover - 14
+        if g_menu_copied == 0 {
+            view_set_clipboard(v, MENU_ABOUT_EMAIL)
+        } else {
+            view_set_clipboard(v, MENU_ABOUT_X_ACCOUNT)
+        }
+        return true
+    }
     if g_menu_hover == 10 {
         reset_layout()
         return true
@@ -244,6 +289,67 @@ fn draw_settings() {
         ring(-5.0, -5.0, 610.0, 530.0, 23.0, ink(1.0, 0.65), 3.0)
     }
     label("Settings", 36.0, 31.0, 24.0, panel_ink(1.0, 1.0))
+    let tabs = split_lines("General\nAbout")
+    for tab in 0 to 2 {
+        let left = MENU_TAB_X + tab as f32 * (MENU_TAB_W + 8.0)
+        let fill: f32 = 0.12
+        if g_menu_tab == tab {
+            fill = 0.32
+        } else if g_menu_hover == 12 + tab {
+            fill = 0.2
+        }
+        plate(left, MENU_TAB_Y, MENU_TAB_W, MENU_TAB_H, 7.0, panel_ink(0.5, fill))
+        centered_label(tabs[tab], left + MENU_TAB_W * 0.5, MENU_TAB_Y + 8.0, 15.0, panel_ink(0.927, 1.0))
+    }
+    if g_menu_tab == 1 {
+        draw_about()
+    } else {
+        draw_settings_rows()
+    }
+    plate(36.0, 452.0, 528.0, 1.0, 0.0, panel_ink(1.0, 0.12))
+    label("Reset layout", 36.0, 466.0, 16.0, panel_ink(0.887, 1.0))
+    label("Quit", 530.0, 466.0, 16.0, panel_ink(0.887, 1.0))
+    centered_label("Drag to move  |  Right-drag to dolly  |  Esc to close", 300.0, 501.0, 11.0, panel_ink(0.493, 1.0))
+    if g_menu_hit.w > 0.5 {
+        let alpha: f32 = 0.35
+        if g_menu_hover == 9 {
+            alpha = 0.75
+        }
+        plate(570.0, 14.0, 16.0, 16.0, 8.0, panel_ink(0.42, alpha))
+        centered_label("x", 578.0, 14.0, 13.0, panel_ink(1.0, 0.9))
+    }
+}
+
+// Who to contact about any problem with the app. A contact row copies its
+// address to the clipboard.
+fn draw_about() {
+    label("NS Vision", 36.0, 96.0, 22.0, panel_ink(1.0, 1.0))
+    label("Version 0.1.0", 36.0, 130.0, 15.0, panel_ink(0.63, 1.0))
+    label("Questions or problems with the app?", 36.0, 172.0, 16.0, panel_ink(0.847, 1.0))
+    label("Contact the author:", 36.0, 194.0, 16.0, panel_ink(0.847, 1.0))
+    let names = split_lines("Email\nX")
+    for row in 0 to 2 {
+        let y = 220.0 + row as f32 * 44.0
+        let hot: f32 = 0.0
+        if g_menu_hover == 14 + row {
+            hot = 1.0
+        }
+        label(names[row], 36.0, y + 8.0, 16.0, panel_ink(0.63, 1.0))
+        plate(132.0, y, 432.0, 38.0, 7.0, panel_ink(0.5, 0.25 + hot * 0.1))
+        let value = MENU_ABOUT_EMAIL
+        if row == 1 {
+            value = MENU_ABOUT_X_ACCOUNT
+        }
+        label(value, 146.0, y + 8.0, 16.0, panel_ink(0.907, 1.0))
+        let hint = "Copy"
+        if g_menu_copied == row {
+            hint = "Copied"
+        }
+        label(hint, 550.0 - text_width(hint, 14.0), y + 9.0, 14.0, panel_ink(0.7, 1.0))
+    }
+}
+
+fn draw_settings_rows() {
     let names = split_lines("Render scale\nField of view\nDepth of field\nChromatic aberration\nScreen curve\nFont\nShortcut guide\nClock")
     for row in 0 to 8 {
         let y = 92.0 + row as f32 * 44.0
@@ -298,18 +404,6 @@ fn draw_settings() {
                 label("v", 542.0, y + 8.0, 14.0, panel_ink(0.7, 1.0))
             }
         }
-    }
-    plate(36.0, 452.0, 528.0, 1.0, 0.0, panel_ink(1.0, 0.12))
-    label("Reset layout", 36.0, 466.0, 16.0, panel_ink(0.887, 1.0))
-    label("Quit", 530.0, 466.0, 16.0, panel_ink(0.887, 1.0))
-    centered_label("Drag to move  |  Right-drag to dolly  |  Esc to close", 300.0, 501.0, 11.0, panel_ink(0.493, 1.0))
-    if g_menu_hit.w > 0.5 {
-        let alpha: f32 = 0.35
-        if g_menu_hover == 9 {
-            alpha = 0.75
-        }
-        plate(570.0, 14.0, 16.0, 16.0, 8.0, panel_ink(0.42, alpha))
-        centered_label("x", 578.0, 14.0, 13.0, panel_ink(1.0, 0.9))
     }
     if g_menu_dropdown >= 0 {
         let top = menu_popup_y(g_menu_dropdown)

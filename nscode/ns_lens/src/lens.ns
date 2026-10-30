@@ -835,7 +835,7 @@ fn lens_deselect() {
 }
 
 // The map menu sits just right of View.
-fn lens_mode_x() f64 { return lens_repo_menu_end() + 8.0 }
+fn lens_mode_x() f64 { return lens_help_menu_end() + 8.0 }
 
 // Apply the panel state just loaded for a project: the outline follows its
 // saved open flag, and the shell is restarted in the new workspace root. A
@@ -1193,6 +1193,7 @@ fn lens_render_empty(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_draw_view_menu(r, v)
     lens_draw_edit_menu(r, v)
     lens_draw_repo_menu(r, v)
+    lens_draw_help_menu(r, v)
     if g_mobile_git_running { lens_draw_activity(r, h - STATUS_BAR_H - LENS_ACTIVITY_H, w) }
     if lens_animating() {
         g_lens_frame_delay = 0

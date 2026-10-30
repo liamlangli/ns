@@ -284,6 +284,7 @@ fn lens_ui_toggle() {
     g_lens_mode_open = false
     g_lens_edit_menu_open = false
     lens_repo_menu_close()
+    lens_help_menu_close()
     g_lens_branch_open = false
     g_terminal_focus = false
     g_render_drag = -1

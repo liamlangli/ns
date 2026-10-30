@@ -390,7 +390,7 @@ fn lens_mobile_tick(v: ref view) {
             g_lens_input_dirty = true
         }
     }
-    let keyboard = lens_mobile_keyboard_wanted() && g_mobile_dialog == 0 && !g_lens_file_open && !g_lens_view_open && !g_lens_edit_menu_open && !g_lens_repo_menu_open
+    let keyboard = lens_mobile_keyboard_wanted() && g_mobile_dialog == 0 && !g_lens_file_open && !g_lens_view_open && !g_lens_edit_menu_open && !g_lens_repo_menu_open && !g_lens_help_menu_open
     if keyboard != g_mobile_keyboard_on {
         view_set_text_input(v, keyboard)
         g_mobile_keyboard_on = keyboard

@@ -266,7 +266,7 @@ fn lens_typing() bool {
 // Pointer input the map must not also take this frame. Floating panels block
 // their own rectangles with their hit tests, so only popups belong here.
 fn lens_menu_blocks() bool {
-    return g_lens_edit_menu_open || g_lens_repo_menu_open || g_lens_ignore_open || g_lens_commit_open || g_lens_branch_create_open || g_lens_file_block || g_lens_recent_block || g_lens_view_open || g_lens_view_block || g_lens_search_block || g_lens_branch_block || g_lens_remote_block || g_render_settings_block
+    return g_lens_edit_menu_open || g_lens_repo_menu_open || g_lens_help_menu_open || g_lens_ignore_open || g_lens_commit_open || g_lens_branch_create_open || g_lens_file_block || g_lens_recent_block || g_lens_view_open || g_lens_view_block || g_lens_search_block || g_lens_branch_block || g_lens_remote_block || g_render_settings_block
 }
 
 fn cmd_down(v: ref view) bool {
@@ -569,10 +569,11 @@ fn lens_field_edit(v: ref view, text: str) str {
 // Runs before the editor, so neither the editor nor the map sees keys meant
 // for the shortcuts, the search box or the commit dialog.
 fn lens_menu_keys(v: ref view) {
-    if g_lens_edit_menu_open || g_lens_repo_menu_open {
+    if g_lens_edit_menu_open || g_lens_repo_menu_open || g_lens_help_menu_open {
         if key_edge(v, 256) {
             g_lens_edit_menu_open = false
             lens_repo_menu_close()
+            lens_help_menu_close()
         }
         return
     }
@@ -751,6 +752,7 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     // Panels drawn over the hints keep their own presses.
     if g_workspace_root != "" && !terminal_blocks_pointer(v) && !outline_blocks_pointer(v) && lens_hints_mouse(v, h) { return }
     if lens_repo_menu_mouse(v) { return }
+    if lens_help_menu_mouse(v) { return }
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * (lens_file_items() as f64)
     g_lens_file_block = g_lens_file_open && raw_hit(v, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h)
@@ -1400,6 +1402,7 @@ fn lens_draw_menus(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_draw_view_menu(r, v)
     lens_draw_edit_menu(r, v)
     lens_draw_repo_menu(r, v)
+    lens_draw_help_menu(r, v)
     lens_draw_search(r, v, w)
     lens_draw_commit(r, v, w, h)
     lens_draw_branch_popups(r, v, w, h)

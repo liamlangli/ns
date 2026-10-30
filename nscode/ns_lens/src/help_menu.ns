@@ -1,0 +1,84 @@
+// Help lists how to reach the author about any problem with the app. A contact
+// row copies its address to the clipboard.
+use view
+use ui
+
+lit LENS_HELP_W = 64.0
+lit LENS_HELP_MENU_W = 280.0
+lit LENS_HELP_ITEMS = 3
+lit LENS_HELP_EMAIL = "lilang8936@gmail.com"
+lit LENS_HELP_X_ACCOUNT = "@liam_langli"
+let g_lens_help_menu_open = false
+let g_lens_help_menu_block = false
+
+fn lens_help_x() f64 { return lens_repo_menu_end() + 8.0 }
+
+// The map mode menu follows the Help button.
+fn lens_help_menu_end() f64 { return lens_help_x() + LENS_HELP_W }
+
+fn lens_help_label(index: i32) str {
+    if index == 0 { return `Email: {LENS_HELP_EMAIL}` }
+    if index == 1 { return `X: {LENS_HELP_X_ACCOUNT}` }
+    return "Problems? Click a contact to copy it"
+}
+
+fn lens_help_action(v: ref view, index: i32) {
+    g_lens_help_menu_open = false
+    if index == 0 {
+        view_set_clipboard(v, LENS_HELP_EMAIL)
+        g_lens_message = `Copied {LENS_HELP_EMAIL}`
+    }
+    if index == 1 {
+        view_set_clipboard(v, LENS_HELP_X_ACCOUNT)
+        g_lens_message = `Copied {LENS_HELP_X_ACCOUNT}`
+    }
+    g_lens_input_dirty = true
+}
+
+fn lens_help_menu_close() {
+    g_lens_help_menu_open = false
+    g_lens_help_menu_block = false
+}
+
+fn lens_help_menu_mouse(v: ref view) bool {
+    let x = lens_help_x()
+    let y = lens_mode_popup_y()
+    g_lens_help_menu_block = g_lens_help_menu_open && raw_hit(v, x, y, LENS_HELP_MENU_W, LENS_MODE_ITEM * (LENS_HELP_ITEMS as f64))
+    if v.mouse_pressed == false { return false }
+    if raw_hit(v, x, lens_mode_y(), LENS_HELP_W, LENS_MODE_H) {
+        g_lens_help_menu_open = !g_lens_help_menu_open
+        g_lens_edit_menu_open = false
+        g_lens_repo_menu_open = false
+        g_lens_file_open = false
+        g_lens_view_open = false
+        g_lens_mode_open = false
+        g_lens_branch_open = false
+        v.mouse_pressed = false
+        return true
+    }
+    if g_lens_help_menu_open {
+        if g_lens_help_menu_block {
+            lens_help_action(v, clamp_i(((g_mouse_y - y) / LENS_MODE_ITEM) as i32, 0, LENS_HELP_ITEMS - 1))
+            v.mouse_pressed = false
+            return true
+        }
+        g_lens_help_menu_open = false
+    }
+    return false
+}
+
+fn lens_draw_help_menu(r: ref ui_renderer, v: ref view) {
+    let x = lens_help_x()
+    lens_draw_menu_button(r, x, lens_mode_y(), LENS_HELP_W, LENS_MODE_H, "Help", g_lens_help_menu_open)
+    if g_lens_help_menu_open == false { return }
+    let top = lens_mode_popup_y()
+    lens_draw_menu_popup(r, x, top, LENS_HELP_MENU_W, LENS_MODE_ITEM * (LENS_HELP_ITEMS as f64))
+    for index in 0 to LENS_HELP_ITEMS {
+        let row = top + (index as f64) * LENS_MODE_ITEM
+        let color = col_text()
+        if index == LENS_HELP_ITEMS - 1 {
+            color = col_muted()
+        } else if raw_hit(v, x, row, LENS_HELP_MENU_W, LENS_MODE_ITEM) { lens_draw_menu_row_hi(r, x, row, LENS_HELP_MENU_W) }
+        draw_text_clipped(r, x + 10.0, ui_text_v_center_y(r, row, LENS_MODE_ITEM, small_px(), FONT_MONO()), LENS_HELP_MENU_W - 20.0, LENS_MODE_ITEM, lens_help_label(index), small_px(), color)
+    }
+}

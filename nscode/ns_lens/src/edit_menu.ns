@@ -54,6 +54,7 @@ fn lens_edit_menu_mouse(v: ref view) bool {
     if raw_hit(v, LENS_EDIT_X, lens_mode_y(), LENS_EDIT_W, LENS_MODE_H) {
         g_lens_edit_menu_open = !g_lens_edit_menu_open
         g_lens_repo_menu_open = false
+        g_lens_help_menu_open = false
         g_lens_file_open = false
         g_lens_view_open = false
         g_lens_mode_open = false
