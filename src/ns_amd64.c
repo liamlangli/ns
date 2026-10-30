@@ -6,11 +6,10 @@
  * AMD64 (x86-64) code generator from SSA IR.
  *
  * Model mirrors the aarch64 backend: every SSA value has a home slot in the
- * stack frame. An instruction loads its operands from their slots into scratch
- * registers, computes, and stores the result back to its own slot. This trades
- * code density for a code generator that is correct for an arbitrary number of
- * live values and needs no register allocation or spilling. Control-flow phis
- * are lowered out of SSA with copies inserted on each incoming edge (see
+ * stack frame, and within a basic block values are cached in callee-saved
+ * registers (see ns_amd64_use), so a value is stored only when a later block
+ * reads it or its register is reclaimed. Control-flow phis are lowered out of
+ * SSA with copies inserted on each incoming edge (see
  * ns_amd64_emit_edge_copies).
  *
  * Calling convention: the host ABI, so a compiled program calls the C runtime
@@ -22,9 +21,10 @@
  * ns-to-ns calls pass every value, floats included, in the integer registers:
  * an ns value is 64 bits of payload and both sides agree on that.
  *
- * Scratch registers: RAX and R11 hold operands, RCX the shift count, RDX the
- * division remainder, XMM0/XMM1 the floating-point operands. None of them has
- * to survive an instruction because every value lives in memory.
+ * The cache uses RBX and R12..R15. Scratch registers: RAX and R11 hold the
+ * operands of the operations that load and store through fixed registers, RCX
+ * the shift count, RDX:RAX the division, XMM0/XMM1 the floating-point
+ * operands. None of them has to survive an instruction.
  *
  * Register index map (matches physical AMD64 register encoding):
  *   0=RAX 1=RCX 2=RDX 3=RBX 4=RSP 5=RBP 6=RSI 7=RDI
@@ -37,6 +37,10 @@
 #define NS_AMD64_RSP 4
 #define NS_AMD64_RBP 5
 #define NS_AMD64_R11 11
+
+/* Callee-saved RBX and R12..R15, in both ABIs, cache SSA values in a block. */
+#define NS_AMD64_POOL 5
+static const i32 NS_AMD64_POOL_REGS[NS_AMD64_POOL] = { 3, 12, 13, 14, 15 };
 
 #define NS_AMD64_XMM0 0
 #define NS_AMD64_XMM1 1
@@ -55,7 +59,7 @@ static const i32 NS_AMD64_WIN_INT_REGS[4] = { 1, 2, 8, 9 };        /* RCX RDX R8
 
 /* ── intra-function branch fixup ──────────────────────────────────────────── */
 typedef struct ns_amd64_fixup {
-    u32 off;          /* byte offset of the rel32 field to patch */
+    u32 off;          /* byte offset of the rel32 field to patch (JMP or Jcc) */
     i32 target_block; /* SSA block index to branch to */
 } ns_amd64_fixup;
 
@@ -78,6 +82,24 @@ typedef struct ns_amd64_ctx {
     ns_bool win_abi;
     const i32 *int_regs;
     i32 nint_regs;
+    /* register cache (see ns_amd64_use) */
+    i32 nvalues;
+    i32 *last_use;      /* ns_ssa_last_uses */
+    ns_bool *is_const;  /* a single-definition number, rebuilt where read */
+    u64 *const_bits;
+    i32 reg_val[NS_AMD64_POOL];
+    ns_bool reg_dirty[NS_AMD64_POOL];
+    u32 reg_stamp[NS_AMD64_POOL];
+    u32 stamp;
+    u32 pinned;         /* pool registers the current instruction reads */
+    u32 used;           /* pool registers this function writes */
+    u32 saved;          /* pool registers the prologue saves */
+    i32 save_base;      /* first of the slots that hold them */
+    i32 inst_idx;       /* index of the current instruction in its block */
+    /* A compare whose only reader is the next BR leaves its result in the
+     * flags: the value, and the Jcc opcode byte taken when it is false. */
+    i32 fused;
+    u8 fused_false;
 } ns_amd64_ctx;
 
 /* ── low-level byte emitters ─────────────────────────────────────────────── */
@@ -124,20 +146,27 @@ static i32 ns_amd64_slot_disp(i32 v) {
     return -8 * (v + 1);
 }
 
-/* MOV reg, [RBP + disp32] — load a slot into a register */
-static void ns_amd64_emit_load(ns_amd64_ctx *c, i32 reg, i32 disp) {
+/* [RBP + disp] operand of a MOV: disp8 when it fits, else disp32. */
+static void ns_amd64_emit_rbp_operand(ns_amd64_ctx *c, u8 opcode, i32 reg, i32 disp) {
     ns_amd64_emit_u8(c, ns_amd64_rex(reg, NS_AMD64_RBP));
-    ns_amd64_emit_u8(c, 0x8B);
+    ns_amd64_emit_u8(c, opcode);
+    if (disp >= -128 && disp <= 127) {
+        ns_amd64_emit_u8(c, ns_amd64_modrm(1, reg, NS_AMD64_RBP)); /* mod=01 disp8 */
+        ns_amd64_emit_u8(c, (u8)(i8)disp);
+        return;
+    }
     ns_amd64_emit_u8(c, ns_amd64_modrm(2, reg, NS_AMD64_RBP)); /* mod=10 disp32, rm=RBP */
     ns_amd64_emit_u32(c, (u32)disp);
 }
 
-/* MOV [RBP + disp32], reg — store a register into a slot */
+/* MOV reg, [RBP + disp] — load a slot into a register */
+static void ns_amd64_emit_load(ns_amd64_ctx *c, i32 reg, i32 disp) {
+    ns_amd64_emit_rbp_operand(c, 0x8B, reg, disp);
+}
+
+/* MOV [RBP + disp], reg — store a register into a slot */
 static void ns_amd64_emit_store(ns_amd64_ctx *c, i32 disp, i32 reg) {
-    ns_amd64_emit_u8(c, ns_amd64_rex(reg, NS_AMD64_RBP));
-    ns_amd64_emit_u8(c, 0x89);
-    ns_amd64_emit_u8(c, ns_amd64_modrm(2, reg, NS_AMD64_RBP));
-    ns_amd64_emit_u32(c, (u32)disp);
+    ns_amd64_emit_rbp_operand(c, 0x89, reg, disp);
 }
 
 /* MOV [RSP + disp32], reg — park an outgoing stack argument */
@@ -149,17 +178,6 @@ static void ns_amd64_emit_store_rsp(ns_amd64_ctx *c, i32 disp, i32 reg) {
     ns_amd64_emit_u32(c, (u32)disp);
 }
 
-/* Load an SSA value into a register; a negative value id loads nothing. */
-static void ns_amd64_load_value(ns_amd64_ctx *c, i32 reg, i32 v) {
-    if (v < 0) { return; }
-    ns_amd64_emit_load(c, reg, ns_amd64_slot_disp(v));
-}
-
-/* Store a register into an SSA value's slot. */
-static void ns_amd64_store_value(ns_amd64_ctx *c, i32 v, i32 reg) {
-    if (v < 0) return;
-    ns_amd64_emit_store(c, ns_amd64_slot_disp(v), reg);
-}
 
 /* ── register/imm instruction encoding ───────────────────────────────────── */
 static void ns_amd64_emit_mov_ri64(ns_amd64_ctx *c, i32 rd, u64 imm) {
@@ -197,6 +215,139 @@ static void ns_amd64_emit_mov_ri32(ns_amd64_ctx *c, i32 rd, u32 imm) {
 static void ns_amd64_emit_const_u64(ns_amd64_ctx *c, i32 rd, u64 val) {
     if (val <= 0xFFFFFFFFull) ns_amd64_emit_mov_ri32(c, rd, (u32)val);
     else ns_amd64_emit_mov_ri64(c, rd, val);
+}
+
+/* ── register cache ───────────────────────────────────────────────────────── */
+/* Within a block, values stay in RBX and R12..R15. These are callee-saved, so
+ * a value survives the calls between its definition and its uses. A value
+ * reaches its slot only when it is still read after its register is
+ * reclaimed, or when a later block reads it; a constant is never stored, but
+ * rebuilt wherever it is read. Every block starts with an empty cache:
+ * whatever a block reads from an earlier one is in its slot. Rebuilding a zero
+ * is an XOR, which writes the flags, so nothing is read between a compare and
+ * the SETcc or Jcc that consumes it. */
+static i32 ns_amd64_pool_find(ns_amd64_ctx *c, i32 v) {
+    if (v < 0) return -1;
+    for (i32 i = 0; i < NS_AMD64_POOL; ++i) if (c->reg_val[i] == v) return i;
+    return -1;
+}
+
+/* Whether v is read at or after the instruction being emitted. */
+static ns_bool ns_amd64_needed(ns_amd64_ctx *c, i32 v) {
+    return v >= 0 && v < c->nvalues && c->last_use[v] >= c->inst_idx;
+}
+
+static void ns_amd64_pool_drop(ns_amd64_ctx *c, i32 i) {
+    i32 v = c->reg_val[i];
+    if (v >= 0 && c->reg_dirty[i] && ns_amd64_needed(c, v)) {
+        ns_amd64_emit_store(c, ns_amd64_slot_disp(v), NS_AMD64_POOL_REGS[i]);
+    }
+    c->reg_val[i] = -1;
+    c->reg_dirty[i] = false;
+}
+
+/* A register for a new value: an empty one or one whose value is dead, the
+ * lowest such so a function saves as few registers as it can; otherwise the
+ * least recently used one, spilled. Registers the current instruction reads
+ * are kept. */
+static i32 ns_amd64_pool_alloc(ns_amd64_ctx *c) {
+    i32 pick = -1;
+    for (i32 i = 0; i < NS_AMD64_POOL && pick < 0; ++i) {
+        if (c->pinned & (1u << i)) continue;
+        i32 v = c->reg_val[i];
+        if (v < 0 || !ns_amd64_needed(c, v)) pick = i;
+    }
+    for (i32 i = 0; i < NS_AMD64_POOL && pick < 0; ++i) {
+        if (c->pinned & (1u << i)) continue;
+        if (pick < 0 || c->reg_stamp[i] < c->reg_stamp[pick]) pick = i;
+    }
+    if (pick < 0) pick = 0; /* an instruction pins at most three */
+    ns_amd64_pool_drop(c, pick);
+    c->reg_stamp[pick] = ++c->stamp;
+    c->used |= 1u << pick;
+    return pick;
+}
+
+/* The register holding v for this instruction to read, loading v from its slot
+ * or rebuilding its constant on a miss. */
+static i32 ns_amd64_use(ns_amd64_ctx *c, i32 v) {
+    if (v < 0) return NS_AMD64_RAX;
+    i32 i = ns_amd64_pool_find(c, v);
+    if (i < 0) {
+        i = ns_amd64_pool_alloc(c);
+        i32 reg = NS_AMD64_POOL_REGS[i];
+        if (v < c->nvalues && c->is_const[v]) ns_amd64_emit_const_u64(c, reg, c->const_bits[v]);
+        else ns_amd64_emit_load(c, reg, ns_amd64_slot_disp(v));
+        c->reg_val[i] = v;
+    }
+    c->reg_stamp[i] = ++c->stamp;
+    c->pinned |= 1u << i;
+    return NS_AMD64_POOL_REGS[i];
+}
+
+/* The register an instruction writes `dst` to. An operand that dies here gives
+ * its register up. Bind it with ns_amd64_def once the value is in place. */
+static i32 ns_amd64_def_reg(ns_amd64_ctx *c, i32 dst) {
+    for (i32 i = 0; i < NS_AMD64_POOL; ++i) {
+        if (!(c->pinned & (1u << i))) continue;
+        i32 v = c->reg_val[i];
+        if (v >= 0 && v < c->nvalues && v != dst && c->last_use[v] == c->inst_idx) {
+            c->reg_val[i] = -1;
+            c->reg_dirty[i] = false;
+            return NS_AMD64_POOL_REGS[i];
+        }
+    }
+    return NS_AMD64_POOL_REGS[ns_amd64_pool_alloc(c)];
+}
+
+static i32 ns_amd64_pool_index(i32 reg) {
+    for (i32 i = 0; i < NS_AMD64_POOL; ++i) if (NS_AMD64_POOL_REGS[i] == reg) return i;
+    return -1;
+}
+
+static void ns_amd64_def(ns_amd64_ctx *c, i32 dst, i32 reg) {
+    if (dst < 0) return;
+    if (dst >= c->nvalues) { ns_amd64_emit_store(c, ns_amd64_slot_disp(dst), reg); return; }
+    for (i32 i = 0; i < NS_AMD64_POOL; ++i) {
+        if (c->reg_val[i] == dst) { c->reg_val[i] = -1; c->reg_dirty[i] = false; }
+    }
+    i32 i = ns_amd64_pool_index(reg);
+    c->reg_val[i] = dst;
+    c->reg_dirty[i] = true;
+    c->reg_stamp[i] = ++c->stamp;
+    c->pinned |= 1u << i;
+}
+
+/* Write back every dirty value a later block reads. */
+static void ns_amd64_pool_flush(ns_amd64_ctx *c) {
+    for (i32 i = 0; i < NS_AMD64_POOL; ++i) {
+        i32 v = c->reg_val[i];
+        if (v < 0 || !c->reg_dirty[i]) continue;
+        if (v < c->nvalues && c->last_use[v] == NS_SSA_LIVE_OUT) {
+            ns_amd64_emit_store(c, ns_amd64_slot_disp(v), NS_AMD64_POOL_REGS[i]);
+        }
+        c->reg_dirty[i] = false;
+    }
+}
+
+/* Copy v into a fixed register, from the cache, its constant or its slot; a
+ * negative value id loads nothing. */
+static void ns_amd64_load_value(ns_amd64_ctx *c, i32 reg, i32 v) {
+    if (v < 0) return;
+    i32 i = ns_amd64_pool_find(c, v);
+    if (i >= 0) ns_amd64_emit_mov_rr(c, reg, NS_AMD64_POOL_REGS[i]);
+    else if (v < c->nvalues && c->is_const[v]) ns_amd64_emit_const_u64(c, reg, c->const_bits[v]);
+    else ns_amd64_emit_load(c, reg, ns_amd64_slot_disp(v));
+}
+
+/* Define v from a fixed register. Frame slots past the SSA values (the ffi
+ * scratch, the indirect call target) are stored directly. */
+static void ns_amd64_store_value(ns_amd64_ctx *c, i32 v, i32 reg) {
+    if (v < 0) return;
+    if (v >= c->nvalues) { ns_amd64_emit_store(c, ns_amd64_slot_disp(v), reg); return; }
+    i32 rd = ns_amd64_def_reg(c, v);
+    ns_amd64_emit_mov_rr(c, rd, reg);
+    ns_amd64_def(c, v, rd);
 }
 
 static void ns_amd64_emit_add_rr(ns_amd64_ctx *c, i32 dst, i32 src) {
@@ -581,15 +732,135 @@ static void ns_amd64_narrow_reg(ns_amd64_ctx *c, i32 reg, ns_type t) {
 /* ── phi edge copies ──────────────────────────────────────────────────────── */
 /* Before a branch from `from` to `to`, materialize `to`'s phis by copying the
  * input that flows in along this edge into each phi's slot. */
-static void ns_amd64_emit_edge_copies(ns_amd64_ctx *c, i32 from, i32 to) {
+static ns_bool ns_amd64_edge_has_copies(ns_amd64_ctx *c, i32 from, i32 to) {
     ns_ssa_block *tb = &c->fn->blocks[to];
     for (i32 ii = 0, il = (i32)ns_array_length(tb->insts); ii < il; ++ii) {
+        ns_ssa_inst *inst = &c->fn->insts[tb->insts[ii]];
+        if (inst->op != NS_SSA_OP_PHI) break;
+        i32 src = ns_ssa_phi_incoming(inst, from);
+        if (src >= 0 && inst->dst >= 0 && src != inst->dst) return true;
+    }
+    return false;
+}
+
+/* The copies run after the block's flush and leave the cache as it was, since
+ * the two edges of a BR start from the same cache. They are parallel: a phi
+ * that another copy on this edge reads is read before it is overwritten. */
+static void ns_amd64_emit_edge_copies(ns_amd64_ctx *c, i32 from, i32 to) {
+    static const i32 hold_regs[7] = { 1, 2, 6, 7, 8, 9, 10 }; /* RCX RDX RSI RDI R8 R9 R10 */
+    ns_ssa_block *tb = &c->fn->blocks[to];
+    i32 il = (i32)ns_array_length(tb->insts);
+    i32 held[7];   /* phi values parked in hold_regs before the writes */
+    i32 nheld = 0;
+    for (i32 ii = 0; ii < il; ++ii) {
         ns_ssa_inst *inst = &c->fn->insts[tb->insts[ii]];
         if (inst->op != NS_SSA_OP_PHI) break; /* phis lead the block */
         i32 src = ns_ssa_phi_incoming(inst, from);
         if (src < 0 || inst->dst < 0 || src == inst->dst) continue;
-        ns_amd64_load_value(c, NS_AMD64_RAX, src);
-        ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
+        for (i32 jj = 0; jj < ii && nheld < 7; ++jj) {
+            ns_ssa_inst *prev = &c->fn->insts[tb->insts[jj]];
+            if (prev->dst != src) continue;
+            i32 psrc = ns_ssa_phi_incoming(prev, from);
+            if (psrc < 0 || psrc == prev->dst) continue;
+            ns_amd64_load_value(c, hold_regs[nheld], src);
+            held[nheld++] = src;
+            break;
+        }
+    }
+    for (i32 ii = 0; ii < il; ++ii) {
+        ns_ssa_inst *inst = &c->fn->insts[tb->insts[ii]];
+        if (inst->op != NS_SSA_OP_PHI) break;
+        i32 src = ns_ssa_phi_incoming(inst, from);
+        if (src < 0 || inst->dst < 0 || src == inst->dst) continue;
+        i32 reg = -1;
+        for (i32 h = 0; h < nheld; ++h) if (held[h] == src) reg = hold_regs[h];
+        if (reg < 0) {
+            i32 pi = ns_amd64_pool_find(c, src);
+            if (pi >= 0) reg = NS_AMD64_POOL_REGS[pi];
+        }
+        if (reg < 0) {
+            ns_amd64_load_value(c, NS_AMD64_RAX, src);
+            reg = NS_AMD64_RAX;
+        }
+        ns_amd64_emit_store(c, ns_amd64_slot_disp(inst->dst), reg);
+    }
+}
+
+static void ns_amd64_emit_jcc_to(ns_amd64_ctx *c, u8 jcc_opc2, i32 target) {
+    u32 off = ns_amd64_emit_jcc(c, jcc_opc2);
+    ns_array_push(c->fixups, ((ns_amd64_fixup){.off = off, .target_block = target}));
+}
+
+/* Leave the block along an edge: its phi copies, then a jump unless the target
+ * is the block emitted next. */
+static void ns_amd64_emit_edge(ns_amd64_ctx *c, i32 to) {
+    ns_amd64_emit_edge_copies(c, c->cur_block, to);
+    if (to == c->cur_block + 1) return;
+    u32 off = ns_amd64_emit_jmp(c);
+    ns_array_push(c->fixups, ((ns_amd64_fixup){.off = off, .target_block = to}));
+}
+
+/* rd = ra op rb with a two-operand `emit(dst, src)`. */
+static void ns_amd64_emit_rrr(ns_amd64_ctx *c, void (*emit)(ns_amd64_ctx *, i32, i32),
+                              ns_bool commutes, i32 rd, i32 ra, i32 rb) {
+    if (rd == ra) { emit(c, rd, rb); return; }
+    if (rd == rb) {
+        if (commutes) { emit(c, rd, ra); return; }
+        ns_amd64_emit_mov_rr(c, NS_AMD64_R11, rb);
+        ns_amd64_emit_mov_rr(c, rd, ra);
+        emit(c, rd, NS_AMD64_R11);
+        return;
+    }
+    ns_amd64_emit_mov_rr(c, rd, ra);
+    emit(c, rd, rb);
+}
+
+/* The bits a number constant stands for. */
+static u64 ns_amd64_const_bits(ns_amd64_ctx *c, ns_ssa_inst *inst) {
+    if (ns_type_is(inst->type, NS_TYPE_F64)) {
+        f64 fv = ns_str_to_f64(inst->name);
+        u64 bits = 0;
+        memcpy(&bits, &fv, 8);
+        return bits;
+    }
+    if (ns_type_is(inst->type, NS_TYPE_F32)) {
+        f32 fv = (f32)ns_str_to_f64(inst->name);
+        u32 bits = 0;
+        memcpy(&bits, &fv, 4);
+        return bits;
+    }
+    u64 val = 0;
+    if (!ns_number_literal_bits(inst->name, inst->token.suffix, &val)) {
+        ns_warn("amd64", "unsupported const '%.*s' in fn %.*s, using 0\n",
+            inst->name.len, inst->name.data, c->fn->name.len, c->fn->name.data);
+        val = 0;
+    }
+    return val;
+}
+
+/* A constant operand that fits a sign-extended imm32, else -1. */
+static i64 ns_amd64_imm32(ns_amd64_ctx *c, i32 v) {
+    if (v < 0 || v >= c->nvalues || !c->is_const[v] || c->const_bits[v] > 0x7FFFFFFFull) return -1;
+    return (i64)c->const_bits[v];
+}
+
+/* Whether a compare's only reader is the BR right after it, so the branch can
+ * test the flags instead of a materialized bool. */
+static ns_bool ns_amd64_fuses_branch(ns_amd64_ctx *c, ns_ssa_inst *inst) {
+    ns_ssa_block *bb = &c->fn->blocks[c->cur_block];
+    i32 next = c->inst_idx + 1;
+    if (inst->dst < 0 || inst->dst >= c->nvalues || next >= (i32)ns_array_length(bb->insts)) return false;
+    ns_ssa_inst *br = &c->fn->insts[bb->insts[next]];
+    return br->op == NS_SSA_OP_BR && br->a == inst->dst && c->last_use[inst->dst] == next;
+}
+
+/* MOV each saved pool register to (to_slots) or from its frame slot. */
+static void ns_amd64_emit_pool_saves(ns_amd64_ctx *c, ns_bool to_slots) {
+    for (i32 i = 0; i < NS_AMD64_POOL; ++i) {
+        if (!(c->saved & (1u << i))) continue;
+        i32 disp = ns_amd64_slot_disp(c->save_base + i);
+        if (to_slots) ns_amd64_emit_store(c, disp, NS_AMD64_POOL_REGS[i]);
+        else ns_amd64_emit_load(c, NS_AMD64_POOL_REGS[i], disp);
     }
 }
 
@@ -618,8 +889,9 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
         break;
     case NS_SSA_OP_UNDEF: {
         if (inst->dst < 0) break;
-        ns_amd64_emit_xor32_rr(c, NS_AMD64_RAX);
-        ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
+        i32 rd = ns_amd64_def_reg(c, inst->dst);
+        ns_amd64_emit_xor32_rr(c, rd);
+        ns_amd64_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_PARAM: {
         if (inst->dst < 0 || inst->c < 0) break;
@@ -641,35 +913,19 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
             break;
         }
-        if (ns_type_is(inst->type, NS_TYPE_F64)) {
-            f64 fv = ns_str_to_f64(inst->name);
-            u64 bits = 0;
-            memcpy(&bits, &fv, 8);
-            ns_amd64_emit_const_u64(c, NS_AMD64_RAX, bits);
-            ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
-            break;
-        }
-        if (ns_type_is(inst->type, NS_TYPE_F32)) {
-            f32 fv = (f32)ns_str_to_f64(inst->name);
-            u32 bits = 0;
-            memcpy(&bits, &fv, 4);
-            ns_amd64_emit_const_u64(c, NS_AMD64_RAX, bits);
-            ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
-            break;
-        }
-        u64 val = 0;
-        if (!ns_number_literal_bits(inst->name, inst->token.suffix, &val)) {
-            ns_warn("amd64", "unsupported const '%.*s' in fn %.*s, using 0\n",
-                inst->name.len, inst->name.data, c->fn->name.len, c->fn->name.data);
-            val = 0;
-        }
-        ns_amd64_emit_const_u64(c, NS_AMD64_RAX, val);
-        ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
+        /* Rebuilt where it is read (ns_amd64_use); a constant defined twice
+         * keeps a slot like any other value. */
+        if (inst->dst < c->nvalues && c->is_const[inst->dst]) break;
+        i32 rd = ns_amd64_def_reg(c, inst->dst);
+        ns_amd64_emit_const_u64(c, rd, ns_amd64_const_bits(c, inst));
+        ns_amd64_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_COPY: {
         if (inst->dst < 0 || inst->a < 0) break;
-        ns_amd64_load_value(c, NS_AMD64_RAX, inst->a);
-        ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
+        i32 ra = ns_amd64_use(c, inst->a);
+        i32 rd = ns_amd64_def_reg(c, inst->dst);
+        ns_amd64_emit_mov_rr(c, rd, ra);
+        ns_amd64_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_CAST: {
         if (inst->dst < 0 || inst->a < 0) break;
@@ -745,22 +1001,27 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
             break;
         }
-        ns_amd64_load_value(c, NS_AMD64_RAX, inst->a);
-        ns_amd64_load_value(c, NS_AMD64_R11, inst->b);
-        switch (inst->op) {
-        case NS_SSA_OP_ADD: ns_amd64_emit_add_rr(c, NS_AMD64_RAX, NS_AMD64_R11); break;
-        case NS_SSA_OP_SUB: ns_amd64_emit_sub_rr(c, NS_AMD64_RAX, NS_AMD64_R11); break;
-        case NS_SSA_OP_MUL: ns_amd64_emit_imul_rr(c, NS_AMD64_RAX, NS_AMD64_R11); break;
-        case NS_SSA_OP_BAND: case NS_SSA_OP_AND: ns_amd64_emit_and_rr(c, NS_AMD64_RAX, NS_AMD64_R11); break;
-        case NS_SSA_OP_BOR:  case NS_SSA_OP_OR:  ns_amd64_emit_or_rr(c, NS_AMD64_RAX, NS_AMD64_R11); break;
-        default:            ns_amd64_emit_xor_rr(c, NS_AMD64_RAX, NS_AMD64_R11); break;
+        i32 ra = ns_amd64_use(c, inst->a);
+        i64 imm = (inst->op == NS_SSA_OP_ADD || inst->op == NS_SSA_OP_SUB) ? ns_amd64_imm32(c, inst->b) : -1;
+        i32 rb = imm >= 0 ? -1 : ns_amd64_use(c, inst->b);
+        i32 rd = ns_amd64_def_reg(c, inst->dst);
+        if (imm >= 0) {
+            ns_amd64_emit_mov_rr(c, rd, ra);
+            ns_amd64_emit_alu_ri32(c, inst->op == NS_SSA_OP_ADD ? 0 : 5, rd, (i32)imm); /* ADD/SUB rd, imm32 */
+        } else switch (inst->op) {
+        case NS_SSA_OP_ADD: ns_amd64_emit_rrr(c, ns_amd64_emit_add_rr, true, rd, ra, rb); break;
+        case NS_SSA_OP_SUB: ns_amd64_emit_rrr(c, ns_amd64_emit_sub_rr, false, rd, ra, rb); break;
+        case NS_SSA_OP_MUL: ns_amd64_emit_rrr(c, ns_amd64_emit_imul_rr, true, rd, ra, rb); break;
+        case NS_SSA_OP_BAND: case NS_SSA_OP_AND: ns_amd64_emit_rrr(c, ns_amd64_emit_and_rr, true, rd, ra, rb); break;
+        case NS_SSA_OP_BOR:  case NS_SSA_OP_OR:  ns_amd64_emit_rrr(c, ns_amd64_emit_or_rr, true, rd, ra, rb); break;
+        default:            ns_amd64_emit_rrr(c, ns_amd64_emit_xor_rr, true, rd, ra, rb); break;
         }
         /* Integer arithmetic runs on 64-bit registers; a result of a narrower
          * type wraps to that width, as `ns run` computes it. */
         if (inst->op == NS_SSA_OP_ADD || inst->op == NS_SSA_OP_SUB || inst->op == NS_SSA_OP_MUL) {
-            ns_amd64_narrow_reg(c, NS_AMD64_RAX, inst->type);
+            ns_amd64_narrow_reg(c, rd, inst->type);
         }
-        ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
+        ns_amd64_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_DIV:
     case NS_SSA_OP_MOD: {
@@ -777,17 +1038,20 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             break;
         }
         ns_type at = ns_amd64_value_type(c->fn, inst->a);
-        ns_amd64_load_value(c, NS_AMD64_RAX, inst->a); /* dividend */
-        ns_amd64_load_value(c, NS_AMD64_R11, inst->b); /* divisor */
+        i32 ra = ns_amd64_use(c, inst->a);
+        i32 rb = ns_amd64_use(c, inst->b);             /* divisor, never RAX/RDX */
+        ns_amd64_emit_mov_rr(c, NS_AMD64_RAX, ra);     /* dividend */
         if (ns_type_unsigned(at)) {
             ns_amd64_emit_xor32_rr(c, NS_AMD64_RDX);   /* zero-extend into RDX:RAX */
-            ns_amd64_emit_div_r(c, NS_AMD64_R11);
+            ns_amd64_emit_div_r(c, rb);
         } else {
             ns_amd64_emit_cqo(c);                      /* sign-extend into RDX:RAX */
-            ns_amd64_emit_idiv_r(c, NS_AMD64_R11);
+            ns_amd64_emit_idiv_r(c, rb);
         }
-        if (inst->op == NS_SSA_OP_DIV) ns_amd64_narrow_reg(c, NS_AMD64_RAX, inst->type);
-        ns_amd64_store_value(c, inst->dst, inst->op == NS_SSA_OP_DIV ? NS_AMD64_RAX : NS_AMD64_RDX);
+        i32 rd = ns_amd64_def_reg(c, inst->dst);
+        ns_amd64_emit_mov_rr(c, rd, inst->op == NS_SSA_OP_DIV ? NS_AMD64_RAX : NS_AMD64_RDX);
+        if (inst->op == NS_SSA_OP_DIV) ns_amd64_narrow_reg(c, rd, inst->type);
+        ns_amd64_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_NEG: {
         if (inst->dst < 0) break;
@@ -803,10 +1067,11 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_NOT: {
         if (inst->dst < 0) break;
-        ns_amd64_load_value(c, NS_AMD64_RAX, inst->a);
-        ns_amd64_emit_test_rr(c, NS_AMD64_RAX);
-        ns_amd64_emit_setcc_r(c, NS_AMD64_RAX, 0x94); /* SETE: 1 when operand==0 */
-        ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
+        i32 ra = ns_amd64_use(c, inst->a);
+        i32 rd = ns_amd64_def_reg(c, inst->dst);
+        ns_amd64_emit_test_rr(c, ra);
+        ns_amd64_emit_setcc_r(c, rd, 0x94); /* SETE: 1 when operand==0 */
+        ns_amd64_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_EQ: case NS_SSA_OP_NE:
     case NS_SSA_OP_LT: case NS_SSA_OP_LE:
@@ -862,9 +1127,14 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             ns_amd64_emit_rt_call(c, "ns_rt_strcmp");
             ns_amd64_emit_test_rr(c, NS_AMD64_RAX); /* flags from strcmp - 0 */
         } else {
-            ns_amd64_load_value(c, NS_AMD64_RAX, inst->a);
-            ns_amd64_load_value(c, NS_AMD64_R11, inst->b);
-            ns_amd64_emit_cmp_rr(c, NS_AMD64_RAX, NS_AMD64_R11); /* flags from a - b */
+            i32 ra = ns_amd64_use(c, inst->a);
+            i64 imm = ns_amd64_imm32(c, inst->b);
+            if (imm >= 0) {
+                ns_amd64_emit_alu_ri32(c, 7, ra, (i32)imm);        /* CMP ra, imm32 */
+            } else {
+                i32 rb = ns_amd64_use(c, inst->b);
+                ns_amd64_emit_cmp_rr(c, ra, rb);                  /* flags from a - b */
+            }
         }
         ns_bool uns = ns_type_unsigned(at) && !ns_amd64_is_string(at);
         u8 setcc_opc;
@@ -876,8 +1146,16 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
         case NS_SSA_OP_GT: setcc_opc = uns ? 0x97 : 0x9F; break; /* SETA  / SETG  */
         default:           setcc_opc = uns ? 0x93 : 0x9D; break; /* SETAE / SETGE */
         }
-        ns_amd64_emit_setcc_r(c, NS_AMD64_RAX, setcc_opc);
-        ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
+        if (ns_amd64_fuses_branch(c, inst)) {
+            c->fused = inst->dst;
+            c->fused_false = (u8)(0x80 | ((setcc_opc & 0x0F) ^ 1)); /* Jcc on the inverse */
+            break;
+        }
+        /* The register is picked before SETcc so a spill, a MOV, lands
+         * between the compare and its consumer rather than a rebuilt zero. */
+        i32 rd = ns_amd64_def_reg(c, inst->dst);
+        ns_amd64_emit_setcc_r(c, rd, setcc_opc);
+        ns_amd64_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_ARG: {
         if (c->arg_seq < c->nint_regs) {
@@ -1079,34 +1357,49 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
         ns_amd64_close_arg_space(c, space);
     } break;
     case NS_SSA_OP_BR: {
-        ns_amd64_load_value(c, NS_AMD64_RAX, inst->a);
-        ns_amd64_emit_test_rr(c, NS_AMD64_RAX);
-        u32 jz_off = ns_amd64_emit_jcc(c, 0x84); /* JZ → else path */
-        /* then edge */
+        /* The Jcc to the false edge: on the flags of a fused compare, else JZ
+         * after testing the value. The flush between them only stores, which
+         * leaves the flags alone. */
+        u8 if_false = 0x84; /* JZ */
+        if (c->fused >= 0 && c->fused == inst->a) {
+            if_false = c->fused_false;
+        } else {
+            ns_amd64_emit_test_rr(c, ns_amd64_use(c, inst->a));
+        }
+        c->fused = -1;
+        ns_amd64_pool_flush(c);
+        if (!ns_amd64_edge_has_copies(c, c->cur_block, inst->target1)) {
+            ns_amd64_emit_jcc_to(c, if_false, inst->target1);
+            ns_amd64_emit_edge(c, inst->target0);
+            break;
+        }
+        if (!ns_amd64_edge_has_copies(c, c->cur_block, inst->target0)) {
+            ns_amd64_emit_jcc_to(c, (u8)(if_false ^ 1), inst->target0); /* inverted cond */
+            ns_amd64_emit_edge(c, inst->target1);
+            break;
+        }
+        u32 skip = ns_amd64_emit_jcc(c, if_false);
         ns_amd64_emit_edge_copies(c, c->cur_block, inst->target0);
         u32 j0 = ns_amd64_emit_jmp(c);
         ns_array_push(c->fixups, ((ns_amd64_fixup){.off = j0, .target_block = inst->target0}));
-        /* patch JZ to land here, at the else path */
-        ns_amd64_patch_u32(c->text, jz_off, (u32)((i32)ns_array_length(c->text) - ((i32)jz_off + 4)));
-        ns_amd64_emit_edge_copies(c, c->cur_block, inst->target1);
-        u32 j1 = ns_amd64_emit_jmp(c);
-        ns_array_push(c->fixups, ((ns_amd64_fixup){.off = j1, .target_block = inst->target1}));
+        /* patch the Jcc to land here, at the else path */
+        ns_amd64_patch_u32(c->text, skip, (u32)((i32)ns_array_length(c->text) - ((i32)skip + 4)));
+        ns_amd64_emit_edge(c, inst->target1);
     } break;
     case NS_SSA_OP_JMP: {
-        ns_amd64_emit_edge_copies(c, c->cur_block, inst->target0);
-        u32 j = ns_amd64_emit_jmp(c);
-        ns_array_push(c->fixups, ((ns_amd64_fixup){.off = j, .target_block = inst->target0}));
+        ns_amd64_pool_flush(c);
+        ns_amd64_emit_edge(c, inst->target0);
     } break;
     case NS_SSA_OP_RET: {
         if (inst->a >= 0) ns_amd64_load_value(c, NS_AMD64_RAX, inst->a);
         else ns_amd64_emit_xor32_rr(c, NS_AMD64_RAX);
+        ns_amd64_emit_pool_saves(c, false);
         ns_amd64_emit_leave(c); /* MOV RSP,RBP ; POP RBP */
         ns_amd64_emit_ret(c);
     } break;
     case NS_SSA_OP_ASSERT: {
         if (inst->a < 0) break;
-        ns_amd64_load_value(c, NS_AMD64_RAX, inst->a);
-        ns_amd64_emit_test_rr(c, NS_AMD64_RAX);
+        ns_amd64_emit_test_rr(c, ns_amd64_use(c, inst->a));
         u32 jnz = ns_amd64_emit_jcc(c, 0x85); /* JNZ over the report when true */
         ns_amd64_emit_const_u64(c, c->int_regs[0], (u64)(i64)inst->c);
         ns_amd64_emit_rt_call(c, "ns_rt_assert_fail");
@@ -1329,17 +1622,66 @@ static void ns_amd64_ctx_set_abi(ns_amd64_ctx *c) {
 }
 
 /* ── lower a single SSA function to AMD64 machine code ───────────────────── */
+/* What the register cache knows of a function before it is emitted. */
+typedef struct ns_amd64_fn_info {
+    i32 nvalues;
+    i32 *last_use;
+    ns_bool *is_const;
+    u64 *const_bits;
+} ns_amd64_fn_info;
+
+static ns_amd64_fn_info ns_amd64_fn_info_build(ns_ssa_module *ssa, ns_ssa_fn *fn) {
+    ns_amd64_fn_info info = {0};
+    info.nvalues = ns_amd64_slot_count(fn);
+    info.last_use = ns_ssa_last_uses(fn, info.nvalues);
+    ns_array_set_length(info.is_const, info.nvalues);
+    ns_array_set_length(info.const_bits, info.nvalues);
+    i32 *defs = NULL;
+    ns_array_set_length(defs, info.nvalues);
+    for (i32 v = 0; v < info.nvalues; ++v) { info.is_const[v] = false; info.const_bits[v] = 0; defs[v] = 0; }
+    for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
+        if (fn->insts[i].dst >= 0) defs[fn->insts[i].dst]++;
+    }
+    ns_amd64_ctx c = {.ssa = ssa, .fn = fn};
+    for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
+        ns_ssa_inst *inst = &fn->insts[i];
+        if (inst->op != NS_SSA_OP_CONST || inst->dst < 0 || defs[inst->dst] != 1) continue;
+        if (ns_type_is(inst->type, NS_TYPE_STRING)) continue;
+        info.is_const[inst->dst] = true;
+        info.const_bits[inst->dst] = ns_amd64_const_bits(&c, inst);
+    }
+    ns_array_free(defs);
+    return info;
+}
+
+static void ns_amd64_fn_info_free(ns_amd64_fn_info *info) {
+    ns_array_free(info->last_use);
+    ns_array_free(info->is_const);
+    ns_array_free(info->const_bits);
+}
+
+/* `saved` names the pool registers the prologue saves; *used gets the ones the
+ * body writes, which the caller passes back as `saved` to emit it again. */
 static ns_amd64_fn_bin ns_amd64_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn,
-                                         ns_bool call_rt_init, ns_bool call_mod_init) {
+                                         ns_bool call_rt_init, ns_bool call_mod_init,
+                                         ns_amd64_fn_info *info, u32 saved, u32 *used) {
     ns_amd64_ctx c = {0};
     c.ssa = ssa;
     c.fn = fn;
     ns_amd64_ctx_set_abi(&c);
+    c.nvalues = info->nvalues;
+    c.last_use = info->last_use;
+    c.is_const = info->is_const;
+    c.const_bits = info->const_bits;
+    c.saved = saved;
+    c.fused = -1;
 
-    i32 nslots = ns_amd64_slot_count(fn);
+    i32 nslots = c.nvalues;
     c.scratch_base = nslots;
     nslots += ns_amd64_ffi_scratch(fn);
     c.indirect_slot = nslots++;
+    c.save_base = nslots;
+    if (saved) nslots += NS_AMD64_POOL;
     /* One 8-byte slot per value, plus the Microsoft ABI's shadow space below
      * them, rounded so RSP stays 16-byte aligned at every call site. */
     i32 frame = (nslots * 8) + (c.win_abi ? NS_AMD64_SHADOW : 0);
@@ -1349,6 +1691,7 @@ static ns_amd64_fn_bin ns_amd64_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn,
     ns_amd64_emit_push_r(&c, NS_AMD64_RBP);
     ns_amd64_emit_mov_rr(&c, NS_AMD64_RBP, NS_AMD64_RSP);
     ns_amd64_emit_alu_ri32(&c, 5, NS_AMD64_RSP, frame); /* SUB RSP, frame */
+    ns_amd64_emit_pool_saves(&c, true);
     if (call_rt_init) ns_amd64_emit_rt_call(&c, "ns_rt_init");
     if (call_mod_init) ns_amd64_emit_rt_call(&c, "__module_init");
 
@@ -1359,9 +1702,23 @@ static ns_amd64_fn_bin ns_amd64_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn,
     for (i32 bi = 0; bi < num_blocks; ++bi) {
         c.block_off[bi] = (i32)ns_array_length(c.text);
         c.cur_block = bi;
+        for (i32 i = 0; i < NS_AMD64_POOL; ++i) { c.reg_val[i] = -1; c.reg_dirty[i] = false; }
+        c.fused = -1;
         ns_ssa_block *bb = &fn->blocks[bi];
-        for (i32 ii = 0, il = (i32)ns_array_length(bb->insts); ii < il; ++ii) {
-            ns_amd64_emit_inst(&c, &fn->insts[bb->insts[ii]]);
+        i32 il = (i32)ns_array_length(bb->insts);
+        ns_bool ends = false;
+        for (i32 ii = 0; ii < il; ++ii) {
+            ns_ssa_inst *inst = &fn->insts[bb->insts[ii]];
+            c.inst_idx = ii;
+            c.pinned = 0;
+            ns_amd64_emit_inst(&c, inst);
+            ends = inst->op == NS_SSA_OP_BR || inst->op == NS_SSA_OP_JMP ||
+                   inst->op == NS_SSA_OP_RET || inst->op == NS_SSA_OP_TRAP;
+        }
+        /* A block that falls into the next one leaves its values in slots too. */
+        if (!ends) {
+            c.inst_idx = il;
+            ns_amd64_pool_flush(&c);
         }
     }
 
@@ -1376,6 +1733,7 @@ static ns_amd64_fn_bin ns_amd64_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn,
 
     ns_array_free(c.block_off);
     ns_array_free(c.fixups);
+    *used = c.used;
 
     return (ns_amd64_fn_bin){
         .name = fn->name,
@@ -1447,7 +1805,19 @@ ns_return_ptr ns_amd64_from_ssa(ns_ssa_module *ssa) {
 
     for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
         ns_bool is_main = ns_str_equals_STR(ssa->fns[i].name, "main");
-        ns_amd64_fn_bin fn = ns_amd64_lower_fn(ssa, &ssa->fns[i], is_main, is_main && has_init);
+        ns_amd64_fn_info info = ns_amd64_fn_info_build(ssa, &ssa->fns[i]);
+        /* The prologue saves the pool registers the body writes, known once
+         * it has been emitted: emit it again when that differs from the
+         * guess that every one is saved. */
+        u32 all = (1u << NS_AMD64_POOL) - 1u;
+        u32 used = 0;
+        ns_amd64_fn_bin fn = ns_amd64_lower_fn(ssa, &ssa->fns[i], is_main, is_main && has_init, &info, all, &used);
+        if (used != all) {
+            ns_array_free(fn.text);
+            ns_array_free(fn.call_fixups);
+            fn = ns_amd64_lower_fn(ssa, &ssa->fns[i], is_main, is_main && has_init, &info, used, &used);
+        }
+        ns_amd64_fn_info_free(&info);
         ns_array_push(m->fns, fn);
     }
     if (!has_main && has_init) {

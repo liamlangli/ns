@@ -6,13 +6,15 @@
  * AArch64 code generator from SSA IR.
  *
  * Model mirrors the amd64 backend: every SSA value has a home slot in the stack
- * frame, and each instruction loads its operands into scratch registers,
- * computes, and stores the result back to its slot. This needs no register
- * allocation and is correct for any number of live values. Phis are lowered out
- * of SSA with copies inserted on the incoming edges.
+ * frame, and within a basic block values are cached in callee-saved registers
+ * (see ns_aarch_use), so an instruction reads its operands from registers and
+ * a value is stored only when a later block reads it or its register is
+ * reclaimed. Phis are lowered out of SSA with copies on the incoming edges.
  *
- * Arguments x0..x7, return value x0. Scratch registers: x9/x10 for operands,
- * x11 for the division temporary. Slot v lives at [SP + 8*v].
+ * Arguments x0..x7, return value x0. The cache uses x19..x28. Scratch: x9/x10
+ * for the operations that load and store through fixed registers, x11 the
+ * division temporary, x16 far slot addresses, x17 edge copies. Slot v lives at
+ * [x29 - 8*(v+1)].
  */
 
 #define NS_AARCH_X0  0
@@ -20,17 +22,24 @@
 #define NS_AARCH_X10 10
 #define NS_AARCH_X11 11
 #define NS_AARCH_X16 16
+#define NS_AARCH_X17 17
 #define NS_AARCH_FP  29
 #define NS_AARCH_SP  31
 #define NS_AARCH_EXTRA_MAX 64
+/* Callee-saved x19..x28 cache SSA values within a block. */
+#define NS_AARCH_POOL 10
+#define NS_AARCH_POOL_FIRST 19
+#define NS_AARCH_POOL_REG(i) (NS_AARCH_POOL_FIRST + (i))
 /* One spill slot per register-passed argument, for the ffi pointer dance.
  * Stack-passed str arguments get a slot each past these (ns_aarch_ffi_scratch). */
 #define NS_AARCH_FFI_SCRATCH 8
 
 /* ── intra-function fixup ─────────────────────────────────────────────────── */
 typedef struct ns_aarch_fixup {
-    u32 off;           /* byte offset of the (unconditional B) branch in text */
+    u32 off;           /* byte offset of the branch in text */
     i32 target_block;  /* SSA block index to branch to */
+    u32 enc;           /* the branch with a zero offset: B, or B.cond/CBZ when cond */
+    ns_bool cond;      /* imm19 at bit 5 rather than imm26 */
 } ns_aarch_fixup;
 
 typedef struct ns_aarch_ctx {
@@ -49,6 +58,23 @@ typedef struct ns_aarch_ctx {
     i32 nextra;
     /* first slot past the SSA values, used to park converted ffi pointers */
     i32 scratch_base;
+    /* register cache (see ns_aarch_use) */
+    i32 nvalues;
+    i32 *last_use;      /* ns_ssa_last_uses */
+    ns_bool *is_const;  /* a single-definition number, rebuilt where read */
+    u64 *const_bits;
+    i32 reg_val[NS_AARCH_POOL];
+    ns_bool reg_dirty[NS_AARCH_POOL];
+    u32 reg_stamp[NS_AARCH_POOL];
+    u32 stamp;
+    u32 pinned;         /* pool registers the current instruction reads */
+    u32 used;           /* pool registers this function writes */
+    u32 saved;          /* pool registers the prologue saves */
+    i32 inst_idx;       /* index of the current instruction in its block */
+    /* A compare whose only reader is the next BR leaves its result in the
+     * flags: the value, and the condition under which it is false. */
+    i32 fused;
+    u32 fused_false;
 } ns_aarch_ctx;
 
 /* ── encoding helpers ─────────────────────────────────────────────────────── */
@@ -387,28 +413,158 @@ static void ns_aarch_addr_from_fp(ns_aarch_ctx *c, i32 bytes) {
     ns_aarch_emit_u32(c, ns_aarch_sub_rrr(NS_AARCH_X16, NS_AARCH_FP, NS_AARCH_X16));
 }
 
-static void ns_aarch_load_value(ns_aarch_ctx *c, i32 reg, i32 v) {
-    if (v < 0) return;
+/* LDUR/STUR reach 255 bytes below x29; SUB #imm12 then 4095 more. */
+static void ns_aarch_slot_access(ns_aarch_ctx *c, u32 unscaled, u32 scaled, i32 v, i32 reg) {
     i32 off = 8 * (v + 1);
     if (off <= 255) {
-        ns_aarch_emit_u32(c, 0xF8400000u | (((u32)(-off) & 0x1FFu) << 12) |
-            ((u32)NS_AARCH_FP << 5) | (u32)reg); /* LDUR Xt, [x29, #-off] */
+        ns_aarch_emit_u32(c, unscaled | (((u32)(-off) & 0x1FFu) << 12) |
+            ((u32)NS_AARCH_FP << 5) | (u32)reg);
         return;
     }
-    ns_aarch_addr_from_fp(c, off);
-    ns_aarch_emit_u32(c, 0xF9400000u | ((u32)NS_AARCH_X16 << 5) | (u32)reg);
+    if (off <= 4095) {
+        ns_aarch_emit_u32(c, 0xD1000000u | ((u32)off << 10) |
+            ((u32)NS_AARCH_FP << 5) | (u32)NS_AARCH_X16); /* SUB x16, x29, #off */
+    } else {
+        ns_aarch_addr_from_fp(c, off);
+    }
+    ns_aarch_emit_u32(c, scaled | ((u32)NS_AARCH_X16 << 5) | (u32)reg);
 }
 
+static void ns_aarch_load_slot(ns_aarch_ctx *c, i32 reg, i32 v) {
+    ns_aarch_slot_access(c, 0xF8400000u, 0xF9400000u, v, reg); /* LDUR / LDR Xt */
+}
+
+static void ns_aarch_store_slot(ns_aarch_ctx *c, i32 v, i32 reg) {
+    ns_aarch_slot_access(c, 0xF8000000u, 0xF9000000u, v, reg); /* STUR / STR Xt */
+}
+
+/* MOV Xd, Xm  (ORR Xd, XZR, Xm) */
+static void ns_aarch_emit_mov(ns_aarch_ctx *c, i32 rd, i32 rm) {
+    if (rd != rm) ns_aarch_emit_u32(c, 0xAA0003E0u | ((u32)rm << 16) | (u32)rd);
+}
+
+/* ── register cache ───────────────────────────────────────────────────────── */
+/* Within a block, values stay in x19..x28. These are callee-saved, so a value
+ * survives the calls between its definition and its uses. A value reaches its
+ * slot only when it is still read after its register is reclaimed, or when a
+ * later block or a phi reads it; a constant is never stored, but rebuilt
+ * wherever it is read. Every block starts with an empty cache: whatever a
+ * block reads from an earlier one is in its slot. */
+static i32 ns_aarch_pool_find(ns_aarch_ctx *c, i32 v) {
+    if (v < 0) return -1;
+    for (i32 i = 0; i < NS_AARCH_POOL; ++i) if (c->reg_val[i] == v) return i;
+    return -1;
+}
+
+/* Whether v is read at or after the instruction being emitted. */
+static ns_bool ns_aarch_needed(ns_aarch_ctx *c, i32 v) {
+    return v >= 0 && v < c->nvalues && c->last_use[v] >= c->inst_idx;
+}
+
+static void ns_aarch_pool_drop(ns_aarch_ctx *c, i32 i) {
+    i32 v = c->reg_val[i];
+    if (v >= 0 && c->reg_dirty[i] && ns_aarch_needed(c, v)) {
+        ns_aarch_store_slot(c, v, NS_AARCH_POOL_REG(i));
+    }
+    c->reg_val[i] = -1;
+    c->reg_dirty[i] = false;
+}
+
+/* A register for a new value: an empty one or one whose value is dead, the
+ * lowest such so a function saves as few registers as it can; otherwise the
+ * least recently used one, spilled. Registers the current instruction reads
+ * are kept. */
+static i32 ns_aarch_pool_alloc(ns_aarch_ctx *c) {
+    i32 pick = -1;
+    for (i32 i = 0; i < NS_AARCH_POOL && pick < 0; ++i) {
+        if (c->pinned & (1u << i)) continue;
+        i32 v = c->reg_val[i];
+        if (v < 0 || !ns_aarch_needed(c, v)) pick = i;
+    }
+    for (i32 i = 0; i < NS_AARCH_POOL && pick < 0; ++i) {
+        if (c->pinned & (1u << i)) continue;
+        if (pick < 0 || c->reg_stamp[i] < c->reg_stamp[pick]) pick = i;
+    }
+    if (pick < 0) pick = 0; /* an instruction pins at most three */
+    ns_aarch_pool_drop(c, pick);
+    c->reg_stamp[pick] = ++c->stamp;
+    c->used |= 1u << pick;
+    return pick;
+}
+
+/* The register holding v for this instruction to read, loading v from its slot
+ * or rebuilding its constant on a miss. */
+static i32 ns_aarch_use(ns_aarch_ctx *c, i32 v) {
+    if (v < 0) return NS_AARCH_X9;
+    i32 i = ns_aarch_pool_find(c, v);
+    if (i < 0) {
+        i = ns_aarch_pool_alloc(c);
+        if (v < c->nvalues && c->is_const[v]) ns_aarch_emit_const_u64(c, NS_AARCH_POOL_REG(i), c->const_bits[v]);
+        else ns_aarch_load_slot(c, NS_AARCH_POOL_REG(i), v);
+        c->reg_val[i] = v;
+    }
+    c->reg_stamp[i] = ++c->stamp;
+    c->pinned |= 1u << i;
+    return NS_AARCH_POOL_REG(i);
+}
+
+/* The register an instruction writes `dst` to. An operand that dies here gives
+ * its register up. Bind it with ns_aarch_def once the value is in place. */
+static i32 ns_aarch_def_reg(ns_aarch_ctx *c, i32 dst) {
+    for (i32 i = 0; i < NS_AARCH_POOL; ++i) {
+        if (!(c->pinned & (1u << i))) continue;
+        i32 v = c->reg_val[i];
+        if (v >= 0 && v < c->nvalues && v != dst && c->last_use[v] == c->inst_idx) {
+            c->reg_val[i] = -1;
+            c->reg_dirty[i] = false;
+            return NS_AARCH_POOL_REG(i);
+        }
+    }
+    return NS_AARCH_POOL_REG(ns_aarch_pool_alloc(c));
+}
+
+static void ns_aarch_def(ns_aarch_ctx *c, i32 dst, i32 reg) {
+    if (dst < 0) return;
+    if (dst >= c->nvalues) { ns_aarch_store_slot(c, dst, reg); return; }
+    for (i32 i = 0; i < NS_AARCH_POOL; ++i) {
+        if (c->reg_val[i] == dst) { c->reg_val[i] = -1; c->reg_dirty[i] = false; }
+    }
+    i32 i = reg - NS_AARCH_POOL_FIRST;
+    c->reg_val[i] = dst;
+    c->reg_dirty[i] = true;
+    c->reg_stamp[i] = ++c->stamp;
+    c->pinned |= 1u << i;
+}
+
+/* Write back every dirty value a later block reads. */
+static void ns_aarch_pool_flush(ns_aarch_ctx *c) {
+    for (i32 i = 0; i < NS_AARCH_POOL; ++i) {
+        i32 v = c->reg_val[i];
+        if (v < 0 || !c->reg_dirty[i]) continue;
+        if (v < c->nvalues && c->last_use[v] == NS_SSA_LIVE_OUT) {
+            ns_aarch_store_slot(c, v, NS_AARCH_POOL_REG(i));
+        }
+        c->reg_dirty[i] = false;
+    }
+}
+
+/* Copy v into a fixed register, from the cache, its constant or its slot. */
+static void ns_aarch_load_value(ns_aarch_ctx *c, i32 reg, i32 v) {
+    if (v < 0) return;
+    i32 i = ns_aarch_pool_find(c, v);
+    if (i >= 0) ns_aarch_emit_mov(c, reg, NS_AARCH_POOL_REG(i));
+    else if (v < c->nvalues && c->is_const[v]) ns_aarch_emit_const_u64(c, reg, c->const_bits[v]);
+    else ns_aarch_load_slot(c, reg, v);
+}
+
+/* Define v from a fixed register. Frame slots past the SSA values (the ffi
+ * scratch) are stored directly. */
 static void ns_aarch_store_value(ns_aarch_ctx *c, i32 v, i32 reg) {
     if (v < 0) return;
-    i32 off = 8 * (v + 1);
-    if (off <= 255) {
-        ns_aarch_emit_u32(c, 0xF8000000u | (((u32)(-off) & 0x1FFu) << 12) |
-            ((u32)NS_AARCH_FP << 5) | (u32)reg); /* STUR Xt, [x29, #-off] */
-        return;
-    }
-    ns_aarch_addr_from_fp(c, off);
-    ns_aarch_emit_u32(c, 0xF9000000u | ((u32)NS_AARCH_X16 << 5) | (u32)reg);
+    if (v >= c->nvalues) { ns_aarch_store_slot(c, v, reg); return; }
+    i32 rd = ns_aarch_def_reg(c, v);
+    ns_aarch_emit_mov(c, rd, reg);
+    ns_aarch_def(c, v, rd);
 }
 
 static void ns_aarch_emit_float_binop(ns_aarch_ctx *c, ns_ssa_inst *inst) {
@@ -449,15 +605,118 @@ static void ns_aarch_narrow_x9(ns_aarch_ctx *c, ns_type t) {
 /* Before branching from `from` to `to`, materialize `to`'s phis by copying the
  * input that flows in along this edge into each phi's slot. Phi input a comes
  * from block target0, input b from target1 (stashed by the SSA builder). */
-static void ns_aarch_emit_edge_copies(ns_aarch_ctx *c, i32 from, i32 to) {
+static ns_bool ns_aarch_edge_has_copies(ns_aarch_ctx *c, i32 from, i32 to) {
     ns_ssa_block *tb = &c->fn->blocks[to];
     for (i32 ii = 0, il = (i32)ns_array_length(tb->insts); ii < il; ++ii) {
+        ns_ssa_inst *inst = &c->fn->insts[tb->insts[ii]];
+        if (inst->op != NS_SSA_OP_PHI) break;
+        i32 src = ns_ssa_phi_incoming(inst, from);
+        if (src >= 0 && inst->dst >= 0 && src != inst->dst) return true;
+    }
+    return false;
+}
+
+/* The copies run after the block's flush and leave the cache as it was, since
+ * the two edges of a BR start from the same cache. They are parallel: a phi
+ * that another copy on this edge reads is read before it is overwritten. */
+static void ns_aarch_emit_edge_copies(ns_aarch_ctx *c, i32 from, i32 to) {
+    ns_ssa_block *tb = &c->fn->blocks[to];
+    i32 il = (i32)ns_array_length(tb->insts);
+    i32 held[7];   /* phi values parked in x9..x15 before the writes */
+    i32 nheld = 0;
+    for (i32 ii = 0; ii < il; ++ii) {
         ns_ssa_inst *inst = &c->fn->insts[tb->insts[ii]];
         if (inst->op != NS_SSA_OP_PHI) break; /* phis lead the block */
         i32 src = ns_ssa_phi_incoming(inst, from);
         if (src < 0 || inst->dst < 0 || src == inst->dst) continue;
-        ns_aarch_load_value(c, NS_AARCH_X9, src);
-        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+        for (i32 jj = 0; jj < ii && nheld < 7; ++jj) {
+            ns_ssa_inst *prev = &c->fn->insts[tb->insts[jj]];
+            if (prev->dst != src) continue;
+            i32 psrc = ns_ssa_phi_incoming(prev, from);
+            if (psrc < 0 || psrc == prev->dst) continue;
+            ns_aarch_load_value(c, NS_AARCH_X9 + nheld, src);
+            held[nheld++] = src;
+            break;
+        }
+    }
+    for (i32 ii = 0; ii < il; ++ii) {
+        ns_ssa_inst *inst = &c->fn->insts[tb->insts[ii]];
+        if (inst->op != NS_SSA_OP_PHI) break;
+        i32 src = ns_ssa_phi_incoming(inst, from);
+        if (src < 0 || inst->dst < 0 || src == inst->dst) continue;
+        i32 reg = -1;
+        for (i32 h = 0; h < nheld; ++h) if (held[h] == src) reg = NS_AARCH_X9 + h;
+        if (reg < 0) {
+            i32 pi = ns_aarch_pool_find(c, src);
+            if (pi >= 0) reg = NS_AARCH_POOL_REG(pi);
+        }
+        if (reg < 0) {
+            ns_aarch_load_value(c, NS_AARCH_X17, src);
+            reg = NS_AARCH_X17;
+        }
+        ns_aarch_store_slot(c, inst->dst, reg);
+    }
+}
+
+static void ns_aarch_emit_branch(ns_aarch_ctx *c, u32 enc, ns_bool cond, i32 target) {
+    u32 off = (u32)ns_array_length(c->text);
+    ns_aarch_emit_u32(c, enc);
+    ns_array_push(c->fixups, ((ns_aarch_fixup){.off = off, .target_block = target, .enc = enc, .cond = cond}));
+}
+
+/* Leave the block along an edge: its phi copies, then a jump unless the target
+ * is the block emitted next. */
+static void ns_aarch_emit_edge(ns_aarch_ctx *c, i32 to) {
+    ns_aarch_emit_edge_copies(c, c->cur_block, to);
+    if (to != c->cur_block + 1) ns_aarch_emit_branch(c, ns_aarch_b(0), false, to);
+}
+
+/* The bits a number constant stands for. */
+static u64 ns_aarch_const_bits(ns_aarch_ctx *c, ns_ssa_inst *inst) {
+    if (ns_type_is(inst->type, NS_TYPE_F64)) {
+        f64 fv = ns_str_to_f64(inst->name);
+        u64 bits = 0;
+        memcpy(&bits, &fv, 8);
+        return bits;
+    }
+    if (ns_type_is(inst->type, NS_TYPE_F32)) {
+        f32 fv = (f32)ns_str_to_f64(inst->name);
+        u32 bits = 0;
+        memcpy(&bits, &fv, 4);
+        return bits;
+    }
+    u64 val = 0;
+    if (!ns_number_literal_bits(inst->name, inst->token.suffix, &val)) {
+        ns_warn("aarch", "unsupported const '%.*s' in fn %.*s, using 0\n",
+            inst->name.len, inst->name.data, c->fn->name.len, c->fn->name.data);
+        val = 0;
+    }
+    return val;
+}
+
+/* A constant operand that fits an unshifted ADD/SUB/CMP immediate, else -1. */
+static i32 ns_aarch_imm12(ns_aarch_ctx *c, i32 v) {
+    if (v < 0 || v >= c->nvalues || !c->is_const[v] || c->const_bits[v] > 4095) return -1;
+    return (i32)c->const_bits[v];
+}
+
+/* Whether a compare's only reader is the BR right after it, so the branch can
+ * test the flags instead of a materialized bool. */
+static ns_bool ns_aarch_fuses_branch(ns_aarch_ctx *c, ns_ssa_inst *inst) {
+    ns_ssa_block *bb = &c->fn->blocks[c->cur_block];
+    i32 next = c->inst_idx + 1;
+    if (inst->dst < 0 || inst->dst >= c->nvalues || next >= (i32)ns_array_length(bb->insts)) return false;
+    ns_ssa_inst *br = &c->fn->insts[bb->insts[next]];
+    return br->op == NS_SSA_OP_BR && br->a == inst->dst && c->last_use[inst->dst] == next;
+}
+
+/* STP (enc 0xA9000000) or LDP (0xA9400000) of each saved pool pair at [sp]. */
+static void ns_aarch_emit_pool_saves(ns_aarch_ctx *c, u32 enc) {
+    for (i32 p = 0; p < NS_AARCH_POOL / 2; ++p) {
+        if (!(c->saved & (3u << (2 * p)))) continue;
+        u32 rt = (u32)NS_AARCH_POOL_REG(2 * p);
+        ns_aarch_emit_u32(c, enc | ((u32)(2 * p) << 15) | ((rt + 1) << 10) |
+            ((u32)NS_AARCH_SP << 5) | rt); /* Xt, Xt+1, [sp, #16*p] */
     }
 }
 
@@ -469,8 +728,9 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         break;
     case NS_SSA_OP_UNDEF: {
         if (inst->dst < 0) break;
-        ns_aarch_emit_u32(c, ns_aarch_movz(NS_AARCH_X9, 0, 0));
-        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+        i32 rd = ns_aarch_def_reg(c, inst->dst);
+        ns_aarch_emit_u32(c, ns_aarch_movz(rd, 0, 0));
+        ns_aarch_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_PARAM: {
         if (inst->dst < 0 || inst->c < 0) break;
@@ -479,9 +739,10 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             break;
         }
         i32 imm12 = 2 + (inst->c - 8); /* [x29, #16 + 8*(c-8)] */
+        i32 rd = ns_aarch_def_reg(c, inst->dst);
         ns_aarch_emit_u32(c, 0xF9400000u | (((u32)imm12 & 0xFFFu) << 10) |
-            ((u32)NS_AARCH_FP << 5) | (u32)NS_AARCH_X9);
-        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+            ((u32)NS_AARCH_FP << 5) | (u32)rd);
+        ns_aarch_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_CONST: {
         if (inst->dst < 0) break;
@@ -491,35 +752,19 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
             break;
         }
-        if (ns_type_is(inst->type, NS_TYPE_F64)) {
-            f64 fv = ns_str_to_f64(inst->name);
-            u64 bits = 0;
-            memcpy(&bits, &fv, 8);
-            ns_aarch_emit_const_u64(c, NS_AARCH_X9, bits);
-            ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
-            break;
-        }
-        if (ns_type_is(inst->type, NS_TYPE_F32)) {
-            f32 fv = (f32)ns_str_to_f64(inst->name);
-            u32 bits = 0;
-            memcpy(&bits, &fv, 4);
-            ns_aarch_emit_const_u64(c, NS_AARCH_X9, bits);
-            ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
-            break;
-        }
-        u64 val = 0;
-        if (!ns_number_literal_bits(inst->name, inst->token.suffix, &val)) {
-            ns_warn("aarch", "unsupported const '%.*s' in fn %.*s, using 0\n",
-                inst->name.len, inst->name.data, c->fn->name.len, c->fn->name.data);
-            val = 0;
-        }
-        ns_aarch_emit_const_u64(c, NS_AARCH_X9, val);
-        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+        /* Rebuilt where it is read (ns_aarch_use); a constant defined twice
+         * keeps a slot like any other value. */
+        if (inst->dst < c->nvalues && c->is_const[inst->dst]) break;
+        i32 rd = ns_aarch_def_reg(c, inst->dst);
+        ns_aarch_emit_const_u64(c, rd, ns_aarch_const_bits(c, inst));
+        ns_aarch_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_COPY: {
         if (inst->dst < 0 || inst->a < 0) break;
-        ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
-        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+        i32 ra = ns_aarch_use(c, inst->a);
+        i32 rd = ns_aarch_def_reg(c, inst->dst);
+        ns_aarch_emit_mov(c, rd, ra);
+        ns_aarch_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_CAST: {
         if (inst->dst < 0 || inst->a < 0) break;
@@ -578,21 +823,27 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             ns_aarch_emit_float_binop(c, inst);
             break;
         }
-        ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
-        ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
-        switch (inst->op) {
-        case NS_SSA_OP_ADD:  ns_aarch_emit_u32(c, ns_aarch_add_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
-        case NS_SSA_OP_SUB:  ns_aarch_emit_u32(c, ns_aarch_sub_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
-        case NS_SSA_OP_MUL:  ns_aarch_emit_u32(c, ns_aarch_mul_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
-        case NS_SSA_OP_BAND: case NS_SSA_OP_AND: ns_aarch_emit_u32(c, ns_aarch_and_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
-        case NS_SSA_OP_BOR:  case NS_SSA_OP_OR:  ns_aarch_emit_u32(c, ns_aarch_orr_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
-        case NS_SSA_OP_BXOR: ns_aarch_emit_u32(c, ns_aarch_eor_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
-        case NS_SSA_OP_SHL:  ns_aarch_emit_u32(c, ns_aarch_lslv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
+        i32 ra = ns_aarch_use(c, inst->a);
+        i32 imm = (inst->op == NS_SSA_OP_ADD || inst->op == NS_SSA_OP_SUB) ? ns_aarch_imm12(c, inst->b) : -1;
+        i32 rb = imm >= 0 ? -1 : ns_aarch_use(c, inst->b);
+        i32 rd = ns_aarch_def_reg(c, inst->dst);
+        if (imm >= 0) {
+            /* ADD/SUB Xd, Xn, #imm12 */
+            u32 enc = inst->op == NS_SSA_OP_ADD ? 0x91000000u : 0xD1000000u;
+            ns_aarch_emit_u32(c, enc | ((u32)imm << 10) | ((u32)ra << 5) | (u32)rd);
+        } else switch (inst->op) {
+        case NS_SSA_OP_ADD:  ns_aarch_emit_u32(c, ns_aarch_add_rrr(rd, ra, rb)); break;
+        case NS_SSA_OP_SUB:  ns_aarch_emit_u32(c, ns_aarch_sub_rrr(rd, ra, rb)); break;
+        case NS_SSA_OP_MUL:  ns_aarch_emit_u32(c, ns_aarch_mul_rrr(rd, ra, rb)); break;
+        case NS_SSA_OP_BAND: case NS_SSA_OP_AND: ns_aarch_emit_u32(c, ns_aarch_and_rrr(rd, ra, rb)); break;
+        case NS_SSA_OP_BOR:  case NS_SSA_OP_OR:  ns_aarch_emit_u32(c, ns_aarch_orr_rrr(rd, ra, rb)); break;
+        case NS_SSA_OP_BXOR: ns_aarch_emit_u32(c, ns_aarch_eor_rrr(rd, ra, rb)); break;
+        case NS_SSA_OP_SHL:  ns_aarch_emit_u32(c, ns_aarch_lslv_rrr(rd, ra, rb)); break;
         default:
             if (ns_type_unsigned(at)) {
-                ns_aarch_emit_u32(c, ns_aarch_lsrv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
+                ns_aarch_emit_u32(c, ns_aarch_lsrv_rrr(rd, ra, rb));
             } else {
-                ns_aarch_emit_u32(c, ns_aarch_asrv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
+                ns_aarch_emit_u32(c, ns_aarch_asrv_rrr(rd, ra, rb));
             }
             break;
         }
@@ -600,9 +851,9 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
          * type wraps to that width, as `ns run` computes it. */
         if (inst->op == NS_SSA_OP_ADD || inst->op == NS_SSA_OP_SUB ||
             inst->op == NS_SSA_OP_MUL || inst->op == NS_SSA_OP_SHL) {
-            ns_aarch_narrow_x9(c, inst->type);
+            ns_aarch_narrow_reg(c, rd, inst->type);
         }
-        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+        ns_aarch_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_DIV: {
         if (inst->dst < 0) break;
@@ -611,15 +862,16 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             break;
         }
         ns_type at = ns_aarch_value_type(c->fn, inst->a);
-        ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
-        ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
+        i32 ra = ns_aarch_use(c, inst->a);
+        i32 rb = ns_aarch_use(c, inst->b);
+        i32 rd = ns_aarch_def_reg(c, inst->dst);
         if (ns_type_unsigned(at)) {
-            ns_aarch_emit_u32(c, ns_aarch_udiv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
+            ns_aarch_emit_u32(c, ns_aarch_udiv_rrr(rd, ra, rb));
         } else {
-            ns_aarch_emit_u32(c, ns_aarch_sdiv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
+            ns_aarch_emit_u32(c, ns_aarch_sdiv_rrr(rd, ra, rb));
         }
-        ns_aarch_narrow_x9(c, inst->type);
-        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+        ns_aarch_narrow_reg(c, rd, inst->type);
+        ns_aarch_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_MOD: {
         if (inst->dst < 0) break;
@@ -632,12 +884,13 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         }
         /* Xd = Xn - (Xn / Xm) * Xm  (SDIV or UDIV, then MSUB) */
         ns_type mt = ns_aarch_value_type(c->fn, inst->a);
-        ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
-        ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
-        if (ns_type_unsigned(mt)) ns_aarch_emit_u32(c, ns_aarch_udiv_rrr(NS_AARCH_X11, NS_AARCH_X9, NS_AARCH_X10));
-        else ns_aarch_emit_u32(c, ns_aarch_sdiv_rrr(NS_AARCH_X11, NS_AARCH_X9, NS_AARCH_X10));
-        ns_aarch_emit_u32(c, ns_aarch_msub_rrrr(NS_AARCH_X9, NS_AARCH_X11, NS_AARCH_X10, NS_AARCH_X9));
-        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+        i32 ra = ns_aarch_use(c, inst->a);
+        i32 rb = ns_aarch_use(c, inst->b);
+        i32 rd = ns_aarch_def_reg(c, inst->dst);
+        if (ns_type_unsigned(mt)) ns_aarch_emit_u32(c, ns_aarch_udiv_rrr(NS_AARCH_X11, ra, rb));
+        else ns_aarch_emit_u32(c, ns_aarch_sdiv_rrr(NS_AARCH_X11, ra, rb));
+        ns_aarch_emit_u32(c, ns_aarch_msub_rrrr(rd, NS_AARCH_X11, rb, ra));
+        ns_aarch_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_NEG: {
         if (inst->dst < 0) break;
@@ -656,10 +909,11 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_NOT: {
         if (inst->dst < 0) break;
-        ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
-        ns_aarch_emit_u32(c, 0xF100001Fu | ((u32)NS_AARCH_X9 << 5)); /* CMP X9, #0 */
-        ns_aarch_emit_u32(c, ns_aarch_cset_r(NS_AARCH_X9, 1u));      /* CSET X9, EQ */
-        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+        i32 ra = ns_aarch_use(c, inst->a);
+        ns_aarch_emit_u32(c, 0xF100001Fu | ((u32)ra << 5));  /* CMP Xa, #0 */
+        i32 rd = ns_aarch_def_reg(c, inst->dst);
+        ns_aarch_emit_u32(c, ns_aarch_cset_r(rd, 1u));       /* CSET Xd, EQ */
+        ns_aarch_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_EQ: case NS_SSA_OP_NE:
     case NS_SSA_OP_LT: case NS_SSA_OP_LE:
@@ -674,16 +928,19 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             ns_aarch_emit_u32(c, ns_aarch_movz(NS_AARCH_X10, 0, 0));
             ns_aarch_emit_u32(c, ns_aarch_cmp_rr(NS_AARCH_X0, NS_AARCH_X10));
         } else {
-            ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
-            ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
             ns_bool use_fcmp = ns_aarch_is_float(at) || ns_aarch_is_float(bt);
-            if (use_fcmp) {
+            i32 ra = ns_aarch_use(c, inst->a);
+            i32 imm = use_fcmp ? -1 : ns_aarch_imm12(c, inst->b);
+            i32 rb = imm >= 0 ? -1 : ns_aarch_use(c, inst->b);
+            if (imm >= 0) {
+                ns_aarch_emit_u32(c, 0xF100001Fu | ((u32)imm << 10) | ((u32)ra << 5)); /* CMP Xn, #imm12 */
+            } else if (use_fcmp) {
                 ns_bool f64 = ns_type_is(at, NS_TYPE_F64) || ns_type_is(bt, NS_TYPE_F64);
-                ns_aarch_emit_u32(c, ns_aarch_fmov_dx(0, NS_AARCH_X9, f64));
-                ns_aarch_emit_u32(c, ns_aarch_fmov_dx(1, NS_AARCH_X10, f64));
+                ns_aarch_emit_u32(c, ns_aarch_fmov_dx(0, ra, f64));
+                ns_aarch_emit_u32(c, ns_aarch_fmov_dx(1, rb, f64));
                 ns_aarch_emit_u32(c, ns_aarch_fcmp(0, 1, f64));
             } else {
-                ns_aarch_emit_u32(c, ns_aarch_cmp_rr(NS_AARCH_X9, NS_AARCH_X10));
+                ns_aarch_emit_u32(c, ns_aarch_cmp_rr(ra, rb));
             }
         }
         ns_bool uns = ns_type_unsigned(at) && !ns_aarch_is_float(at) && !ns_aarch_is_string(at);
@@ -696,8 +953,14 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         case NS_SSA_OP_GT: inv_cond = uns ? 9u : 13u; break; /* LS / LE */
         default:           inv_cond = uns ? 3u : 11u; break; /* LO / LT (for GE) */
         }
-        ns_aarch_emit_u32(c, ns_aarch_cset_r(NS_AARCH_X9, inv_cond));
-        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+        if (ns_aarch_fuses_branch(c, inst)) {
+            c->fused = inst->dst;
+            c->fused_false = inv_cond;
+            break;
+        }
+        i32 rd = ns_aarch_def_reg(c, inst->dst);
+        ns_aarch_emit_u32(c, ns_aarch_cset_r(rd, inv_cond));
+        ns_aarch_def(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_ARG: {
         if (c->arg_seq < 8) {
@@ -924,45 +1187,59 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         }
     } break;
     case NS_SSA_OP_BR: {
-        ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
-        u32 cbz_off = (u32)ns_array_length(c->text);
-        ns_aarch_emit_u32(c, ns_aarch_cbz(NS_AARCH_X9, 0)); /* if false, go to else path */
-        /* then edge */
+        /* The branch to the false edge: B.cond on the flags of a fused compare,
+         * else CBZ on the value. Stores don't touch the flags, so the flush
+         * may sit between the compare and its branch. */
+        u32 if_false;
+        if (c->fused >= 0 && c->fused == inst->a) {
+            if_false = 0x54000000u | c->fused_false;              /* B.cond */
+        } else {
+            if_false = ns_aarch_cbz(ns_aarch_use(c, inst->a), 0);
+        }
+        c->fused = -1;
+        ns_aarch_pool_flush(c);
+        if (!ns_aarch_edge_has_copies(c, c->cur_block, inst->target1)) {
+            ns_aarch_emit_branch(c, if_false, true, inst->target1);
+            ns_aarch_emit_edge(c, inst->target0);
+            break;
+        }
+        if (!ns_aarch_edge_has_copies(c, c->cur_block, inst->target0)) {
+            /* B.cond inverts in its low bit, CBZ becomes CBNZ in bit 24. */
+            u32 if_true = (if_false >> 24) == 0x54u ? if_false ^ 1u : if_false ^ (1u << 24);
+            ns_aarch_emit_branch(c, if_true, true, inst->target0);
+            ns_aarch_emit_edge(c, inst->target1);
+            break;
+        }
+        u32 skip = (u32)ns_array_length(c->text);
+        ns_aarch_emit_u32(c, if_false);
         ns_aarch_emit_edge_copies(c, c->cur_block, inst->target0);
-        u32 b0 = (u32)ns_array_length(c->text);
-        ns_aarch_emit_u32(c, ns_aarch_b(0));
-        ns_array_push(c->fixups, ((ns_aarch_fixup){.off = b0, .target_block = inst->target0}));
-        /* patch CBZ to land at the else path */
-        i32 cbz_imm = ((i32)ns_array_length(c->text) - (i32)cbz_off) / 4;
-        ns_aarch_patch_u32(c->text, cbz_off, ns_aarch_cbz(NS_AARCH_X9, cbz_imm));
-        ns_aarch_emit_edge_copies(c, c->cur_block, inst->target1);
-        u32 b1 = (u32)ns_array_length(c->text);
-        ns_aarch_emit_u32(c, ns_aarch_b(0));
-        ns_array_push(c->fixups, ((ns_aarch_fixup){.off = b1, .target_block = inst->target1}));
+        ns_aarch_emit_branch(c, ns_aarch_b(0), false, inst->target0);
+        u32 imm = (u32)(((i32)ns_array_length(c->text) - (i32)skip) / 4);
+        ns_aarch_patch_u32(c->text, skip, if_false | ((imm & 0x7FFFFu) << 5));
+        ns_aarch_emit_edge(c, inst->target1);
     } break;
     case NS_SSA_OP_JMP: {
-        ns_aarch_emit_edge_copies(c, c->cur_block, inst->target0);
-        u32 b_off = (u32)ns_array_length(c->text);
-        ns_aarch_emit_u32(c, ns_aarch_b(0));
-        ns_array_push(c->fixups, ((ns_aarch_fixup){.off = b_off, .target_block = inst->target0}));
+        ns_aarch_pool_flush(c);
+        ns_aarch_emit_edge(c, inst->target0);
     } break;
     case NS_SSA_OP_RET: {
         if (inst->a >= 0) ns_aarch_load_value(c, 0, inst->a);
         else ns_aarch_emit_u32(c, ns_aarch_movz(0, 0, 0));
+        ns_aarch_emit_pool_saves(c, 0xA9400000u);   /* LDP the saved pool pairs */
         ns_aarch_emit_u32(c, ns_aarch_mov_sp_fp());   /* MOV sp, x29 */
         ns_aarch_emit_u32(c, 0xA8C17BFDu);            /* LDP x29, x30, [sp], #16 */
         ns_aarch_emit_u32(c, ns_aarch_ret());
     } break;
     case NS_SSA_OP_ASSERT: {
         if (inst->a < 0) break;
-        ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
+        i32 ra = ns_aarch_use(c, inst->a);
         u32 cbnz_off = (u32)ns_array_length(c->text);
-        ns_aarch_emit_u32(c, ns_aarch_cbnz(NS_AARCH_X9, 0)); /* skip the report when true */
+        ns_aarch_emit_u32(c, ns_aarch_cbnz(ra, 0)); /* skip the report when true */
         ns_aarch_emit_const_u64(c, NS_AARCH_X0, (u64)(i64)inst->c);
         ns_aarch_emit_rt_call(c, "ns_rt_assert_fail");
         ns_aarch_emit_u32(c, ns_aarch_brk0());
         i32 cbnz_imm = ((i32)ns_array_length(c->text) - (i32)cbnz_off) / 4;
-        ns_aarch_patch_u32(c->text, cbnz_off, ns_aarch_cbnz(NS_AARCH_X9, cbnz_imm));
+        ns_aarch_patch_u32(c->text, cbnz_off, ns_aarch_cbnz(ra, cbnz_imm));
     } break;
     case NS_SSA_OP_TRAP: {
         ns_aarch_emit_u32(c, ns_aarch_brk0());
@@ -1176,16 +1453,68 @@ static i32 ns_aarch_slot_count(ns_ssa_fn *fn) {
 }
 
 /* ── lower a single SSA function to machine code ─────────────────────────── */
-static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn, ns_bool call_rt_init, ns_bool call_mod_init) {
+/* What the register cache knows of a function before it is emitted. */
+typedef struct ns_aarch_fn_info {
+    i32 nvalues;
+    i32 *last_use;
+    ns_bool *is_const;
+    u64 *const_bits;
+} ns_aarch_fn_info;
+
+static ns_aarch_fn_info ns_aarch_fn_info_build(ns_ssa_module *ssa, ns_ssa_fn *fn) {
+    ns_aarch_fn_info info = {0};
+    info.nvalues = ns_aarch_slot_count(fn);
+    info.last_use = ns_ssa_last_uses(fn, info.nvalues);
+    ns_array_set_length(info.is_const, info.nvalues);
+    ns_array_set_length(info.const_bits, info.nvalues);
+    i32 *defs = NULL;
+    ns_array_set_length(defs, info.nvalues);
+    for (i32 v = 0; v < info.nvalues; ++v) { info.is_const[v] = false; info.const_bits[v] = 0; defs[v] = 0; }
+    for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
+        if (fn->insts[i].dst >= 0) defs[fn->insts[i].dst]++;
+    }
+    ns_aarch_ctx c = {.ssa = ssa, .fn = fn};
+    for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
+        ns_ssa_inst *inst = &fn->insts[i];
+        if (inst->op != NS_SSA_OP_CONST || inst->dst < 0 || defs[inst->dst] != 1) continue;
+        if (ns_type_is(inst->type, NS_TYPE_STRING)) continue;
+        info.is_const[inst->dst] = true;
+        info.const_bits[inst->dst] = ns_aarch_const_bits(&c, inst);
+    }
+    ns_array_free(defs);
+    return info;
+}
+
+static void ns_aarch_fn_info_free(ns_aarch_fn_info *info) {
+    ns_array_free(info->last_use);
+    ns_array_free(info->is_const);
+    ns_array_free(info->const_bits);
+}
+
+/* `saved` names the pool registers the prologue saves; *used gets the ones the
+ * body writes, which the caller passes back as `saved` to emit it again. */
+static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn, ns_bool call_rt_init, ns_bool call_mod_init,
+                                         ns_aarch_fn_info *info, u32 saved, u32 *used) {
     ns_aarch_ctx c = {0};
     c.ssa = ssa;
     c.fn = fn;
+    c.nvalues = info->nvalues;
+    c.last_use = info->last_use;
+    c.is_const = info->is_const;
+    c.const_bits = info->const_bits;
+    c.saved = saved;
+    c.fused = -1;
 
-    i32 nslots = ns_aarch_slot_count(fn);
+    i32 nslots = c.nvalues;
     c.scratch_base = nslots;
     nslots += ns_aarch_ffi_scratch(fn);
-    /* Reserve one 8-byte slot per value, rounded up so SP stays 16-aligned. */
-    i32 frame = ((nslots * 8) + 15) & ~15;
+    /* Reserve one 8-byte slot per value, rounded up so SP stays 16-aligned,
+     * and below them a 16-byte pair for each saved pool pair up to the last. */
+    i32 save_area = 0;
+    for (i32 p = 0; p < NS_AARCH_POOL / 2; ++p) {
+        if (saved & (3u << (2 * p))) save_area = 16 * (p + 1);
+    }
+    i32 frame = (((nslots * 8) + 15) & ~15) + save_area;
 
     /* emit function prologue */
     ns_aarch_emit_u32(&c, 0xA9BF7BFDu); /* STP x29, x30, [sp, #-16]! */
@@ -1198,6 +1527,7 @@ static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn, ns_b
             ns_aarch_emit_u32(&c, ns_aarch_sub_sp_ext(NS_AARCH_X9));
         }
     }
+    ns_aarch_emit_pool_saves(&c, 0xA9000000u);
     if (call_rt_init) ns_aarch_emit_rt_call(&c, "ns_rt_init");
     if (call_mod_init) ns_aarch_emit_rt_call(&c, "__module_init");
 
@@ -1208,13 +1538,27 @@ static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn, ns_b
     for (i32 bi = 0; bi < num_blocks; ++bi) {
         c.block_off[bi] = (i32)ns_array_length(c.text);
         c.cur_block = bi;
+        for (i32 i = 0; i < NS_AARCH_POOL; ++i) { c.reg_val[i] = -1; c.reg_dirty[i] = false; }
+        c.fused = -1;
         ns_ssa_block *bb = &fn->blocks[bi];
-        for (i32 ii = 0, il = (i32)ns_array_length(bb->insts); ii < il; ++ii) {
-            ns_aarch_emit_inst(&c, &fn->insts[bb->insts[ii]]);
+        i32 il = (i32)ns_array_length(bb->insts);
+        ns_bool ends = false;
+        for (i32 ii = 0; ii < il; ++ii) {
+            ns_ssa_inst *inst = &fn->insts[bb->insts[ii]];
+            c.inst_idx = ii;
+            c.pinned = 0;
+            ns_aarch_emit_inst(&c, inst);
+            ends = inst->op == NS_SSA_OP_BR || inst->op == NS_SSA_OP_JMP ||
+                   inst->op == NS_SSA_OP_RET || inst->op == NS_SSA_OP_TRAP;
+        }
+        /* A block that falls into the next one leaves its values in slots too. */
+        if (!ends) {
+            c.inst_idx = il;
+            ns_aarch_pool_flush(&c);
         }
     }
 
-    /* apply intra-function branch fixups (all unconditional B) */
+    /* apply intra-function branch fixups */
     for (i32 i = 0, l = (i32)ns_array_length(c.fixups); i < l; ++i) {
         ns_aarch_fixup *fix = &c.fixups[i];
         i32 target_block = fix->target_block;
@@ -1222,11 +1566,14 @@ static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn, ns_b
         i32 target_off = c.block_off[target_block];
         if (target_off < 0) continue;
         i32 imm = (target_off - (i32)fix->off) / 4;
-        ns_aarch_patch_u32(c.text, fix->off, ns_aarch_b(imm));
+        u32 enc = fix->cond ? fix->enc | (((u32)imm & 0x7FFFFu) << 5)
+                            : fix->enc | ((u32)imm & 0x3FFFFFFu);
+        ns_aarch_patch_u32(c.text, fix->off, enc);
     }
 
     ns_array_free(c.block_off);
     ns_array_free(c.fixups);
+    *used = c.used;
 
     return (ns_aarch_fn_bin){.name = fn->name, .text = c.text, .call_fixups = c.call_fixups};
 }
@@ -1290,7 +1637,19 @@ ns_return_ptr ns_aarch_from_ssa(ns_ssa_module *ssa) {
 
     for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
         ns_bool is_main = ns_str_equals_STR(ssa->fns[i].name, "main");
-        ns_aarch_fn_bin fn = ns_aarch_lower_fn(ssa, &ssa->fns[i], is_main, is_main && has_init);
+        ns_aarch_fn_info info = ns_aarch_fn_info_build(ssa, &ssa->fns[i]);
+        /* The prologue saves the pool registers the body writes, known once
+         * it has been emitted: emit it again when that differs from the
+         * guess that every one is saved. */
+        u32 all = (1u << NS_AARCH_POOL) - 1u;
+        u32 used = 0;
+        ns_aarch_fn_bin fn = ns_aarch_lower_fn(ssa, &ssa->fns[i], is_main, is_main && has_init, &info, all, &used);
+        if (used != all) {
+            ns_array_free(fn.text);
+            ns_array_free(fn.call_fixups);
+            fn = ns_aarch_lower_fn(ssa, &ssa->fns[i], is_main, is_main && has_init, &info, used, &used);
+        }
+        ns_aarch_fn_info_free(&info);
         ns_array_push(m->fns, fn);
     }
     if (!has_main && has_init) {

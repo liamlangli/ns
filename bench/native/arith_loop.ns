@@ -1,0 +1,16 @@
+use std
+
+// Native-backend arithmetic loop: integer multiply, add and modulo on three
+// loop-carried values. Compare `ns build --exe`, `ns run --cpu` and `ns run`.
+fn main() i32 {
+    let a = 1
+    let b = 3
+    let i = 0
+    loop i < 20000000 {
+        a = (a * 3 + b * 5 + 7) % 1000003
+        b = (b + a + i) % 1000003
+        i += 1
+    }
+    print(`{a} {b}\n`)
+    return 0
+}

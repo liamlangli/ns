@@ -339,6 +339,78 @@ void ns_ssa_phi_set_incoming(ns_ssa_inst *phi, i32 pred, i32 value) {
     }
 }
 
+static void ns_ssa_note_use(i32 *last, i32 *def_block, i32 *def_idx, i32 nvalues,
+                            i32 v, i32 block, i32 at) {
+    if (v < 0 || v >= nvalues || last[v] == NS_SSA_LIVE_OUT) return;
+    if (def_block[v] != block || at < def_idx[v]) { last[v] = NS_SSA_LIVE_OUT; return; }
+    if (at > last[v]) last[v] = at;
+}
+
+static void ns_ssa_note_phi_use(ns_ssa_fn *fn, i32 *last, i32 *def_block, i32 *def_idx,
+                                i32 nvalues, i32 v, i32 pred) {
+    if (v < 0 || v >= nvalues) return;
+    if (pred < 0 || pred >= (i32)ns_array_length(fn->blocks)) { last[v] = NS_SSA_LIVE_OUT; return; }
+    i32 end = (i32)ns_array_length(fn->blocks[pred].insts);
+    ns_ssa_note_use(last, def_block, def_idx, nvalues, v, pred, end);
+}
+
+i32 *ns_ssa_last_uses(ns_ssa_fn *fn, i32 nvalues) {
+    i32 *last = NULL;
+    i32 *def_block = NULL;
+    i32 *def_idx = NULL;
+    ns_array_set_length(last, nvalues);
+    ns_array_set_length(def_block, nvalues);
+    ns_array_set_length(def_idx, nvalues);
+    for (i32 v = 0; v < nvalues; ++v) { last[v] = -1; def_block[v] = -1; def_idx[v] = 0; }
+    for (i32 bi = 0, bl = (i32)ns_array_length(fn->blocks); bi < bl; ++bi) {
+        ns_ssa_block *bb = &fn->blocks[bi];
+        for (i32 ii = 0, il = (i32)ns_array_length(bb->insts); ii < il; ++ii) {
+            i32 d = fn->insts[bb->insts[ii]].dst;
+            if (d < 0 || d >= nvalues) continue;
+            // A value defined twice is not SSA; keep it in its slot.
+            if (def_block[d] >= 0) last[d] = NS_SSA_LIVE_OUT;
+            def_block[d] = bi;
+            def_idx[d] = ii;
+        }
+    }
+    for (i32 v = 0; v < nvalues; ++v) {
+        if (def_block[v] < 0) last[v] = NS_SSA_LIVE_OUT;
+    }
+    for (i32 bi = 0, bl = (i32)ns_array_length(fn->blocks); bi < bl; ++bi) {
+        ns_ssa_block *bb = &fn->blocks[bi];
+        i32 il = (i32)ns_array_length(bb->insts);
+        for (i32 ii = 0; ii < il; ++ii) {
+            ns_ssa_inst *inst = &fn->insts[bb->insts[ii]];
+            if (inst->op == NS_SSA_OP_PHI) {
+                // Read by the edge copies of the predecessor, past its last
+                // instruction.
+                ns_ssa_note_phi_use(fn, last, def_block, def_idx, nvalues, inst->a, inst->target0);
+                ns_ssa_note_phi_use(fn, last, def_block, def_idx, nvalues, inst->b, inst->target1);
+                for (i32 e = 0, el = (i32)ns_array_length(inst->phi_edges); e < el; ++e) {
+                    ns_ssa_note_phi_use(fn, last, def_block, def_idx, nvalues,
+                                        inst->phi_edges[e].value, inst->phi_edges[e].pred);
+                }
+                continue;
+            }
+            i32 at = ii;
+            if (inst->op == NS_SSA_OP_ARG) {
+                // A call collects its arguments again when it is emitted.
+                for (i32 k = ii + 1; k < il; ++k) {
+                    if (fn->insts[bb->insts[k]].op == NS_SSA_OP_CALL) { at = k; break; }
+                }
+            }
+            ns_ssa_note_use(last, def_block, def_idx, nvalues, inst->a, bi, at);
+            ns_ssa_note_use(last, def_block, def_idx, nvalues, inst->b, bi, at);
+            if (inst->op == NS_SSA_OP_ARRAY_STORE) {
+                ns_ssa_note_use(last, def_block, def_idx, nvalues, inst->target0, bi, at);
+            }
+        }
+    }
+    ns_array_free(def_block);
+    ns_array_free(def_idx);
+    return last;
+}
+
 static i32 ns_ssa_emit_raw(ns_ssa_builder *b, ns_ssa_inst inst) {
     i32 idx = (i32)ns_array_length(b->fn->insts);
     ns_array_push(b->fn->insts, inst);

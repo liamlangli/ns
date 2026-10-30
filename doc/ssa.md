@@ -72,7 +72,16 @@ receives the subject without cloning so field updates persist.
 
 Internal ns→ns calls:
 
-- Values live in 8-byte stack slots, addressed from `x29` once stack args exist.
+- Every value has an 8-byte home slot at `[x29 - 8*(v+1)]`. Within a basic
+  block it is cached in a callee-saved register `x19–x28`, so it survives
+  calls, and reaches its slot only when its register is reclaimed while it is
+  still read or when a later block reads it (`ns_ssa_last_uses`). Each block
+  starts with an empty cache. A number constant is rebuilt (`movz`/`movk`, or
+  an `add`/`sub`/`cmp` immediate) wherever it is read and is never stored. The
+  prologue saves the pool pairs the body writes at the bottom of the frame.
+- A compare whose only reader is the block's `BR` branches on the flags with
+  `b.cond` instead of `cset`; a branch to the next block falls through. Phi
+  copies on an edge are parallel.
 - Arguments 0–7 in `x0–x7` (floats as bit patterns). Argument 8+ on the stack
   at `[sp, #8*k]` (AAPCS64), `sp` 16-byte aligned. Extra args are not an error.
 - Return in `x0`.
@@ -104,12 +113,16 @@ array `{ptr,u32; len,u32; cap,u32}`, string `{bytes,u32; len,u32}`.
 
 Internal ns→ns calls mirror the AArch64 rules with the registers this ABI has:
 
-- Values live in 8-byte stack slots addressed from `rbp`; slot `v` is at
-  `[rbp - 8*(v+1)]`, so outgoing stack arguments may move `rsp` freely.
+- Every value has an 8-byte home slot at `[rbp - 8*(v+1)]`, so outgoing stack
+  arguments may move `rsp` freely. Within a block values are cached in the
+  callee-saved `rbx, r12–r15` with the AArch64 rules above (constants rebuilt,
+  compare + `jcc` fused, fall-through to the next block); the prologue saves
+  the ones the body writes in slots past the values.
 - Arguments 0–5 in `rdi, rsi, rdx, rcx, r8, r9` (floats as bit patterns).
   Argument 6+ at `[rsp + 8*k]`, `rsp` 16-byte aligned at every call.
-- Return in `rax`. `rax` and `r11` are the operand scratch pair, `rcx` holds a
-  shift count, `rdx` the division remainder, `xmm0`/`xmm1` the float operands.
+- Return in `rax`. `rax` and `r11` are the scratch pair for the operations
+  that do not use the cache, `rcx` holds a shift count, `rdx:rax` the division,
+  `xmm0`/`xmm1` the float operands.
 - Floats are kept as bit patterns in the integer slots and move into SSE with
   `movq` for arithmetic, so an f32 occupies the low half of its slot.
 - `std.*` maps to `ns_rt_*` wrappers, as on AArch64.
