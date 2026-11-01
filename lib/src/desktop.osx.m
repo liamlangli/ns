@@ -19,8 +19,8 @@
 - (void)applyPause;
 @end
 static NSMutableDictionary<NSNumber *, NSDesktopCapture *> *captures;
-static NSArray<NSDictionary *> *windows = @[];
-static NSArray<NSDictionary *> *apps = @[];
+static NSArray<NSDictionary *> *windows;
+static NSArray<NSDictionary *> *apps;
 static NSString *last_error = @"";
 static i32 refresh_state = 1, generation;
 static u64 next_handle = 1;
