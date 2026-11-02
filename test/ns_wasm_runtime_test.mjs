@@ -76,6 +76,11 @@ for (const hand of [-1, 0, 1, 2]) {
   assert.equal(runtime.viewImport('view_hand_joint_tracked', [hand, 0]), 0);
   assert.equal(runtime.viewImport('view_hand_joint_position', [hand, 0, 0]), 0);
 }
+assert.equal(runtime.viewImport('view_ar_start', []), -2);
+assert.equal(runtime.viewImport('view_ar_snapshot', [390, 844]), -2);
+runtime.viewImport('view_ar_stop', []);
+assert.equal(runtime.viewImport('view_ar_value', [0]), 0);
+assert.equal(runtime.viewImport('view_ar_camera_texture', [1, 2]), 0);
 let contextMenuPrevented = false;
 canvasEvents.get('contextmenu')({ preventDefault() { contextMenuPrevented = true; } });
 assert.equal(contextMenuPrevented, true);

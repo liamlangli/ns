@@ -523,6 +523,19 @@ f64 view_hand_joint_position(i32 hand, i32 joint, i32 axis) {
 }
 #endif
 
+// An iPhone app supplies these from its own Swift; a strong definition
+// there replaces the weak ones, which report no AR provider.
+#if defined(__GNUC__) || defined(__clang__)
+#define VIEW_AR_STUB __attribute__((weak))
+#else
+#define VIEW_AR_STUB
+#endif
+VIEW_AR_STUB i32 view_ar_start(void) { return -2; }
+VIEW_AR_STUB void view_ar_stop(void) { }
+VIEW_AR_STUB i32 view_ar_snapshot(f64 width, f64 height) { (void)width; (void)height; return -2; }
+VIEW_AR_STUB f64 view_ar_value(i32 index) { (void)index; return 0.0; }
+VIEW_AR_STUB ns_bool view_ar_camera_texture(u32 luma, u32 chroma) { (void)luma; (void)chroma; return false; }
+
 ns_bool view_on_text_input(view *v, const char *text) {
     if (!v || !text) return false;
     size_t n = strlen(text);

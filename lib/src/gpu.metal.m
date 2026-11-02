@@ -1203,26 +1203,60 @@ static void mtl_v2_texture_destroy(u32 tex) {
     memset(&_state.textures[tex], 0, sizeof(_state.textures[tex]));
 }
 
-// Desktop/video service bridge. The ns API still sees an ordinary bindless
+// Desktop/video/AR service bridge. The ns API still sees an ordinary bindless
 // texture. Pin the producer's pixel buffer until the current command buffer
 // completes, so its IOSurface cannot be recycled beneath an in-flight draw.
-ns_bool gpu_metal_import_pixel_buffer(u32 slot, void *value, const char *name) {
-    if (!slot || slot >= _state.texture_count || !value || !_state.cmd_buffer || !_state.device.device) return false;
-    CVPixelBufferRef pixel = (CVPixelBufferRef)value;
+// `plane` is -1 for a packed buffer, otherwise the plane of a planar one.
+static ns_bool mtl_import_pixel(u32 slot, CVPixelBufferRef pixel, i32 plane, const char *name) {
+    if (!slot || slot >= _state.texture_count || !pixel || !_state.cmd_buffer || !_state.device.device) return false;
+    OSType type = CVPixelBufferGetPixelFormatType(pixel);
+    MTLPixelFormat metal = MTLPixelFormatInvalid;
+    gpu_pixel_format format = PIXELFORMAT_NONE;
+    size_t width = CVPixelBufferGetWidth(pixel);
+    size_t height = CVPixelBufferGetHeight(pixel);
+    if (plane >= 0) {
+        if (!CVPixelBufferIsPlanar(pixel) || (size_t)plane >= CVPixelBufferGetPlaneCount(pixel)) return false;
+        width = CVPixelBufferGetWidthOfPlane(pixel, (size_t)plane);
+        height = CVPixelBufferGetHeightOfPlane(pixel, (size_t)plane);
+    }
+    switch (type) {
+    case kCVPixelFormatType_32BGRA:
+        if (plane < 0) { metal = MTLPixelFormatBGRA8Unorm; format = PIXELFORMAT_BGRA8; }
+        break;
+    case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
+    case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+        if (plane == 0) { metal = MTLPixelFormatR8Unorm; format = PIXELFORMAT_R8; }
+        if (plane == 1) { metal = MTLPixelFormatRG8Unorm; format = PIXELFORMAT_RG8; }
+        break;
+    case kCVPixelFormatType_DepthFloat32:
+    case kCVPixelFormatType_OneComponent32Float:
+        if (plane < 0) { metal = MTLPixelFormatR32Float; format = PIXELFORMAT_R32F; }
+        break;
+    case kCVPixelFormatType_DepthFloat16:
+    case kCVPixelFormatType_OneComponent16Half:
+        if (plane < 0) { metal = MTLPixelFormatR16Float; format = PIXELFORMAT_R16F; }
+        break;
+    case kCVPixelFormatType_OneComponent8:
+        if (plane < 0) { metal = MTLPixelFormatR8Unorm; format = PIXELFORMAT_R8; }
+        break;
+    default:
+        break;
+    }
+    if (metal == MTLPixelFormatInvalid) return false;
     CVMetalTextureRef view = NULL;
     if (!_state.pixel_buffer_cache && CVMetalTextureCacheCreate(NULL, NULL, _state.device.device, NULL, &_state.pixel_buffer_cache) != kCVReturnSuccess) return false;
     CVReturn result = CVMetalTextureCacheCreateTextureFromImage(NULL, _state.pixel_buffer_cache, pixel, NULL,
-        MTLPixelFormatBGRA8Unorm, CVPixelBufferGetWidth(pixel), CVPixelBufferGetHeight(pixel), 0, &view);
+        metal, width, height, plane < 0 ? 0 : (size_t)plane, &view);
     if (result != kCVReturnSuccess || !view) return false;
     id<MTLTexture> texture = CVMetalTextureGetTexture(view);
-    texture.label = [NSString stringWithUTF8String:name ?: "desktop captured window"];
+    texture.label = [NSString stringWithUTF8String:name ?: "imported pixel buffer"];
 #ifndef ENABLE_ARC
     [texture retain];
     [_state.textures[slot].texture release];
 #endif
     _state.textures[slot] = (gpu_texture_mtl){
         .texture = texture, .width = texture.width, .height = texture.height, .depth = 1,
-        .format = PIXELFORMAT_BGRA8, .type = TEXTURE_2D,
+        .format = format, .type = TEXTURE_2D,
         .resource_options = MTLResourceStorageModeShared,
     };
     CVPixelBufferRetain(pixel);
@@ -1230,6 +1264,15 @@ ns_bool gpu_metal_import_pixel_buffer(u32 slot, void *value, const char *name) {
         (void)completed; CFRelease(view); CVPixelBufferRelease(pixel);
     }];
     return true;
+}
+
+ns_bool gpu_metal_import_pixel_buffer(u32 slot, void *value, const char *name) {
+    if (!value || CVPixelBufferGetPixelFormatType((CVPixelBufferRef)value) != kCVPixelFormatType_32BGRA) return false;
+    return mtl_import_pixel(slot, (CVPixelBufferRef)value, -1, name ? name : "desktop captured window");
+}
+
+ns_bool gpu_metal_import_pixel_plane(u32 slot, void *value, i32 plane, const char *name) {
+    return mtl_import_pixel(slot, (CVPixelBufferRef)value, plane, name);
 }
 
 static u32 mtl_v2_sampler_create(i32 min_filter, i32 mag_filter, i32 mip_filter,

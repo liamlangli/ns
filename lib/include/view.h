@@ -414,6 +414,12 @@ i32 view_hands_snapshot(void);
 ns_bool view_hand_tracked(i32 hand);
 ns_bool view_hand_joint_tracked(i32 hand, i32 joint);
 f64 view_hand_joint_position(i32 hand, i32 joint, i32 axis);
+// Phone AR provider (lib/view.ns); weak stubs report -2 where no app supplies one.
+i32 view_ar_start(void);
+void view_ar_stop(void);
+i32 view_ar_snapshot(f64 width, f64 height);
+f64 view_ar_value(i32 index);
+ns_bool view_ar_camera_texture(u32 luma, u32 chroma);
 
 // Committed UTF-8 input from a system input method. Consumers use this instead
 // of translating printable key codes on mobile. take_text consumes this frame's

@@ -303,6 +303,52 @@ ref fn view_hand_joint_tracked(hand: i32, joint: i32) bool
 // Samples older than 0.20 seconds are untracked; zero alone is not validity.
 ref fn view_hand_joint_position(hand: i32, joint: i32, axis: i32) f64
 
+// Phone AR: world tracking on the rear camera. Supported where the app
+// supplies a provider (an iPhone app's own Swift); every other host reports
+// VIEW_AR_UNSUPPORTED. The provider may share its camera with the hand
+// provider, so starting either starts the camera. Snapshot once a frame
+// with the drawable's size: the values and the camera picture stay fixed
+// until the next snapshot, laid out for that portrait viewport.
+lit VIEW_AR_STOPPED = 0
+lit VIEW_AR_STARTING = 1
+lit VIEW_AR_RUNNING = 2
+lit VIEW_AR_FAILED = -1
+lit VIEW_AR_UNSUPPORTED = -2
+// view_ar_value indices. CAMERA is the camera-to-world transform, column
+// major, in metres: the portrait camera looks down -Z with +Y up the screen,
+// and the world's +Y is up against gravity.
+lit VIEW_AR_VALUE_CAMERA = 0
+// The viewport's vertical field of view in radians, and where the optical
+// centre sits off the viewport centre in clip units (x, y).
+lit VIEW_AR_VALUE_FOV_Y = 16
+lit VIEW_AR_VALUE_CENTER_X = 17
+lit VIEW_AR_VALUE_CENTER_Y = 18
+// Screen uv (0..1, top-left origin) to camera picture uv: u' = a u + c v + tx,
+// v' = b u + d v + ty, in the order a, b, c, d, tx, ty.
+lit VIEW_AR_VALUE_PICTURE = 19
+// 0 not available, 1 limited, 2 normal.
+lit VIEW_AR_VALUE_TRACKING = 25
+// Ambient light in lumens (1000 is neutral) and its colour temperature in
+// kelvin (6500 is neutral); 0 before an estimate.
+lit VIEW_AR_VALUE_LIGHT = 26
+lit VIEW_AR_VALUE_KELVIN = 27
+// Seconds on the capture clock, and the frame's sequence (0 before one).
+lit VIEW_AR_VALUE_TIME = 28
+lit VIEW_AR_VALUE_SEQUENCE = 29
+lit VIEW_AR_VALUE_COUNT = 30
+lit VIEW_AR_TRACKING_NONE = 0
+lit VIEW_AR_TRACKING_LIMITED = 1
+lit VIEW_AR_TRACKING_NORMAL = 2
+
+ref fn view_ar_start() i32
+ref fn view_ar_stop()
+ref fn view_ar_snapshot(width: f64, height: f64) i32
+ref fn view_ar_value(index: i32) f64
+// Point two existing texture slots at the snapshot's camera picture without
+// a copy: full-range BT.601 luma (R8) and half-size CbCr (RG8). Call inside
+// the gpu frame; false before a snapshot, the slots unchanged.
+ref fn view_ar_camera_texture(luma: u32, chroma: u32) bool
+
 // Committed UTF-8 text, including system IME composition, once per frame.
 // On iOS use this for insertion and key events only for shortcuts/navigation.
 ref fn view_on_text_input(v: ref view, text: str) bool

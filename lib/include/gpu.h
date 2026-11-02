@@ -79,6 +79,11 @@ void gpu_texture_destroy(u32 tex);
 // `pixel` is a BGRA CVPixelBufferRef. Pins it through command completion and
 // replaces the existing texture slot with an IOSurface view without a copy.
 ns_bool gpu_metal_import_pixel_buffer(u32 slot, void *pixel, const char *name);
+// The same for one plane of a pixel buffer, or the whole of a packed one
+// with plane -1. Biplanar 4:2:0 YCbCr gives R8 luma (plane 0) and RG8 chroma
+// (plane 1); 32-bit and 16-bit float depth give R32F and R16F; BGRA gives
+// BGRA8. Other layouts return false and leave the slot as it was.
+ns_bool gpu_metal_import_pixel_plane(u32 slot, void *pixel, i32 plane, const char *name);
 #endif
 u32  gpu_sampler_create(i32 min_filter, i32 mag_filter, i32 mip_filter,
                         i32 wrap_u, i32 wrap_v, i32 wrap_w,

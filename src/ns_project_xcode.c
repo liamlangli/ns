@@ -1007,6 +1007,7 @@ static ns_bool ns_xcode_write_app_sources(const ns_project_spec *spec, const cha
         "#include <TargetConditionals.h>\n"
         "#if TARGET_OS_IOS || TARGET_OS_TV || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)\n"
         "void view_ios_set_host_view(void * _Nonnull view);\n"
+        "int gpu_metal_import_pixel_plane(unsigned int slot, void * _Nonnull pixel, int plane, const char * _Nullable name);\n"
         "#endif\n"
         "#if TARGET_OS_VISION\n"
         "int view_immersive_host_requested(void);\n"
