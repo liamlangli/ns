@@ -119,7 +119,9 @@ else ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_AUDIO_OBJS = $(NS_BINDIR)/lib/audio.apple.o
 	NS_STORAGE_OBJS += $(NS_BINDIR)/lib/storage.apple.o
 else ifeq ($(NS_OS), $(NS_WIN))
-	NS_OS_OBJS += $(NS_BINDIR)/lib/os.win.o
+	# A DLL cannot import from the ns executable, so the file helpers os.c
+	# shares with the host are linked into the module itself.
+	NS_OS_OBJS += $(NS_BINDIR)/lib/os.win.o $(NS_BINDIR)/src/ns_os.o $(NS_BINDIR)/src/ns_type.o
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.win.o
 	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.win.o
 	NS_GPU_OBJS += $(NS_BINDIR)/lib/gpu.dx12.o
@@ -319,10 +321,13 @@ NS_DESKTOP_OBJ = $(NS_BINDIR)/lib/desktop.osx.o
 NS_DESKTOP_DEPS = $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) -framework Cocoa -framework ScreenCaptureKit -framework ApplicationServices -framework Carbon -framework CoreMedia -framework CoreVideo
 $(NS_DESKTOP_OBJ): lib/src/desktop.osx.m lib/include/desktop.h lib/include/gpu.h | $(NS_DIRS)
 	$(Q)$(call ns_step,CC,$<,quiet) $(NS_CC) -c -fPIC -fobjc-arc -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS) -Wno-deprecated-declarations
+else ifeq ($(NS_OS), $(NS_WIN))
+NS_DESKTOP_OBJ = $(NS_BINDIR)/lib/desktop.stub.o
+NS_DESKTOP_DEPS = $(NS_VIEW_DYLIB)
 else
 NS_DESKTOP_OBJ = $(NS_BINDIR)/lib/desktop.stub.o
 endif
-$(NS_DESKTOP_DYLIB): $(NS_DESKTOP_OBJ) $(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_GPU_DYLIB) $(NS_VIEW_DYLIB),)
+$(NS_DESKTOP_DYLIB): $(NS_DESKTOP_OBJ) $(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_GPU_DYLIB) $(NS_VIEW_DYLIB),) $(if $(filter $(NS_WIN),$(NS_OS)),$(NS_VIEW_DYLIB),)
 	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_DESKTOP_OBJ) -o $@ $(NS_DESKTOP_DEPS)
 $(NS_DESKTOP_STATIC): $(NS_DESKTOP_OBJ)
 	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^

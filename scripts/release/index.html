@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ns - nano script</title>
+  <link rel="icon" type="image/svg+xml" href="./ns.svg">
+  <link rel="preload" href="/font/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <style>
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url("/font/jetbrains-mono-latin-400.woff2") format("woff2");
+    }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #000;
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      padding: 15vh 16px 64px;
+      box-sizing: border-box;
+      color: #fff;
+      font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    main {
+      width: 100%;
+      max-width: 680px;
+    }
+
+    h1, h2, p, pre {
+      margin: 0;
+      font-size: inherit;
+      font-weight: 400;
+    }
+
+    h1 {
+      font-size: clamp(1rem, 3vw, 1.5rem);
+    }
+
+    section {
+      margin-top: 40px;
+    }
+
+    h2 {
+      color: #888;
+    }
+
+    pre {
+      margin-top: 8px;
+      padding: 12px 14px;
+      background: #111;
+      overflow-x: auto;
+      font-family: inherit;
+    }
+
+    .dim {
+      color: #888;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    a:hover {
+      color: #ffd84d;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ns</h1>
+    <p class="dim">a small, explicitly typed, data-oriented functional language.</p>
+
+    <section>
+      <h2>macos / linux</h2>
+      <pre>curl -fsSL https://liamlangli.com/ns/install.sh | sh</pre>
+    </section>
+
+    <section>
+      <h2>windows powershell</h2>
+      <pre>irm https://liamlangli.com/ns/install.ps1 | iex</pre>
+    </section>
+
+    <section>
+      <h2>windows cmd</h2>
+      <pre>curl -fsSLO https://liamlangli.com/ns/install.bat &amp;&amp; install.bat</pre>
+    </section>
+
+    <section>
+      <h2>then</h2>
+      <pre>ns create hello
+cd hello
+ns run</pre>
+    </section>
+
+    <section>
+      <p class="dim">installs into ~/.ns and adds ~/.ns/bin to PATH.</p>
+      <p class="dim">prebuilt for macos arm64 (14+), linux x86_64 and windows x86_64; other hosts build from source.</p>
+      <p class="dim">remove with: rm -rf ~/.ns</p>
+      <p class="dim" id="version"></p>
+    </section>
+
+    <section>
+      <p><a href="https://github.com/liamlangli/ns">source</a> · <a href="/">liamlangli.com</a></p>
+    </section>
+  </main>
+  <script>
+    fetch("./latest").then(function (r) { return r.ok ? r.text() : ""; }).then(function (v) {
+      if (v.trim()) document.getElementById("version").textContent = "latest: " + v.trim();
+    }).catch(function () {});
+  </script>
+</body>
+</html>

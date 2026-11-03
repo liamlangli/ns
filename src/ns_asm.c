@@ -20,7 +20,7 @@
         HMODULE h = GetModuleHandleA("kernel32.dll");
         if (!h) return false;
         typedef BOOL (WINAPI *IsWow64Process2_t)(HANDLE, USHORT*, USHORT*);
-        IsWow64Process2_t fn = (IsWow64Process2_t)GetProcAddress(h, "IsWow64Process2");
+        IsWow64Process2_t fn = (IsWow64Process2_t)(void (*)(void))GetProcAddress(h, "IsWow64Process2");
         if (!fn) return false;
         USHORT proc = 0, nat = 0;
         if (!fn(GetCurrentProcess(), &proc, &nat)) return false;

@@ -80,9 +80,8 @@ endif
 NS_WARN_CFLAGS = -Wall -Wextra -Wunused-result $(NS_WERROR_CFLAGS)
 
 ifeq ($(NS_OS), $(NS_WIN))
-# MSYS2 translates /ucrt64 for the native linker. Keeping this path relative
-# to the active MSYS2 installation also works on GitHub-hosted runners, where
-# the installation is not guaranteed to live on a particular drive.
+# MSYS2 translates /ucrt64 for the native linker, wherever MSYS2 is installed;
+# the release cross build unpacks its packages at /ucrt64 for the same path.
 NS_LDFLAGS = -L/ucrt64/lib -lm -lreadline -lffi -ldl -lws2_32
 NS_GPU_LDFLAGS = -ld3d12 -ldxgi -ldxguid -ld3dcompiler
 else ifeq ($(NS_OS), $(NS_DARWIN))
@@ -320,8 +319,12 @@ all:
 apps: $(TARGET) std
 	$(Q)sh scripts/nscode_apps.sh build $(CURDIR)/$(TARGET)$(NS_SUFFIX) $(CURDIR)/$(NS_BINDIR)
 
+# `ns build` has no Windows executable output and `ns <word>` no Windows lookup
+# yet, so a Windows install has no app to install.
 install-apps: $(TARGET) std
+ifneq ($(NS_OS), $(NS_WIN))
 	$(Q)sh scripts/nscode_apps.sh install $(CURDIR)/$(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)
+endif
 
 $(NS_DIRS):
 	$(Q)$(NS_MKDIR) $(NS_DIRS)
@@ -389,7 +392,7 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_TEST_EXTRA_SRCS) $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
 .PHONY: test
-# CI runs `make test` without `make all`. Depend on `std` so every native
+# `make test` may run without `make all`. Depend on `std` so every native
 # module the .ns suites load (io, compress, os, gpu, ...) is built first.
 test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ns_json_test

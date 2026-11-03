@@ -1,16 +1,30 @@
 Nano Script
 -----------
-[![Build](https://github.com/liamlangli/ns/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/liamlangli/ns/actions/workflows/build.yml)
-[![Test](https://github.com/liamlangli/ns/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/liamlangli/ns/actions/workflows/test.yml)
-
 > A minimal, data-oriented functional programming language.
+
+## Install
+
+```sh
+# macOS / Linux
+curl -fsSL https://liamlangli.com/ns/install.sh | sh
+```
+
+```powershell
+# Windows
+irm https://liamlangli.com/ns/install.ps1 | iex
+```
+
+The installers put the SDK in `~/.ns` and add `~/.ns/bin` to `PATH`. Prebuilt
+releases cover macOS arm64, Linux x86_64 and Windows x86_64; other hosts build
+from source.
 
 ## Releases
 
-The Build workflow validates optimized release builds for macOS aarch64, Linux
-amd64, and Windows amd64. Pushing a tag whose name starts with `v` publishes
-those three SDK archives and their `SHA256SUMS` file to a GitHub Release
-automatically.
+`sh scripts/release.sh` builds all three releases locally: macOS on the Mac
+itself, Linux and Windows in amd64 containers run by Apple's `container` tool
+(`scripts/release/`). It uploads the archives, their checksums, the installers
+and the install page to liamlangli.com/ns. `--dry-run` packages into
+`bin/release` without uploading.
 
 ## Syntax
 ```swift

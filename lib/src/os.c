@@ -91,7 +91,7 @@ u64 os_process_memory(void) {
 #elif defined(NS_WIN)
     // Resolve from kernel32 to avoid adding a psapi link dependency.
     typedef BOOL (WINAPI *memory_info_fn)(HANDLE, PPROCESS_MEMORY_COUNTERS, DWORD);
-    memory_info_fn query = (memory_info_fn)GetProcAddress(
+    memory_info_fn query = (memory_info_fn)(void (*)(void))GetProcAddress(
         GetModuleHandleA("kernel32.dll"), "K32GetProcessMemoryInfo");
     PROCESS_MEMORY_COUNTERS info = {0};
     if (!query || !query(GetCurrentProcess(), &info, sizeof(info))) return 0;

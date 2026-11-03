@@ -2997,9 +2997,9 @@ ui_panel_touch *ui_panel_touch_update(ui_renderer *r, i32 touch, ns_bool tracked
     result.y = (1.0 - v) * 0.5 * r->rect.h - r->safe_rect.y;
     result.depth = depth;
     result.inside = tracked && fabs(u) <= 1.0 && fabs(v) <= 1.0;
-    ns_bool near = tracked && fabs(u) <= UI_PANEL_DRAG_SLACK && fabs(v) <= UI_PANEL_DRAG_SLACK;
+    ns_bool nearby = tracked && fabs(u) <= UI_PANEL_DRAG_SLACK && fabs(v) <= UI_PANEL_DRAG_SLACK;
     if (state->down) {
-        if (!near || depth > extent * UI_PANEL_RELEASE_MARGIN) {
+        if (!nearby || depth > extent * UI_PANEL_RELEASE_MARGIN) {
             state->down = false;
             result.released = true;
         }

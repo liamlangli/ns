@@ -23,6 +23,7 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <direct.h>
+#include <time.h>
 #else
 #include <dirent.h>
 #include <errno.h>
@@ -3776,11 +3777,8 @@ static ns_str ns_build_darwin_current_executable(void) {
     ns_str_free(path);
     return absolute;
 }
+#endif // NS_DARWIN
 
-// Copy the packaged paths into the bundle's resource directory under the names
-// they have in the project. The launched executable enters that directory, so
-// a program keeps reading `res/house.vox` whether it was interpreted from the
-// project root or double-clicked as a bundle.
 // The cooker is a build-time tool; image codecs never enter the language VM.
 #ifdef NS_DARWIN
 // Whether `python` can run the cooker: Python 3.11+ for tomllib, and Pillow.
@@ -3895,6 +3893,11 @@ static void ns_cook_assets(ns_str root, ns_str destination, const char *platform
     if (ns_cook_command(5, args)) ns_exit(1, "cook", "texture cooking failed.\n");
 }
 
+#if defined(NS_DARWIN)
+// Copy the packaged paths into the bundle's resource directory under the names
+// they have in the project. The launched executable enters that directory, so
+// a program keeps reading `res/house.vox` whether it was interpreted from the
+// project root or double-clicked as a bundle.
 static void ns_build_darwin_copy_assets(ns_build_input *in, ns_str resources_dir) {
     if (!in->has_manifest) return;
     ns_str *assets = ns_project_asset_paths(in->scope);
@@ -4259,6 +4262,7 @@ static void ns_build_write_launcher(ns_build_input *in, ns_str output) {
 
 // Compile `in` and write its artifact. Every branch either emits the artifact
 // or exits, so the caller records the build inputs only after a real build.
+#if !defined(_WIN32)
 // UI fonts travel with the feature module. A Darwin bundle copies them into
 // Contents/Resources; a cross-built app copies them beside ui.so, which is
 // where ui_resolve_asset looks (`<module>/assets/<file>`).
@@ -4324,6 +4328,7 @@ static void ns_build_linux_package_app(ns_build_input *in, ns_str executable_pat
     ns_str_free(marker);
     ns_str_free(dir);
 }
+#endif
 
 // The launcher ns_appimage_write puts in front of the image. A Linux toolchain
 // builds it beside bin/ns and installs it into lib/; a cross build uses the
@@ -7208,6 +7213,7 @@ static ns_bool ns_app_executable_file(const char *path) {
     return stat(path, &st) == 0 && S_ISREG(st.st_mode) && access(path, X_OK) == 0;
 }
 
+#if defined(NS_DARWIN)
 // The program of a Darwin bundle: Contents/MacOS/<name>, else the first
 // executable there (an app's program is named after its manifest).
 static ns_bool ns_app_bundle_executable(const char *bundle, const char *name, char *out) {
@@ -7227,6 +7233,7 @@ static ns_bool ns_app_bundle_executable(const char *bundle, const char *name, ch
     closedir(dir);
     return found;
 }
+#endif
 
 // Look for ns_<word>, then <word>: compiled beside this ns (where `make` and
 // `make install` put every nscode app), then as a source project under the
@@ -7251,10 +7258,10 @@ static ns_bool ns_app_find(const char *word, ns_app_hit *hit) {
             break;
         }
 #endif
-        snprintf(path, sizeof(path), "%.*s/%s.AppImage", bin.len, bin.data, names[i]);
-        if (!ns_app_executable_file(path)) {
-            snprintf(path, sizeof(path), "%.*s/%s", bin.len, bin.data, names[i]);
-        }
+        // A path too long for the buffer names nothing that can be found.
+        if (snprintf(path, sizeof(path), "%.*s/%s.AppImage", bin.len, bin.data, names[i]) >= (i32)sizeof(path)) continue;
+        if (!ns_app_executable_file(path) &&
+            snprintf(path, sizeof(path), "%.*s/%s", bin.len, bin.data, names[i]) >= (i32)sizeof(path)) continue;
         // `ns ns` must not start this executable again.
         if (ns_app_executable_file(path) && strcmp(path, self.data) != 0) {
             snprintf(hit->exe, sizeof(hit->exe), "%s", path);
@@ -7264,9 +7271,9 @@ static ns_bool ns_app_find(const char *word, ns_app_hit *hit) {
     const char *sources[2] = {"share/nscode", "nscode"};
     for (i32 i = 0; i < 2 && !found; i++) {
         for (i32 j = 0; j < 2 && !found; j++) {
-            snprintf(path, sizeof(path), "%.*s/%s/%s/ns.mod", root.len, root.data, sources[j], names[i]);
-            if (ns_file_exists(ns_str_cstr(path))) {
-                snprintf(hit->exe, sizeof(hit->exe), "%.*s/%s/%s", root.len, root.data, sources[j], names[i]);
+            if (snprintf(path, sizeof(path), "%.*s/%s/%s/ns.mod", root.len, root.data, sources[j], names[i]) >= (i32)sizeof(path)) continue;
+            if (ns_file_exists(ns_str_cstr(path)) &&
+                snprintf(hit->exe, sizeof(hit->exe), "%.*s/%s/%s", root.len, root.data, sources[j], names[i]) < (i32)sizeof(hit->exe)) {
                 hit->source = true;
                 found = true;
             }

@@ -4,6 +4,7 @@
 #include "ns_fmt.h"
 #include "ns_os.h"
 
+#include <stdlib.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
@@ -123,7 +124,11 @@ ns_bool ns_repl_invoke_cmd(ns_vm *vm, ns_str line) {
 
 void ns_repl(ns_vm* vm) {
     vm->repl = true;
+#if defined(_WIN32)
+    _putenv_s("NS_REPL_RECOVER", "1");
+#else
     setenv("NS_REPL_RECOVER", "1", 1);
+#endif
     ns_repl_init();
 
     ns_lib_import(vm, ns_str_cstr("std"));
@@ -188,5 +193,9 @@ void ns_repl(ns_vm* vm) {
         ns_repl_free_line(line);
         _ast.section_begin = _ast.section_end;
     }
+#if defined(_WIN32)
+    _putenv_s("NS_REPL_RECOVER", "");
+#else
     unsetenv("NS_REPL_RECOVER");
+#endif
 }
