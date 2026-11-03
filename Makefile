@@ -504,6 +504,18 @@ else
 	sh scripts/build_linux_modules.sh
 endif
 
+# Build the macOS arm64, Linux x86_64 and Windows x86_64 releases from a clean
+# export of this tree and upload them with the installers to liamlangli.com/ns
+# (scripts/release.sh). Runs on an arm64 Mac with Apple's `container` tool.
+#   make publish                              all three, uploaded
+#   make publish RELEASE_ARGS=--dry-run       package into bin/release only
+#   make publish RELEASE_ARGS=linux-x86_64    one platform (dry-run only)
+.PHONY: publish
+publish:
+	@command -v container >/dev/null 2>&1 || { echo "publish: Apple's container tool is required (github.com/apple/container)" >&2; exit 1; }
+	@container system start >/dev/null
+	sh scripts/release.sh $(RELEASE_ARGS)
+
 install: all
 	$(Q)$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/lib $(NS_INSTALL_ROOT)/ref \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/src $(NS_INSTALL_ROOT)/share/ns-runtime/include \

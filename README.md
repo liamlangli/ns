@@ -20,11 +20,11 @@ from source.
 
 ## Releases
 
-`sh scripts/release.sh` builds all three releases locally: macOS on the Mac
+`make publish` builds all three releases locally: macOS on the Mac
 itself, Linux and Windows in amd64 containers run by Apple's `container` tool
 (`scripts/release/`). It uploads the archives, their checksums, the installers
-and the install page to liamlangli.com/ns. `--dry-run` packages into
-`bin/release` without uploading.
+and the install page to liamlangli.com/ns. `make publish
+RELEASE_ARGS=--dry-run` packages into `bin/release` without uploading.
 
 ## Syntax
 ```swift
