@@ -2,11 +2,14 @@
 # Build the prebuilt releases and publish them with the installers.
 #
 #   sh scripts/release.sh [--dry-run] [platform...]
+#   sh scripts/release.sh --installers
 #
 # Platforms are darwin-arm64 (built on this Mac), linux-x86_64 and
 # windows-x86_64 (built in amd64 Linux containers with Apple's `container`
 # tool from the images in scripts/release/). With none named, all three build.
-# --dry-run packages into bin/release without uploading.
+# --dry-run packages into bin/release without uploading. --installers builds
+# nothing and uploads only the installers and the install page, leaving the
+# published release and its latest marker as they are.
 #
 # Each build compiles a clean export of the working tree (tracked and
 # untracked, non-ignored files) with NS_DEBUG=0, installs it into a staging
@@ -26,10 +29,12 @@ repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 host=${NS_RELEASE_HOST:-lang}
 dir=${NS_RELEASE_DIR:-/var/www/ns}
 dry_run=0
+installers_only=0
 platforms=""
 for arg in "$@"; do
     case "$arg" in
     --dry-run) dry_run=1 ;;
+    --installers) installers_only=1 ;;
     darwin-arm64 | linux-x86_64 | windows-x86_64) platforms="$platforms $arg" ;;
     *) echo "release: unknown argument $arg" >&2; exit 2 ;;
     esac
@@ -39,6 +44,27 @@ done
 version=$(git -C "$repo" describe --tags --always --dirty)
 out=$repo/bin/release
 mkdir -p "$out/$version"
+
+# The installers and the page, as they are served beside the releases.
+stage_installers() {
+    cp "$repo/scripts/install.sh" "$repo/scripts/install.ps1" "$repo/scripts/release/index.html" \
+        "$repo/sample/ns.svg" "$out/"
+    # cmd.exe expects CRLF line endings.
+    sed 's/\r*$/\r/' "$repo/scripts/install.bat" >"$out/install.bat"
+}
+upload_installers() {
+    scp "$out/install.sh" "$out/install.ps1" "$out/install.bat" "$out/index.html" \
+        "$out/ns.svg" "$@" "$host:$dir/"
+    ssh "$host" "chmod -R a+rX '$dir'"
+}
+
+if [ "$installers_only" = 1 ]; then
+    stage_installers
+    [ "$dry_run" = 1 ] && exit 0
+    upload_installers
+    echo "release: published the installers to $host:$dir"
+    exit 0
+fi
 
 # Copy the working tree as git sees it into $1.
 export_source() {
@@ -105,10 +131,7 @@ for platform in $platforms; do
     build "$platform"
 done
 
-cp "$repo/scripts/install.sh" "$repo/scripts/install.ps1" "$repo/scripts/release/index.html" \
-    "$repo/sample/ns.svg" "$out/"
-# cmd.exe expects CRLF line endings.
-sed 's/\r*$/\r/' "$repo/scripts/install.bat" >"$out/install.bat"
+stage_installers
 printf '%s\n' "$version" >"$out/latest"
 
 [ "$dry_run" = 1 ] && exit 0
@@ -124,7 +147,5 @@ done
 
 ssh "$host" "mkdir -p '$dir/$version'"
 scp "$out/$version"/ns-* "$host:$dir/$version/"
-scp "$out/install.sh" "$out/install.ps1" "$out/install.bat" "$out/index.html" \
-    "$out/ns.svg" "$out/latest" "$host:$dir/"
-ssh "$host" "chmod -R a+rX '$dir'"
+upload_installers "$out/latest"
 echo "release: published $version to $host:$dir"

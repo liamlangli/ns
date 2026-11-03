@@ -41,6 +41,63 @@ fetch() {
     fi
 }
 
+# The archive's size from a HEAD request, or 0 when the server does not say.
+remote_size() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSIL --retry 3 "$1" 2>/dev/null
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q --spider -S "$1" 2>&1
+    fi | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }'
+}
+
+# draw_progress <bytes> <total or 0> <seconds> <done 0|1>
+draw_progress() {
+    awk -v got="$1" -v total="$2" -v secs="$3" -v done="$4" '
+    function clock(s) { s = int(s + 0.5); return s >= 60 ? sprintf("%dm%02ds", s / 60, s % 60) : sprintf("%ds", s) }
+    BEGIN {
+        mb = 1048576; width = 24
+        rate = secs > 0 ? got / secs : 0
+        speed = rate > 0 ? sprintf("%.1f MB/s", rate / mb) : "-- MB/s"
+        if (done) tail = "in " clock(secs)
+        # Whole-second timing makes the first estimates wild; wait for two.
+        else tail = secs >= 2 && rate > 0 && total > 0 ? "eta " clock((total - got) / rate) : "eta --"
+        if (total > 0) {
+            part = got / total; if (part > 1) part = 1
+            bar = ""; for (i = 0; i < width; i++) bar = bar (i < int(part * width) ? "#" : "-")
+            printf "\r  [%s] %3d%%  %.1f/%.1f MB  %s  %s   ", bar, part * 100, got / mb, total / mb, speed, tail
+        } else {
+            printf "\r  %.1f MB  %s  %s   ", got / mb, speed, tail
+        }
+    }' >&2
+}
+
+# fetch with a progress bar when a person is watching stderr: the transfer
+# runs in the background while the file's growing size is drawn.
+download() {
+    if [ ! -t 2 ]; then
+        fetch "$1" "$2"
+        return
+    fi
+    total=$(remote_size "$1")
+    start=$(date +%s)
+    fetch "$1" "$2" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        got=0
+        [ -f "$2" ] && got=$(wc -c <"$2" | tr -d ' ')
+        draw_progress "$got" "$total" $(($(date +%s) - start)) 0
+        sleep 0.2 2>/dev/null || sleep 1
+    done
+    if wait "$pid"; then status=0; else status=$?; fi
+    got=0
+    [ -f "$2" ] && got=$(wc -c <"$2" | tr -d ' ')
+    if [ "$status" = 0 ]; then
+        draw_progress "$got" "$total" $(($(date +%s) - start)) 1
+    fi
+    printf '\n' >&2
+    return "$status"
+}
+
 sha256_of() {
     if command -v shasum >/dev/null 2>&1; then
         shasum -a 256 "$1" | cut -d' ' -f1
@@ -96,12 +153,14 @@ install_prebuilt() {
     base="$NS_RELEASE_URL/$version"
 
     say "downloading $version for $platform"
-    fetch "$base/$archive" "$work/$archive" || die "no prebuilt release at $base/$archive"
+    download "$base/$archive" "$work/$archive" || die "no prebuilt release at $base/$archive"
     fetch "$base/$archive.sha256" "$work/$archive.sha256" || die "missing checksum $base/$archive.sha256"
+    say "verifying checksum"
     expected=$(cut -d' ' -f1 <"$work/$archive.sha256")
     actual=$(sha256_of "$work/$archive")
     [ "$expected" = "$actual" ] || die "checksum mismatch for $archive"
 
+    say "unpacking"
     mkdir -p "$work/stage"
     tar -xzf "$work/$archive" -C "$work/stage"
     [ -x "$work/stage/bin/ns" ] || die "archive has no bin/ns"

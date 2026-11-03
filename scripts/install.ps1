@@ -32,6 +32,67 @@
         }
     }
 
+    # Download with the same bar install.sh draws: percent, size, speed and
+    # eta. Invoke-WebRequest's own progress slows PowerShell 5.1 to a crawl, so
+    # the response is streamed here and the bar drawn by hand.
+    function Download($url, $path) {
+        Add-Type -AssemblyName System.Net.Http
+        $client = New-Object System.Net.Http.HttpClient
+        try {
+            $response = $client.GetAsync($url, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).Result
+            if (-not $response.IsSuccessStatusCode) { Fail "download failed: $url ($([int]$response.StatusCode))" }
+            $total = $response.Content.Headers.ContentLength
+            $source = $response.Content.ReadAsStreamAsync().Result
+            $target = [IO.File]::Create($path)
+            $draw = -not [Console]::IsErrorRedirected
+            $clock = [Diagnostics.Stopwatch]::StartNew()
+            $buffer = New-Object byte[] 65536
+            $got = [long]0
+            $last = -1.0
+            try {
+                while (($read = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    $target.Write($buffer, 0, $read)
+                    $got += $read
+                    if ($draw -and $clock.Elapsed.TotalSeconds - $last -ge 0.2) {
+                        Draw-Progress $got $total $clock.Elapsed.TotalSeconds $false
+                        $last = $clock.Elapsed.TotalSeconds
+                    }
+                }
+            } finally {
+                $target.Dispose()
+                $source.Dispose()
+            }
+            if ($draw) {
+                Draw-Progress $got $total $clock.Elapsed.TotalSeconds $true
+                [Console]::Error.WriteLine()
+            }
+        } finally {
+            $client.Dispose()
+        }
+    }
+    function Clock($seconds) {
+        $s = [int][Math]::Round($seconds)
+        if ($s -ge 60) { return '{0}m{1:00}s' -f [int][Math]::Floor($s / 60), ($s % 60) }
+        return "${s}s"
+    }
+    function Draw-Progress($got, $total, $seconds, $done) {
+        $mb = 1048576.0
+        $rate = if ($seconds -gt 0) { $got / $seconds } else { 0 }
+        $speed = if ($rate -gt 0) { '{0:0.0} MB/s' -f ($rate / $mb) } else { '-- MB/s' }
+        $tail = if ($done) { 'in ' + (Clock $seconds) }
+                elseif ($seconds -ge 1 -and $rate -gt 0 -and $total) { 'eta ' + (Clock (($total - $got) / $rate)) }
+                else { 'eta --' }
+        if ($total) {
+            $part = [Math]::Min(1.0, $got / $total)
+            $fill = [int][Math]::Floor($part * 24)
+            $bar = ('#' * $fill) + ('-' * (24 - $fill))
+            $line = '  [{0}] {1,3}%  {2:0.0}/{3:0.0} MB  {4}  {5}   ' -f $bar, [int]($part * 100), ($got / $mb), ($total / $mb), $speed, $tail
+        } else {
+            $line = '  {0:0.0} MB  {1}  {2}   ' -f ($got / $mb), $speed, $tail
+        }
+        [Console]::Error.Write("`r$line")
+    }
+
     $base = if ($env:NS_RELEASE_URL) { $env:NS_RELEASE_URL.TrimEnd('/') } else { 'https://liamlangli.com/ns' }
     $root = Join-Path $HOME '.ns'
     $platform = 'windows-x86_64'
@@ -54,11 +115,13 @@
     try {
         Say "downloading $version for $platform"
         $zip = Join-Path $work $archive
-        Invoke-WebRequest -UseBasicParsing "$base/$version/$archive" -OutFile $zip
+        Download "$base/$version/$archive" $zip
         $expected = ((Fetch-Text "$base/$version/$archive.sha256") -split '\s+')[0]
         $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash
+        Say 'verifying checksum'
         if ($expected.ToLower() -ne $actual.ToLower()) { Fail "checksum mismatch for $archive" }
 
+        Say 'unpacking'
         $stage = Join-Path $work 'stage'
         # Expand-Archive differs between PowerShell 5.1 and 7; .NET does not.
         Add-Type -AssemblyName System.IO.Compression.FileSystem

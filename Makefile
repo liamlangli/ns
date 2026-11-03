@@ -510,6 +510,7 @@ endif
 #   make publish                              all three, uploaded
 #   make publish RELEASE_ARGS=--dry-run       package into bin/release only
 #   make publish RELEASE_ARGS=linux-x86_64    one platform (dry-run only)
+#   make publish RELEASE_ARGS=--installers    only the installers and page
 .PHONY: publish
 publish:
 	@command -v container >/dev/null 2>&1 || { echo "publish: Apple's container tool is required (github.com/apple/container)" >&2; exit 1; }
