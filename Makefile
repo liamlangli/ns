@@ -315,7 +315,7 @@ all:
 
 .PHONY: apps install-apps
 # Every nscode project with an ns.mod is an app: `make` builds each one beside
-# bin/ns and `make install` installs it, so `ns <word>` (`ns lens`, `ns nn`)
+# bin/ns and `make install` installs it, so `ns <word>` (`ns lens`, `ns tex`)
 # finds it as ns_<word> or <word> (scripts/nscode_apps.sh).
 apps: $(TARGET) std
 	$(Q)sh scripts/nscode_apps.sh build $(CURDIR)/$(TARGET)$(NS_SUFFIX) $(CURDIR)/$(NS_BINDIR)
@@ -441,7 +441,6 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_lens
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_tex
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_vision
-	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/nn
 	sh nscode/ns_tex/test/integration.sh
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_cross_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"

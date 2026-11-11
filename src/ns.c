@@ -336,7 +336,7 @@ void ns_help() {
     printf("                    running on a device, over USB or the local network\n");
     printf("                    --devices lists the devices that can be reached\n");
     printf("  <app> [args...]   any other word that names no file opens the installed\n");
-    printf("                    nscode app ns_<app> or <app> beside ns (`ns lens`, `ns nn`)\n");
+    printf("                    nscode app ns_<app> or <app> beside ns (`ns lens`, `ns tex`)\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("                    --cpu runs each entry on the ns_cpu interpreter\n");
     printf("  build [path|target] compile and link a script/module to an executable or static lib\n");

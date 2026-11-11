@@ -97,7 +97,7 @@ The common commands are:
 - `ns lens [path]`: open ns_lens (an installed app, as above), a zoomable code
   map of a project directory (default: the current directory): folders as
   frames, files as leaves whose syntax-highlighted code scales with the
-  camera, editable up close. `ns nn` opens the MNIST digit recognizer.
+  camera, editable up close.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported. In a
