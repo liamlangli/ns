@@ -1,6 +1,16 @@
 #include "ns_ast.h"
 #include "ns_token.h"
 
+typedef struct ns_ast_token_cache_entry {
+    ns_bool valid;
+    i32 offset, line, line_start, next;
+    ns_token_t token;
+} ns_ast_token_cache_entry;
+
+struct ns_ast_token_cache {
+    ns_ast_token_cache_entry entries[128];
+};
+
 void ns_restore_state(ns_ast_ctx *ctx, ns_ast_state state) {
     ctx->f = state.f;
     ctx->token.line = state.l;
@@ -18,7 +28,23 @@ ns_bool ns_parse_next_token(ns_ast_ctx *ctx) {
     do {
         ctx->last_f = ctx->f;
         ctx->last_token = ctx->token;
-        ctx->f = ns_next_token(&ctx->token, ctx->source, ctx->filename, ctx->f);
+        ns_ast_token_cache_entry *entry = ctx->token_cache
+            ? &ctx->token_cache->entries[(u32)ctx->f & 127u] : NULL;
+        if (entry && entry->valid && entry->offset == ctx->f &&
+            entry->line == ctx->token.line && entry->line_start == ctx->token.line_start) {
+            ctx->f = entry->next;
+            ctx->token = entry->token;
+        } else {
+            i32 offset = ctx->f, line = ctx->token.line, line_start = ctx->token.line_start;
+            ctx->f = ns_next_token(&ctx->token, ctx->source, ctx->filename, ctx->f);
+            // EOF/invalid-token paths may preserve the preceding token's val;
+            // do not memoize those input-dependent results.
+            if (entry && ctx->token.type != NS_TOKEN_EOF && ctx->token.type != NS_TOKEN_INVALID &&
+                ctx->token.type != NS_TOKEN_UNKNOWN) {
+                *entry = (ns_ast_token_cache_entry){.valid = true, .offset = offset,
+                    .line = line, .line_start = line_start, .next = ctx->f, .token = ctx->token};
+            }
+        }
     } while (ctx->token.type == NS_TOKEN_COMMENT || ctx->token.type == NS_TOKEN_SPACE);
     return ctx->token.type != NS_TOKEN_EOF && ctx->f <= ctx->source.len;
 }
@@ -837,7 +863,7 @@ static void ns_ast_order_lit_sections(ns_ast_ctx *ctx) {
     ns_array_free(pending);
 }
 
-ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
+static ns_return_bool ns_ast_parse_impl(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     // Check for empty input
     if (source.data == ns_null || source.len == 0) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_SYNTAX, "empty source input");
@@ -871,4 +897,14 @@ ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     }
     ns_ast_order_lit_sections(ctx);
     return ns_return_ok(bool, true);
+}
+
+ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
+    struct ns_ast_token_cache cache = {0};
+    struct ns_ast_token_cache *previous = ctx->token_cache;
+    const char *setting = getenv("NS_PARSE_TOKEN_CACHE");
+    ctx->token_cache = setting && strcmp(setting, "0") == 0 ? NULL : &cache;
+    ns_return_bool result = ns_ast_parse_impl(ctx, source, filename);
+    ctx->token_cache = previous;
+    return result;
 }

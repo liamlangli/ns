@@ -422,6 +422,9 @@ typedef struct as_parse_context_t {
     // its originating file and line so diagnostics point at the real location
     // instead of the merged entry file. NULL for single-file parses.
     ns_line_loc *line_map;
+    // Per-parse bounded token memoization; owned by ns_ast_parse's stack.
+    // NULL outside a parse, including direct low-level parser API calls.
+    struct ns_ast_token_cache *token_cache;
 } ns_ast_ctx;
 
 // Resolve a merged-source (line, offset) back to its real file location via the

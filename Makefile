@@ -148,6 +148,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_native_rt.c \
 	src/ns_cpu.c \
 	src/ns_cpu_gen.c \
+	src/ns_compile_gpu.c \
 	src/ns_aarch.c \
 	src/ns_macho.c \
 	src/ns_wasm.c \
@@ -269,7 +270,7 @@ $(NS_BINDIR)/src/ns_appimage.o: NS_CFLAGS += $(NS_HOST_ZLIB_CFLAGS)
 # which is shipped for executables produced by `ns build`.
 $(NS_BINDIR)/src/ns_native_rt.o: NS_CFLAGS += -DNS_HOST_TOOL
 
-NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_cpu_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_build_cache_test.c test/ns_lint_test.c test/ns_profile_test.c test/ns_patch_test.c
+NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_cpu_test.c test/ns_compile_gpu_test.c test/ns_ast_cache_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_build_cache_test.c test/ns_lint_test.c test/ns_profile_test.c test/ns_patch_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -401,6 +402,9 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ns_shader_test
 	$(NS_BINDIR)/ns_ssa_test
 	$(NS_BINDIR)/ns_cpu_test
+	$(NS_BINDIR)/ns_compile_gpu_test
+	$(NS_BINDIR)/ns_ast_cache_test
+	sh test/ns_ast_cache_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	$(NS_BINDIR)/ns_token_test
 	$(NS_BINDIR)/ns_buffer_test
 	$(NS_BINDIR)/ns_os_test
@@ -747,3 +751,20 @@ $(IOS_FEATURE_OBJDIR)/lib/src/camera.apple.o: lib/src/camera.apple.m lib/include
 $(IOS_FEATURE_LIBDIR)/libcamera.a: $(IOS_FEATURE_OBJDIR)/lib/src/camera.apple.o
 	@mkdir -p $(dir $@)
 	$(NS_AR) rcs $@ $^
+
+# Optional compiler accelerator. The language-only host loads this service on
+# demand; it never links Metal or the application GPU runtime into bin/ns.
+ifeq ($(NS_OS), $(NS_DARWIN))
+NS_COMPILE_GPU = $(NS_BINDIR)/ns_compile_gpu.dylib
+all test: $(NS_COMPILE_GPU)
+$(NS_COMPILE_GPU): src/ns_compile_gpu.m include/ns_compile_gpu_abi.h | $(NS_BINDIR)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -shared -fobjc-arc -O2 -Wall -Wextra -Werror -Iinclude $< -o $@ -framework Foundation -framework Metal
+install: install-compiler-gpu
+.PHONY: install-compiler-gpu
+install-compiler-gpu: $(NS_COMPILE_GPU)
+	$(Q)mkdir -p $(NS_INSTALL_ROOT)/bin
+	$(Q)cp $(NS_COMPILE_GPU) $(NS_INSTALL_ROOT)/bin/
+endif
+
+$(NS_BINDIR)/ns_compiler_bench: bench/compiler/compare.c $(NS_HEADERS) $(NS_LIB)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns $(NS_LDFLAGS)

@@ -1,4 +1,5 @@
 #include "ns_aarch.h"
+#include "ns_compile_gpu.h"
 
 #include <string.h>
 
@@ -1464,10 +1465,10 @@ typedef struct ns_aarch_fn_info {
     u64 *const_bits;
 } ns_aarch_fn_info;
 
-static ns_aarch_fn_info ns_aarch_fn_info_build(ns_ssa_module *ssa, ns_ssa_fn *fn) {
+static ns_aarch_fn_info ns_aarch_fn_info_build(ns_ssa_module *ssa, ns_ssa_fn *fn, i32 *gpu_last_use) {
     ns_aarch_fn_info info = {0};
     info.nvalues = ns_aarch_slot_count(fn);
-    info.last_use = ns_ssa_last_uses(fn, info.nvalues);
+    info.last_use = gpu_last_use ? gpu_last_use : ns_ssa_last_uses(fn, info.nvalues);
     ns_array_set_length(info.is_const, info.nvalues);
     ns_array_set_length(info.const_bits, info.nvalues);
     i32 *defs = NULL;
@@ -1638,9 +1639,11 @@ ns_return_ptr ns_aarch_from_ssa(ns_ssa_module *ssa) {
         }
     }
 
+    i32 **gpu_last_uses = ns_compile_gpu_prepare(ssa);
     for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
         ns_bool is_main = ns_str_equals_STR(ssa->fns[i].name, "main");
-        ns_aarch_fn_info info = ns_aarch_fn_info_build(ssa, &ssa->fns[i]);
+        ns_aarch_fn_info info = ns_aarch_fn_info_build(ssa, &ssa->fns[i], gpu_last_uses ? gpu_last_uses[i] : NULL);
+        if (gpu_last_uses) gpu_last_uses[i] = NULL; // ownership moved to info
         /* The prologue saves the pool registers the body writes, known once
          * it has been emitted: emit it again when that differs from the
          * guess that every one is saved. */
@@ -1655,6 +1658,7 @@ ns_return_ptr ns_aarch_from_ssa(ns_ssa_module *ssa) {
         ns_aarch_fn_info_free(&info);
         ns_array_push(m->fns, fn);
     }
+    ns_compile_gpu_free(gpu_last_uses);
     if (!has_main && has_init) {
         ns_aarch_ctx c = {0};
         ns_aarch_emit_u32(&c, 0xA9BF7BFDu); /* STP x29, x30, [sp, #-16]! */
