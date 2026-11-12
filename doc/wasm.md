@@ -157,6 +157,27 @@ reports for a missing atlas file, leaving text on the fallback face
 library implements — themes, text views, dropdowns, toggles, lists, managed
 textures, recorded layers — have no browser backend either.
 
+## World-space UI recording
+
+`ui_begin_world(renderer, view_proj, model)` snapshots two column-major
+16-float matrices for a run of ordinary `ui_draw_*` calls. `model` transforms
+local `(x, y, 0, 1)` into world space; `view_proj` outputs reverse-Z clip space.
+`ui_end_world` returns to screen recording. Up to eight world/tilted scopes
+share a frame; scopes cannot nest. Begin returns false without changing state
+when it cannot record: only draw and end after a successful begin.
+
+Each run keeps its own matrix snapshot, so one frame may draw many world
+frames and later matrix mutations cannot move earlier geometry. The native
+UI pipeline preserves clip depth and tests/writes reverse-Z for world runs;
+fully uncovered font/image fragments do not write rectangular occluders.
+No intermediate layer image or texture array is created by this API.
+
+The browser command recorder also snapshots both matrices per run. A WebGPU
+UI consumer can bind them with the run's VB/IB/UB and draw indexed geometry
+directly into a shared scene, then apply whole-frame post-processing. The
+legacy Canvas 2D UI fallback provides only an affine approximation; it does
+not supply perspective-correct depth or full world rendering.
+
 Standalone `ns --wasm file.ns -o file.wasm` uses the same validated emitter but
 does not generate a browser shell.
 

@@ -316,6 +316,17 @@ ref fn ui_clear_panel(r: ref ui_renderer)
 ref fn ui_begin_overlay(r: ref ui_renderer)
 ref fn ui_end_overlay(r: ref ui_renderer)
 
+// Draw local UI coordinates directly in a world frame. Matrices contain 16
+// column-major f32 values: model maps (x,y,0,1) to world, view_proj maps world
+// to reverse-Z clip space (near 1, far 0). Both matrices are copied at begin,
+// so later changes never move an earlier draw in the same frame. World draws
+// share the UI pipeline, write/test depth and use painter order for alpha.
+// No layer texture is created. Up to 8 world/tilted scopes share a frame;
+// scopes cannot nest. False leaves recording unchanged; only draw/end on true.
+// ui_end_world returns to screen coordinates. ui_begin_frame resets scopes.
+ref fn ui_begin_world(r: ref ui_renderer, view_proj: [f32], model: [f32]) bool
+ref fn ui_end_world(r: ref ui_renderer)
+
 // Tilted plane. Draws between ui_begin_plane and ui_end_plane are laid out on
 // the flat canvas as usual, then seen in perspective: the canvas plane turns
 // `tilt` radians about the horizontal line through (center_x, center_y), top

@@ -449,6 +449,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/view_hands_apple_compile.sh
 	node test/ns_wasm_runtime_test.mjs
 	node test/ns_wasm_ui_test.mjs "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	node test/ns_wasm_world_test.mjs "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 
 include lib/Makefile
 

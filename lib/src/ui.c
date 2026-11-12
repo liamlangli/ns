@@ -80,6 +80,7 @@
 #define UI_TEXTURE_MSDF 0
 #define UI_TEXTURE_RGBA 1
 #define UI_META_PROJECTION_SHIFT 8
+#define UI_META_WORLD (1u << 12)
 #define UI_PROJECTION_PANEL (UI_MAX_PLANES + 1)
 // Per projection in frame storage: a column-major clip matrix, then the
 // framebuffer-pixel rectangle (x0, y0, x1, y1) that bounds a plane.
@@ -410,6 +411,7 @@ typedef struct ui_renderer {
     u32 shader;
     u32 render_state;
     u32 render_state_hud;
+    u32 render_state_world;
     u32 textures[UI_MAX_TEXTURES];
     i32 texture_widths[UI_MAX_TEXTURES];
     // Previews are composed on the CPU into preview_pixels, one cell each,
@@ -434,6 +436,7 @@ typedef struct ui_renderer {
     // Tilted-plane projections for this frame (ui_begin_plane) and the
     // screen rectangle each one is scissored to.
     f32 planes[UI_MAX_PLANES][16];
+    ns_bool plane_world[UI_MAX_PLANES];
     ui_clip plane_scissors[UI_MAX_PLANES];
     i32 plane_count;
     i32 current_plane;
@@ -627,7 +630,7 @@ static const char *ui_shader_src =
 "    // A retained draw's storage is its own vertices; the root carries its projection.\n"
 "    if (ns_root.vertex_scale.z > 0.5) { m = float4x4(ns_root.projection[0], ns_root.projection[1], ns_root.projection[2], ns_root.projection[3]); }\n"
 "    pos = m * float4(ndc, 0.0, 1.0);\n"
-"    if (projection != 9u) { pos.z = pos.w; }\n"
+"    if (projection != 9u && (meta & 4096u) == 0u) { pos.z = pos.w; }\n"
 "  }\n"
 "  if (ns_root.hud_center_enable.w > 0.5) {\n"
 "    float3 view = ns_root.hud_center_enable.xyz + ns_root.hud_right_hw.xyz * (ndc.x * ns_root.hud_right_hw.w) + ns_root.hud_up_hh.xyz * (ndc.y * ns_root.hud_up_hh.w);\n"
@@ -665,6 +668,10 @@ static const char *ui_shader_src =
 "  float2 q = abs(float2(angle * radius, radial - radius)) - extent;\n"
 "  return length(max(q, float2(0.0))) + min(max(q.x, q.y), 0.0) - corner;\n"
 "}\n"
+"static inline float4 ui_world_color(float4 c, uint meta) {\n"
+"  if ((meta & 4096u) != 0u && c.a < 0.0039215686) { discard_fragment(); }\n"
+"  return c;\n"
+"}\n"
 "fragment float4 ui_fs(VOut in [[stage_in]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]], texture2d<float> ns_texture_table_msdf [[texture(3)]], texture2d<float> ns_texture_table_rgba [[texture(4)]]) {\n"
 "  // Derivatives first, outside every branch: the fragments of one 2x2 quad\n"
 "  // can belong to primitives of different kinds in the same draw.\n"
@@ -676,14 +683,14 @@ static const char *ui_shader_src =
 "  if (kind == 5u) {\n"
 "    // The share of this pixel's footprint the box covers, per filtered axis.\n"
 "    float2 cover = clamp((min(in.pixel + pixel_fw * 0.5, in.uv) - max(in.pixel - pixel_fw * 0.5, in.params.xy)) / pixel_fw, 0.0, 1.0);\n"
-"    return float4(in.col.rgb, in.col.a * min(in.params.z * cover.x * cover.y, 1.0));\n"
+"    return ui_world_color(float4(in.col.rgb, in.col.a * min(in.params.z * cover.x * cover.y, 1.0)), in.meta);\n"
 "  }\n"
 "  if (kind == 2u) {\n"
 "    float opacity = 1.0 - smoothstep(-arc_aa, arc_aa, arc_distance);\n"
 "    if (in.params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
-"    return float4(in.col.rgb, in.col.a * opacity);\n"
+"    return ui_world_color(float4(in.col.rgb, in.col.a * opacity), in.meta);\n"
 "  }\n"
-"  if (kind == 4u) { return in.col; }\n"
+"  if (kind == 4u) { return ui_world_color(in.col, in.meta); }\n"
 "  constexpr sampler samp(mag_filter::linear, min_filter::linear, address::clamp_to_edge);\n"
 "  if (kind == 1u) {\n"
 "    // The glyph's face-local uv, moved into the font pack.\n"
@@ -694,14 +701,14 @@ static const char *ui_shader_src =
 "    float2 unit_range = float2(range) / tex_size; float2 screen_texel = max(abs(uv_dx) + abs(uv_dy), float2(1e-6));\n"
 "    float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
 "    float opacity = clamp(((float(sd) - 0.5) * px_range + in.params.y) / max(in.params.z, 1.0) + 0.5, 0.0, 1.0);\n"
-"    return float4(in.col.rgb, in.col.a * opacity);\n"
+"    return ui_world_color(float4(in.col.rgb, in.col.a * opacity), in.meta);\n"
 "  }\n"
 "  if (kind == 3u) {\n"
 "    constexpr sampler point_samp(mag_filter::nearest, min_filter::nearest, mip_filter::none, address::clamp_to_edge);\n"
 "    float4 texel = ns_texture_table_rgba.sample(point_samp, in.uv, level(0.0)); float coverage = min(texel.r, texel.a);\n"
-"    return float4(in.col.rgb, in.col.a * coverage);\n"
+"    return ui_world_color(float4(in.col.rgb, in.col.a * coverage), in.meta);\n"
 "  }\n"
-"  return ns_texture_table_rgba.sample(samp, in.uv, gradient2d(uv_dx, uv_dy)) * in.col;\n"
+"  return ui_world_color(ns_texture_table_rgba.sample(samp, in.uv, gradient2d(uv_dx, uv_dy)) * in.col, in.meta);\n"
 "}\n";
 
 // Vulkan/GLSL 450 form of the same renderer. The backend compiles each stage
@@ -780,7 +787,7 @@ static const char *ui_shader_glsl_vs_body =
     "                      vec4(ui_word(p + 12u), ui_word(p + 13u), ui_word(p + 14u), ui_word(p + 15u)));\n"
     "        if (ns_root.vertex_scale.z > 0.5) { m = mat4(ns_root.projection[0], ns_root.projection[1], ns_root.projection[2], ns_root.projection[3]); }\n"
     "        pos = m * vec4(ndc, 0.0, 1.0);\n"
-    "        if (projection != 9u) { pos.z = pos.w; }\n"
+    "        if (projection != 9u && (meta & 4096u) == 0u) { pos.z = pos.w; }\n"
     "    }\n"
     "    if (ns_root.hud_center_enable.w > 0.5) {\n"
     "        vec3 view = ns_root.hud_center_enable.xyz + ns_root.hud_right_hw.xyz * (ndc.x * ns_root.hud_right_hw.w) + ns_root.hud_up_hh.xyz * (ndc.y * ns_root.hud_up_hh.w);\n"
@@ -834,6 +841,7 @@ static const char *ui_shader_glsl_fs_body =
     "    vec2 q = abs(vec2(angle * radius, radial - radius)) - extent;\n"
     "    return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - corner;\n"
     "}\n"
+    "vec4 ui_world_color(vec4 c) { if ((ns_meta & 4096u) != 0u && c.a < 0.0039215686) { discard; } return c; }\n"
     "void main() {\n"
     "    // Derivatives first, outside every branch: the fragments of one 2x2\n"
     "    // quad can belong to primitives of different kinds in the same draw.\n"
@@ -846,17 +854,17 @@ static const char *ui_shader_glsl_fs_body =
     "    uint kind = ns_meta & 15u;\n"
     "    if (kind == 5u) {\n"
     "        vec2 cover = clamp((min(ns_pixel + pixel_fw * 0.5, ns_uv) - max(ns_pixel - pixel_fw * 0.5, ns_params.xy)) / pixel_fw, 0.0, 1.0);\n"
-    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * min(ns_params.z * cover.x * cover.y, 1.0));\n"
+    "        ns_frag_color = ui_world_color(vec4(ns_col.rgb, ns_col.a * min(ns_params.z * cover.x * cover.y, 1.0)));\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 2u) {\n"
     "        float opacity = 1.0 - smoothstep(-arc_aa, arc_aa, arc_distance);\n"
     "        if (ns_params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
-    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
+    "        ns_frag_color = ui_world_color(vec4(ns_col.rgb, ns_col.a * opacity));\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 4u) {\n"
-    "        ns_frag_color = ns_col;\n"
+    "        ns_frag_color = ui_world_color(ns_col);\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 1u) {\n"
@@ -869,17 +877,17 @@ static const char *ui_shader_glsl_fs_body =
     "        vec2 screen_texel = max(abs(uv_dx) + abs(uv_dy), vec2(1e-6));\n"
     "        float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
     "        float opacity = clamp(((sd - 0.5) * px_range + ns_params.y) / max(ns_params.z, 1.0) + 0.5, 0.0, 1.0);\n"
-    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
+    "        ns_frag_color = ui_world_color(vec4(ns_col.rgb, ns_col.a * opacity));\n"
     "        return;\n"
     "    }\n"
     "    if (kind == 3u) {\n"
     "        ivec2 size = textureSize(ns_texture_table[1], 0);\n"
     "        ivec2 pixel = clamp(ivec2(ns_uv * vec2(size)), ivec2(0), size - ivec2(1));\n"
     "        vec4 texel = texelFetch(ns_texture_table[1], pixel, 0);\n"
-    "        ns_frag_color = vec4(ns_col.rgb, ns_col.a * min(texel.r, texel.a));\n"
+    "        ns_frag_color = ui_world_color(vec4(ns_col.rgb, ns_col.a * min(texel.r, texel.a)));\n"
     "        return;\n"
     "    }\n"
-    "    ns_frag_color = textureGrad(ns_texture_table[1], ns_uv, uv_dx, uv_dy) * ns_col;\n"
+    "    ns_frag_color = ui_world_color(textureGrad(ns_texture_table[1], ns_uv, uv_dx, uv_dy) * ns_col);\n"
     "}\n";
 
 static void ui_glsl_append(char *out, size_t capacity, size_t *used, const char *format, ...) {
@@ -1690,7 +1698,9 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     // pixels as if they belonged to the world behind them.
     r->render_state_hud = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
                                            COMPARE_ALWAYS, true, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
-    r->gpu_ready = r->shader && r->render_state && r->render_state_hud;
+    r->render_state_world = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
+                                             COMPARE_GREATER_EQUAL, true, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
+    r->gpu_ready = r->shader && r->render_state && r->render_state_hud && r->render_state_world;
 }
 
 static f64 ui_view_content_scale(view *v) {
@@ -2398,6 +2408,7 @@ void ui_begin_frame(ui_renderer *r) {
     r->gpu_clip_count = 0;
     r->clips[0] = ui_surface_clip(r);
     r->current_texture_id = UI_WHITE_TEXTURE;
+    memset(r->plane_world, 0, sizeof(r->plane_world));
     r->plane_count = 0;
     r->current_plane = 0;
     r->plane_focus[0] = r->plane_focus[1] = r->plane_focus[2] = 0.0f;
@@ -2888,6 +2899,40 @@ void ui_end_overlay(ui_renderer *r) {
 // tilt and spin of 0 are the ordinary flat canvas.
 void ui_pop_clip(ui_renderer *r);
 
+// Snapshot VP * model * NDC-to-local. Existing UI vertices retain their
+// safe-area offset; subtract it before transforming into the authored frame.
+ns_bool ui_begin_world(ui_renderer *r, const f32 *view_proj, const f32 *model) {
+    if (!r || !view_proj || !model || r->current_plane != 0 ||
+        r->plane_count >= UI_MAX_PLANES || r->rect.w <= 0.0 || r->rect.h <= 0.0) return false;
+    f64 vm[16], combined[16];
+    const f64 pixel[16] = {
+        r->rect.w * 0.5, 0, 0, 0,
+        0, -r->rect.h * 0.5, 0, 0,
+        0, 0, 1, 0,
+        r->rect.w * 0.5 - r->safe_rect.x, r->rect.h * 0.5 - r->safe_rect.y, 0, 1,
+    };
+    for (i32 col = 0; col < 4; col++) for (i32 row = 0; row < 4; row++) {
+        f64 sum = 0.0;
+        for (i32 k = 0; k < 4; k++) sum += (f64)view_proj[k * 4 + row] * model[col * 4 + k];
+        vm[col * 4 + row] = sum;
+    }
+    for (i32 col = 0; col < 4; col++) for (i32 row = 0; row < 4; row++) {
+        f64 sum = 0.0;
+        for (i32 k = 0; k < 4; k++) sum += vm[k * 4 + row] * pixel[col * 4 + k];
+        combined[col * 4 + row] = sum;
+    }
+    const i32 slot = r->plane_count++;
+    for (i32 i = 0; i < 16; i++) r->planes[slot][i] = (f32)combined[i];
+    r->plane_world[slot] = true;
+    r->plane_scissors[slot] = (ui_clip){r->rect.x, r->rect.y, r->rect.w, r->rect.h};
+    memset(r->plane_dof[slot], 0, sizeof(r->plane_dof[slot]));
+    r->plane_fringe[slot] = 0.0f;
+    r->current_plane = slot + 1;
+    if (r->clip_count < UI_MAX_CLIPS) r->clips[r->clip_count++] = (ui_clip){-1.0e7, -1.0e7, 2.0e7, 2.0e7};
+    else r->clip_skipped++;
+    return true;
+}
+
 void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 spin, f64 focal,
                     f64 x, f64 y, f64 w, f64 h) {
     if (!r || r->plane_count >= UI_MAX_PLANES || focal <= 0.0 || r->rect.w <= 0.0 || r->rect.h <= 0.0) return;
@@ -2977,6 +3022,10 @@ void ui_end_plane(ui_renderer *r) {
     ui_pop_clip(r);
 }
 
+void ui_end_world(ui_renderer *r) {
+    if (r && r->current_plane > 0 && r->plane_world[r->current_plane - 1]) ui_end_plane(r);
+}
+
 // Follow one fingertip (touch 0..3) against the panel. Its world position
 // lands on the canvas at (x, y); depth is its distance in front of the panel,
 // toward the viewer. It hovers within reach in front of the panel, presses
@@ -3018,6 +3067,8 @@ ui_panel_touch *ui_panel_touch_update(ui_renderer *r, i32 touch, ns_bool tracked
 // overlay, else its tilted plane, else the flat screen. The immersive HUD
 // places everything itself.
 static u32 ui_command_projection(const ui_renderer *r, const ui_command *cmd, ns_bool panel, ns_bool hud) {
+    if (cmd->plane > 0 && cmd->plane <= r->plane_count && r->plane_world[cmd->plane - 1])
+        return cmd->overlay ? 0u : (u32)cmd->plane;
     if (hud) return 0;
     if (panel && !cmd->overlay) return UI_PROJECTION_PANEL;
     if (cmd->plane > 0 && cmd->plane <= r->plane_count) return (u32)cmd->plane;
@@ -3047,7 +3098,8 @@ static ns_bool ui_plan_draws(ui_renderer *r, ns_bool panel, ns_bool hud) {
         }
         const u32 projection = ui_command_projection(r, cmd, panel, hud);
         const u32 rgba = ui_command_rgba(r, cmd);
-        const u32 meta = ui_command_meta(cmd, rgba) | (projection << UI_META_PROJECTION_SHIFT);
+        const ns_bool world = projection > 0 && projection <= (u32)r->plane_count && r->plane_world[projection - 1];
+        const u32 meta = ui_command_meta(cmd, rgba) | (projection << UI_META_PROJECTION_SHIFT) | (world ? UI_META_WORLD : 0);
         const ns_bool msdf = cmd->kind == UI_KIND_MSDF;
         const ns_bool focus = projection > 0 && projection <= (u32)r->plane_count &&
                               r->plane_dof[projection - 1][0] > 0.0f;
@@ -3069,9 +3121,11 @@ static ns_bool ui_plan_draws(ui_renderer *r, ns_bool panel, ns_bool hud) {
             continue;
         }
         if (!run || run->vertex_offset + run->vertex_count != cmd->vertex_offset ||
-            (rgba && run->rgba && rgba != run->rgba) || run->focus != focus) {
+            (rgba && run->rgba && rgba != run->rgba) || run->focus != focus ||
+            (((meta | run->batch_meta) & UI_META_WORLD) &&
+             ((meta ^ run->batch_meta) & (UI_META_WORLD | (15u << UI_META_PROJECTION_SHIFT))))) {
             run = &r->draws[r->draw_count++];
-            *run = (ui_draw){.command = -1, .vertex_offset = cmd->vertex_offset, .focus = focus};
+            *run = (ui_draw){.command = -1, .vertex_offset = cmd->vertex_offset, .focus = focus, .batch_meta = meta};
         }
         run->planes |= planes;
         if (rgba) run->rgba = rgba;
@@ -3414,7 +3468,9 @@ static void ui_encode_draws(ui_renderer *r, const ui_flush_frame *f, i32 from, i
                 memcpy(root.projection, f->projection_words + (projection - 1) * UI_PROJECTION_WORDS, sizeof(root.projection));
             }
         }
-        if (f->hud) ui_fill_hud_root(&root, &f->hud_frame);
+        const ns_bool world = (d->batch_meta & UI_META_WORLD) != 0;
+        gpu_set_state(world ? r->render_state_world : (f->hud ? r->render_state_hud : r->render_state));
+        if (f->hud && !world) ui_fill_hud_root(&root, &f->hud_frame);
         // All roots have reserved, aligned space in this frame's private
         // storage. Large command lists no longer consume the frame ring once
         // per draw, or retry its allocation thousands of times on failure.

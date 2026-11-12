@@ -487,7 +487,58 @@ static void test_preview(void) {
     free(r);
 }
 
+static void test_world_scopes(void) {
+    ui_renderer *r = calloc(1, sizeof(*r));
+    assert(r);
+    r->rect = r->safe_rect = (ui_rect){0, 0, 200, 100};
+    ui_begin_frame(r);
+    f32 vp[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    f32 model[16] = {.01f,0,0,0, 0,.02f,0,0, 0,0,1,0, -.5f,-.5f,.4f,1};
+    assert(ui_begin_world(r, vp, model));
+    assert(!ui_begin_world(r, vp, model));
+    ui_fill_rect(r, 10, 20, 20, 20, 0xffffffffu, 0);
+    ui_end_world(r);
+    const f32 first_translation = r->planes[0][12];
+    model[12] = .25f;
+    assert(ui_begin_world(r, vp, model));
+    ui_fill_rect(r, 10, 20, 20, 20, 0xffffffffu, 0);
+    ui_end_world(r);
+    assert(r->plane_count == 2 && r->planes[0][12] == first_translation);
+    assert(fabsf(r->planes[1][12] - r->planes[0][12] - .75f) < 1e-5f);
+    assert(r->commands[0].plane == 1 && r->commands[1].plane == 2);
+    assert(ui_plan_draws(r, false, false) && r->draw_count == 2);
+    assert((r->vertices[0].meta & UI_META_WORLD) != 0);
+    assert((r->draws[0].batch_meta & UI_META_WORLD) != 0);
+    assert(ui_command_projection(r, &r->commands[0], true, true) == 1);
+    // Conversion from the native renderer's drawable NDC recovers local UI.
+    const f64 nx = 2.0 * 10 / 200 - 1.0, ny = 1.0 - 2.0 * 20 / 100;
+    const f32 *m = r->planes[0];
+    assert(fabs(m[0] * nx + m[4] * ny + m[12] - (-.4)) < 1e-5);
+    assert(fabs(m[1] * nx + m[5] * ny + m[13] - (-.1)) < 1e-5);
+    assert(fabs(m[14] - .4) < 1e-5);
+    ui_fill_rect(r, 0, 0, 10, 10, 0xffffffffu, 0);
+    assert(ui_plan_draws(r, false, false) && r->draw_count == 3);
+    assert((r->vertices[r->commands[2].vertex_offset].meta & UI_META_WORLD) == 0);
+    const i32 batch = ui_rect_batch_create(r);
+    ui_rect_batch_begin(r, batch);
+    ui_rect_batch_add(r, batch, 0, 0, 10, 10, 0xffffffffu);
+    assert(ui_rect_batch_end(r, batch));
+    assert(ui_begin_world(r, vp, model));
+    ui_rect_batch_draw(r, batch);
+    ui_end_world(r);
+    assert(ui_plan_draws(r, false, false) && r->draw_count == 4);
+    assert(r->draws[3].command >= 0 && (r->draws[3].batch_meta & UI_META_WORLD));
+    ui_rect_batch_destroy(r, batch);
+    ui_begin_frame(r);
+    assert(r->plane_count == 0 && r->current_plane == 0);
+    assert(!ui_begin_world(r, NULL, model));
+    for (i32 i = 0; i < UI_MAX_PLANES; i++) { assert(ui_begin_world(r, vp, model)); ui_end_world(r); }
+    assert(!ui_begin_world(r, vp, model));
+    free(r->vertices); free(r->draws); free(r);
+}
+
 int main(void) {
+    test_world_scopes();
     test_preview();
     test_plane_spin();
     test_mixed_faces_share_a_middle();
