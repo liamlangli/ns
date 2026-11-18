@@ -270,6 +270,7 @@ typedef struct ns_cpu_frame {
     ns_cpu_fn *fn;
     u64 *r;
     u32 dst;
+    u64 debug_activation;
 } ns_cpu_frame;
 
 #define NS_CPU_STACK_REGS (1u << 20)
@@ -281,6 +282,7 @@ typedef struct ns_cpu_thread {
     u64 *top; // first register above the innermost running frame
     ns_cpu_frame *frames;
     i32 depth;
+    u64 debug_id, next_activation;
     jmp_buf *jmp; // set by the outermost API call; faults unwind to it
     char msg[512];
 } ns_cpu_thread;
@@ -437,6 +439,41 @@ static i32 ns_cpu_prof_site(ns_cpu_ffi_site *site) {
 /* ── thunks ───────────────────────────────────────────────────────────────── */
 #define NS_CPU_THUNKS 256
 static ns_cpu_fn *ns_cpu_thunk_fn[NS_CPU_THUNKS];
+
+typedef struct ns_cpu_debug_snapshot {
+    ns_cpu_thread *thread;
+    ns_cpu_fn *fn;
+    const u64 *registers;
+    u32 pc;
+    u64 activation;
+} ns_cpu_debug_snapshot;
+
+static void ns_cpu_debug_write(FILE *out, void *context) {
+    ns_cpu_debug_snapshot *s = context;
+    ns_cpu_fn *fn = s->fn;
+    // ns_debug_location serializes snapshot callbacks. IDs survive neither
+    // thread destruction nor a fresh activation, even when memory is reused.
+    static u64 next_thread_id;
+    if (!s->thread->debug_id) s->thread->debug_id = ++next_thread_id;
+    fprintf(out, "#frame\ncpu:%llu:%llu:%.*s\n#registers\npc = %u (16-bit code units)\n",
+            (unsigned long long)s->thread->debug_id, (unsigned long long)s->activation,
+            fn->name.len, fn->name.data, s->pc);
+    for (u32 i = 0; i < fn->frame; ++i)
+        fprintf(out, "r%u%s = 0x%016llx (%lld)\n", i, i >= fn->nregs ? " [const]" : "",
+                (unsigned long long)s->registers[i], (long long)s->registers[i]);
+    fprintf(out, "#stack\n#0 %.*s +%u / %u registers\n", fn->name.len, fn->name.data, s->pc, fn->frame);
+    for (i32 i = s->thread->depth - 1; i >= 0; --i) {
+        ns_cpu_frame *f = &s->thread->frames[i];
+        fprintf(out, "#%d %.*s return +%u / %u registers\n", s->thread->depth - i,
+                f->fn->name.len, f->fn->name.data, (u32)(f->pc - f->fn->code), f->fn->frame);
+        for (u32 k = 0; k < f->fn->frame; ++k)
+            fprintf(out, "  r%u = 0x%016llx (%lld)\n", k, (unsigned long long)f->r[k], (long long)f->r[k]);
+    }
+    fputs("Active register-stack window (word offsets)\n", out);
+    for (u32 i = 0; i < fn->frame; ++i)
+        fprintf(out, "[%llu] 0x%016llx\n", (unsigned long long)(s->registers - s->thread->stack + i),
+                (unsigned long long)s->registers[i]);
+}
 
 static u64 ns_cpu_exec(ns_cpu_thread *t, ns_cpu_fn *fn, const u64 *args, i32 nargs);
 
@@ -600,6 +637,7 @@ static inline void ns_cpu_enter_frame(ns_cpu_fn *fn, u64 *r, const u64 *args, i3
 static u64 ns_cpu_exec(ns_cpu_thread *t, ns_cpu_fn *entry, const u64 *args, i32 nargs) {
     u64 *saved_top = t->top;
     i32 base_depth = t->depth;
+    u64 debug_activation = ++t->next_activation;
     u64 *r = t->top;
     if (NS_CPU_UNLIKELY(r + entry->frame > t->end)) ns_cpu_fault(entry, "register stack overflow");
     ns_cpu_enter_frame(entry, r, args, nargs);
@@ -644,6 +682,63 @@ dispatch:
 #define NS_CPU_ASTORE(name, step, stmt) NS_CPU_CASE(name) { \
         u8 *p = ns_cpu_elem(fn, (i64)r[pc[1]], (i64)r[pc[2]], step); u64 v = r[pc[3]]; stmt; pc += 4; NS_CPU_NEXT(); }
 
+    NS_CPU_CASE(DEBUG) {
+        const u32 *loc = &m->locs[NS_CPU_U32(pc + 1) * 2];
+        ns_str file = m->strings[loc[0]];
+        const u16 *next = pc + 3;
+        char listing[4096] = "";
+        size_t used = 0;
+        for (int row = 0; row < 8 && next < code + fn->ncode && used < 3000; ++row) {
+            const char *fmt = ns_cpu_op_formats[*next];
+            const u16 *operand = next + 1;
+            used += (size_t)snprintf(listing + used, sizeof(listing) - used, "%.*s +%u  %s",
+                                    (fn->name.len < 160 ? fn->name.len : 160), fn->name.data, (u32)(next - code), ns_cpu_op_names[*next]);
+            for (; *fmt; ++fmt) {
+                u16 v = *operand;
+                switch (*fmt) {
+                case 'n':
+                    used += (size_t)snprintf(listing + used, sizeof(listing) - used, " (");
+                    for (u32 i = 0; i < v && used < 3500; ++i)
+                        used += (size_t)snprintf(listing + used, sizeof(listing) - used, i ? ",r%u" : "r%u", operand[i + 1]);
+                    used += (size_t)snprintf(listing + used, sizeof(listing) - used, ")");
+                    operand += 1 + v;
+                    break;
+                case 't': case 'w': case 'l':
+                    used += (size_t)snprintf(listing + used, sizeof(listing) - used, " #%u", NS_CPU_U32(operand));
+                    operand += 2;
+                    break;
+                case 'x':
+                    used += (size_t)snprintf(listing + used, sizeof(listing) - used, " %s", m->rt[v]->name);
+                    operand++;
+                    break;
+                case 'y':
+                    used += (size_t)snprintf(listing + used, sizeof(listing) - used, " %.*s.%.*s",
+                                            (m->ffi[v].module.len < 160 ? m->ffi[v].module.len : 160), m->ffi[v].module.data, (m->ffi[v].name.len < 160 ? m->ffi[v].name.len : 160), m->ffi[v].name.data);
+                    operand++;
+                    break;
+                case 'f':
+                    used += (size_t)snprintf(listing + used, sizeof(listing) - used, " %.*s", (m->fns[v].name.len < 160 ? m->fns[v].name.len : 160), m->fns[v].name.data);
+                    operand++;
+                    break;
+                default:
+                    used += (size_t)snprintf(listing + used, sizeof(listing) - used,
+                                            (*fmt == 'r' || *fmt == 'd') ? " r%u" : " #%u", v);
+                    operand++;
+                    break;
+                }
+                if (used > 3500) break;
+            }
+            used += (size_t)snprintf(listing + used, sizeof(listing) - used, "\n");
+            if (used > 3500 || *next == NS_CPU_RET || *next == NS_CPU_TRAP) break;
+            next = operand;
+            // DEBUG records source metadata, not a program operation.
+            while (next < code + fn->ncode && *next == NS_CPU_DEBUG) next += 3;
+        }
+        ns_cpu_debug_snapshot snapshot = {t, fn, r, (u32)(pc + 3 - code), debug_activation};
+        ns_debug_location(file.data, file.len, (int)loc[1], "emu (ns_cpu)", listing, ns_cpu_debug_write, &snapshot);
+        pc += 3;
+        NS_CPU_NEXT();
+    }
     NS_CPU_CASE(NOP) { pc += 1; NS_CPU_NEXT(); }
     NS_CPU_CASE(MOV) { D = A; pc += 3; NS_CPU_NEXT(); }
     NS_CPU_CASE(ZERO) { D = 0; pc += 2; NS_CPU_NEXT(); }
@@ -815,6 +910,8 @@ dispatch:
         f->fn = fn;
         f->r = r;
         f->dst = pc[1];
+        f->debug_activation = debug_activation;
+        debug_activation = ++t->next_activation;
         r = nr;
         fn = callee;
         code = pc = fn->code;
@@ -854,6 +951,8 @@ dispatch:
         f->fn = fn;
         f->r = r;
         f->dst = pc[1];
+        f->debug_activation = debug_activation;
+        debug_activation = ++t->next_activation;
         r = nr;
         fn = callee;
         m = fn->module;
@@ -899,6 +998,7 @@ dispatch:
             goto done;
         }
         ns_cpu_frame *f = &t->frames[--t->depth];
+        debug_activation = f->debug_activation;
         r = f->r;
         fn = f->fn;
         m = fn->module;

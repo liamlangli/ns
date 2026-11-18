@@ -1,0 +1,34 @@
+use std
+fn main() {
+    assert lens_debug_format_line("r0 = 0x000000000000002a (42)", 1, true) == "r0 = 42"
+    assert lens_debug_format_line("r0 = 0xffffffffffffffff (-1)", 1, true) == "r0 = -1"
+    assert lens_debug_format_line("r0 = 0xffffffffffffffff (-1)", 2, true) == "r0 = 18446744073709551615"
+    assert lens_debug_format_line("[9] 0x00000002ffffffff", 3, false) == "[9] [-1, 2]"
+    assert lens_debug_format_line("0x1234  0x000000000000002a", 1, false) == "0x1234  42"
+    assert lens_debug_format_line("local @8 = 0x000000000000002a", 2, false) == "local @8 = 42"
+    assert lens_debug_format_line("pc = 19 (16-bit code units)", 5, true) == "pc = 19 (16-bit code units)"
+    assert lens_debug_format_line("#0 main +19 / 13 registers", 2, false) == "#0 main +19 / 13 registers"
+    assert lens_debug_format_line("#1 0x1234 symbol + 10", 1, false) == "#1 0x1234 symbol + 10"
+    assert lens_debug_format_line("r0 = 0x000000000000002a (42)", 0, true) == "r0 = 0x000000000000002a (42)"
+    assert lens_debug_format_line("r0 = 0x400000003f800000", 4, true) == "r0 = [1, 2]"
+    assert lens_debug_format_line("q0 = 4000000000000000 3ff0000000000000", 5, true) == "q0 = 1 | 2"
+    assert lens_debug_format_line("q0 = 4000000040000000 3f8000003f800000", 4, true) == "q0 = [1, 1] | [2, 2]"
+    assert lens_debug_float(0x8000000000000000, true) == "-0"
+    assert lens_debug_float(0x7ff0000000000000, true) == "Inf"
+    assert lens_debug_float(0xff800000, false) == "-Inf"
+    assert lens_debug_float(0x7fc00001, false) == "NaN"
+    assert stof(lens_debug_float(0x00000001, false)) > 0.0
+    print(lens_debug_float(0x0000000000000001, true) + "\n")
+    assert stof(lens_debug_float(0x0000000000000001, true)) > 0.0
+    assert stof(lens_debug_float(0x7fefffffffffffff, true)) > stof("1e308")
+    assert lens_debug_format_line("r0 = invalid", 1, true) == "r0 = invalid"
+    lens_debug_layout_apply("debug.register_format", 4.0)
+    lens_debug_layout_apply("debug.stack_format", 1.0)
+    assert g_debug_register_format == 4
+    assert g_debug_stack_format == 1
+    assert lens_debug_format_find(lens_debug_layout_text(), "debug.register_format=4") >= 0
+    lens_debug_panels_reset()
+    assert g_debug_register_format == 0
+    assert g_debug_stack_format == 0
+    print("debug display formats: passed\n")
+}

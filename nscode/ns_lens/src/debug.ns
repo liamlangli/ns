@@ -1,0 +1,469 @@
+// A debug session belongs to this window and this project. Only the child
+// receives NS_DEBUG_SESSION; ordinary runs and builds have no safepoints.
+use std
+use os
+use view
+use ui
+
+lit LENS_MODE_DEBUG = 5
+lit LENS_DEBUG_ROW = 20.0
+lit LENS_DEBUG_INSTRUCTION_ROW = 34.0
+lit LENS_DEBUG_REGISTER_ROW = 28.0
+let g_debug_pid: i32 = 0
+let g_debug_dir = ""
+let g_debug_root = ""
+let g_debug_target = ""
+let g_debug_target_focus = false
+let g_debug_sequence: i32 = 0
+let g_debug_state = ""
+let g_debug_status = "Ready"
+let g_debug_mode = ""
+let g_debug_file = ""
+let g_debug_stop_file = ""
+let g_debug_source = ""
+let g_debug_line: i32 = 0
+let g_debug_scroll: i32 = 0
+let g_debug_instructions = ""
+let g_debug_output = ""
+let g_debug_registers = ""
+let g_debug_stack = ""
+let g_debug_instruction_scroll: i32 = 0
+let g_debug_register_scroll: i32 = 0
+let g_debug_stack_scroll: i32 = 0
+let g_debug_breaks = set[str](1024)
+let g_debug_running = false
+let g_debug_paused = false
+
+fn lens_debug_active() bool { return g_lens_view_mode == LENS_MODE_DEBUG }
+fn lens_debug_x() f64 { return g_debug_panel_x[DEBUG_PANEL_SOURCE] }
+fn lens_debug_y() f64 { return g_debug_panel_y[DEBUG_PANEL_SOURCE] }
+fn lens_debug_w() f64 { return g_debug_panel_w[DEBUG_PANEL_SOURCE] }
+fn lens_debug_h() f64 { return g_debug_panel_h[DEBUG_PANEL_SOURCE] }
+fn lens_debug_columns() i32 {
+    if lens_debug_w() < 560.0 { return 3 }
+    return 6
+}
+fn lens_debug_button_w() f64 { return (lens_debug_w() - 24.0 - 6.0 * ((lens_debug_columns() - 1) as f64)) / (lens_debug_columns() as f64) }
+fn lens_debug_button_x(index: i32) f64 { return lens_debug_x() + 12.0 + ((index % lens_debug_columns()) as f64) * (lens_debug_button_w() + 6.0) }
+fn lens_debug_button_y(index: i32) f64 { return lens_debug_y() + 64.0 + ((index / lens_debug_columns()) as f64) * 32.0 }
+fn lens_debug_source_y() f64 { return lens_debug_button_y(5) + 74.0 }
+fn lens_debug_rows() i32 { return clamp_i(((lens_debug_y() + lens_debug_h() - lens_debug_source_y() - 52.0) / LENS_DEBUG_ROW) as i32, 1, 100) }
+fn lens_debug_instruction_rows() i32 { return clamp_i(((g_debug_panel_h[DEBUG_PANEL_INSTRUCTIONS] - 58.0) / LENS_DEBUG_INSTRUCTION_ROW) as i32, 1, 100) }
+fn lens_debug_data_header_y() f64 { return g_debug_panel_y[DEBUG_PANEL_STATE] + 38.0 }
+fn lens_debug_data_y() f64 { return lens_debug_data_header_y() + 24.0 }
+fn lens_debug_register_rows() i32 { return clamp_i(((g_debug_panel_h[DEBUG_PANEL_STATE] - 76.0) / LENS_DEBUG_REGISTER_ROW) as i32, 1, 100) }
+fn lens_debug_data_rows() i32 { return clamp_i(((g_debug_panel_h[DEBUG_PANEL_STATE] - 76.0) / LENS_DEBUG_ROW) as i32, 1, 100) }
+fn lens_debug_split_x() f64 { return g_debug_panel_x[DEBUG_PANEL_STATE] + g_debug_panel_w[DEBUG_PANEL_STATE] * 0.5 }
+fn lens_debug_scroll_limit(text: str, rows: i32) i32 { return clamp_i(lens_text_lines(text) - rows, 0, 2147483647) }
+fn lens_debug_button_label(index: i32) str {
+    if index == 0 { return "Run" }
+    if index == 1 { return "Continue" }
+    if index == 2 { return "Step" }
+    if index == 3 { return "Pause" }
+    if index == 4 { return "Stop" }
+    return "Use selected"
+}
+fn lens_debug_button_action(index: i32) {
+    if index == 0 { lens_debug_start()
+    } else if index == 1 { lens_debug_command("continue")
+    } else if index == 2 { lens_debug_command("step")
+    } else if index == 3 { lens_debug_command("pause")
+    } else if index == 4 {
+        lens_debug_shutdown()
+        g_debug_status = "Stopped"
+    } else { lens_debug_source(g_lens_selected_path) }
+}
+
+// Lines in the protocol and source pane are zero based here.
+fn lens_debug_text_line(text: str, row: i32) str {
+    let start = 0
+    let current = 0
+    for i in 0 to text.len {
+        if text[i] == 10 {
+            if current == row { return substr(text, start, i - start) }
+            current = current + 1
+            start = i + 1
+        }
+    }
+    if current == row { return substr(text, start, text.len - start) }
+    return ""
+}
+
+// Extract one section in a single scan. Large register files must not be
+// rebuilt through one string concatenation per row on every pause.
+fn lens_debug_section(state: str, wanted: str) str {
+    let start = 0
+    let row = 0
+    let found = false
+    let section_start = 0
+    if wanted == "instructions" { found = true }
+    for i in 0 to state.len {
+        if state[i] == 10 {
+            if row == 2 && wanted == "instructions" { section_start = i + 1 }
+            if row >= 3 {
+                let size = i - start
+                let marker = ""
+                if size <= 32 { marker = substr(state, start, size) }
+                let boundary = marker == "#frame" || marker == "#registers" || marker == "#stack" || (size >= 6 && substr(state, start, 6) == "#stop ")
+                if boundary {
+                    if found { return substr(state, section_start, start - section_start) }
+                    if marker == wanted {
+                        found = true
+                        section_start = i + 1
+                    }
+                }
+            }
+            row = row + 1
+            start = i + 1
+        }
+    }
+    if found { return substr(state, section_start, state.len - section_start) }
+    return ""
+}
+
+fn lens_debug_clear_snapshot() {
+    lens_debug_registers_clear()
+    g_debug_instructions = ""
+    g_debug_registers = ""
+    g_debug_stack = ""
+    g_debug_instruction_scroll = 0
+    g_debug_register_scroll = 0
+    g_debug_stack_scroll = 0
+}
+
+fn lens_debug_source(path: str) {
+    if path == "" { return }
+    g_debug_file = path
+    g_debug_source = os_read_file_part(path, 0, 1048576)
+    g_debug_scroll = 0
+}
+
+fn lens_debug_break_key(path: str, line: i32) str { return path + ":" + itos(line) }
+
+fn lens_debug_write_breaks() {
+    if g_debug_dir == "" { return }
+    let text = ""
+    for entry in g_debug_breaks { text = text + entry + "\n" }
+    os_write_file_atomic(g_debug_dir + "/breakpoints", text)
+}
+
+fn lens_debug_toggle_break(path: str, line: i32) {
+    if path == "" || line < 1 { return }
+    let key = lens_debug_break_key(path, line)
+    if has(g_debug_breaks, key) { remove(g_debug_breaks, key) } else { insert(g_debug_breaks, key) }
+    lens_debug_write_breaks()
+}
+
+fn lens_debug_command(action: str) {
+    if g_debug_running == false { return }
+    if (action == "continue" || action == "step") && g_debug_paused == false { return }
+    g_debug_pending_step = action == "step"
+    g_debug_sequence = g_debug_sequence + 1
+    os_write_file_atomic(g_debug_dir + "/command", itos(g_debug_sequence) + " " + action)
+    if action == "continue" || action == "step" {
+        g_debug_paused = false
+        g_debug_status = "Running"
+    }
+}
+
+fn lens_debug_shutdown() {
+    if g_debug_pid > 0 {
+        lens_debug_command("stop")
+        os_write_file_atomic(g_debug_dir + "/alive", "0")
+        os_process_stop(g_debug_pid)
+    }
+    g_debug_pid = 0
+    g_debug_running = false
+    g_debug_paused = false
+    g_debug_target_focus = false
+}
+
+fn lens_debug_reset() {
+    lens_debug_shutdown()
+    lens_debug_panels_reset()
+    g_debug_breaks = set[str](1024)
+    g_debug_target = ""
+    g_debug_file = ""
+    g_debug_source = ""
+    g_debug_state = ""
+    g_debug_mode = ""
+    g_debug_stop_file = ""
+    g_debug_status = "Ready"
+    lens_debug_clear_snapshot()
+    g_debug_line = 0
+}
+
+fn lens_debug_start() {
+    if lens_mobile() {
+        g_debug_status = "Local debugging requires a desktop host"
+        return
+    }
+    if g_workspace_root == "" || os_file_size(g_workspace_root + "/ns.mod") < 0 {
+        g_debug_status = "Open an ns project containing ns.mod"
+        return
+    }
+    // Save pending editor changes before the child reads the project.
+    if g_lens_editing && workspace_entry_dirty(g_workspace_active) {
+        if workspace_save_active() == false {
+            g_debug_status = "Cannot save source"
+            return
+        }
+    }
+    lens_debug_shutdown()
+    g_debug_root = g_workspace_root
+    g_debug_dir = g_debug_root + "/bin/ns_lens/debug/" + itos((os_time_us() % 2000000000) as i32)
+    if os_make_dirs(g_debug_dir) == 0 {
+        g_debug_status = "Cannot create debug session"
+        return
+    }
+    os_write_file_atomic(g_debug_dir + "/root", g_debug_root)
+    g_debug_sequence = 0
+    g_debug_state = ""
+    g_debug_output = ""
+    g_debug_mode = ""
+    lens_debug_clear_snapshot()
+    g_debug_line = 0
+    os_write_file_atomic(g_debug_dir + "/alive", itos((os_time() as i64) as i32))
+    lens_debug_write_breaks()
+    let exe = os_env("NS_LENS_NS")
+    if exe == "" { exe = "ns" }
+    g_debug_pid = os_launch_ns_debug(exe, g_debug_root, g_debug_target, g_debug_dir)
+    if g_debug_pid <= 0 {
+        g_debug_status = "Local debug process unavailable on this host"
+        return
+    }
+    g_debug_running = true
+    g_debug_status = "Starting (break on entry)"
+    g_debug_target_focus = false
+}
+
+fn lens_debug_poll() {
+    if g_debug_pid <= 0 { return }
+    if g_debug_root != g_workspace_root {
+        lens_debug_shutdown()
+        return
+    }
+    os_write_file_atomic(g_debug_dir + "/alive", itos((os_time() as i64) as i32))
+    let output_size = os_file_size(g_debug_dir + "/output.log")
+    let output = ""
+    if output_size > 0 {
+        let start: i64 = 0
+        if output_size > 32768 { start = output_size - 32768 }
+        output = os_read_file_part(g_debug_dir + "/output.log", start, 32768)
+    }
+    if output != g_debug_output {
+        g_debug_output = output
+        g_lens_input_dirty = true
+    }
+    let state = os_read_file(g_debug_dir + "/state")
+    if state != "" && state != g_debug_state {
+        g_debug_state = state
+        g_debug_mode = lens_debug_text_line(state, 0)
+        let path = lens_debug_text_line(state, 1)
+        g_debug_stop_file = path
+        if path != g_debug_file { lens_debug_source(path) }
+        g_debug_line = stof(lens_debug_text_line(state, 2)) as i32
+        g_debug_scroll = clamp_i(g_debug_line - lens_debug_rows() / 2, 0, 65535)
+        g_debug_instructions = lens_debug_section(state, "instructions")
+        g_debug_registers = lens_debug_section(state, "#registers")
+        lens_debug_registers_update(g_debug_registers, lens_debug_section(state, "#frame"), g_debug_pending_step)
+        g_debug_pending_step = false
+        g_debug_stack = lens_debug_section(state, "#stack")
+        g_debug_instruction_scroll = 0
+        g_debug_register_scroll = clamp_i(g_debug_register_scroll, 0, lens_debug_scroll_limit(g_debug_registers, lens_debug_register_rows()))
+        g_debug_stack_scroll = clamp_i(g_debug_stack_scroll, 0, lens_debug_scroll_limit(g_debug_stack, lens_debug_data_rows()))
+        g_debug_status = "Paused"
+        g_debug_paused = true
+        g_lens_input_dirty = true
+    }
+    if os_process_alive(g_debug_pid) == 0 {
+        g_debug_status = "Exited"
+        g_debug_running = false
+        g_debug_paused = false
+        g_debug_pid = 0
+        g_lens_input_dirty = true
+    }
+}
+
+fn lens_debug_blocks(v: ref view) bool {
+    if !lens_debug_active() || !lens_ui_shown() { return false }
+    return g_debug_panel_capture >= 0 || lens_debug_panel_hit(v) >= 0
+}
+
+fn lens_debug_mouse(v: ref view) {
+    if !lens_debug_active() { return }
+    lens_debug_panels_init()
+    if g_debug_target_focus {
+        g_debug_target = lens_field_edit(v, g_debug_target)
+        if key_edge(v, 257) || key_edge(v, 256) { g_debug_target_focus = false }
+    }
+    if lens_debug_panel_drag(v) { return }
+    let index = lens_debug_panel_hit(v)
+    if index < 0 {
+        if v.mouse_pressed { g_debug_target_focus = false }
+        return
+    }
+    if v.mouse_pressed { g_debug_target_focus = false }
+    if lens_debug_panel_grab(v, index) { return }
+    if v.scroll_y != 0.0 {
+        let delta = (v.scroll_y * 3.0) as i32
+        if index == DEBUG_PANEL_STATE {
+            if g_mouse_x >= lens_debug_split_x() {
+                g_debug_stack_scroll = clamp_i(g_debug_stack_scroll - delta, 0, lens_debug_scroll_limit(g_debug_stack, lens_debug_data_rows()))
+            } else {
+                g_debug_register_scroll = clamp_i(g_debug_register_scroll - delta, 0, lens_debug_scroll_limit(g_debug_registers, lens_debug_register_rows()))
+            }
+        } else if index == DEBUG_PANEL_INSTRUCTIONS {
+            g_debug_instruction_scroll = clamp_i(g_debug_instruction_scroll - delta, 0, lens_debug_scroll_limit(g_debug_instructions, lens_debug_instruction_rows()))
+        } else {
+            g_debug_scroll = clamp_i(g_debug_scroll - delta, 0, lens_debug_scroll_limit(g_debug_source, lens_debug_rows()))
+        }
+        v.scroll_y = 0.0
+    }
+    if v.mouse_pressed {
+        g_debug_target_focus = false
+        if index == DEBUG_PANEL_STATE {
+            let p = lens_debug_panel_rect(DEBUG_PANEL_STATE)
+            if raw_hit(v, p.x + p.w * 0.5 - 90.0, lens_debug_data_header_y() - 2.0, 78.0, 22.0) {
+                g_debug_register_format = (g_debug_register_format + 1) % DEBUG_FORMAT_COUNT
+            }
+            if raw_hit(v, p.x + p.w - 90.0, lens_debug_data_header_y() - 2.0, 78.0, 22.0) {
+                g_debug_stack_format = (g_debug_stack_format + 1) % DEBUG_FORMAT_COUNT
+            }
+            g_lens_input_dirty = true
+        }
+        if index == DEBUG_PANEL_SOURCE {
+            let x = lens_debug_x()
+            let y = lens_debug_y()
+            if raw_hit(v, x + 12.0, y + 32.0, lens_debug_w() - 24.0, 26.0) && !g_debug_running {
+                g_debug_target_focus = true
+            } else {
+                for button in 0 to 6 {
+                    if raw_hit(v, lens_debug_button_x(button), lens_debug_button_y(button), lens_debug_button_w(), 26.0) { lens_debug_button_action(button) }
+                }
+                if raw_hit(v, x + 8.0, lens_debug_source_y(), 88.0, LENS_DEBUG_ROW * (lens_debug_rows() as f64)) {
+                    let line = g_debug_scroll + ((g_mouse_y - lens_debug_source_y()) / LENS_DEBUG_ROW) as i32 + 1
+                    if line <= lens_text_lines(g_debug_source) { lens_debug_toggle_break(g_debug_file, line) }
+                }
+            }
+        }
+        v.mouse_pressed = false
+    }
+    v.mouse_right_pressed = false
+}
+
+// Execution has its own high-contrast band; breakpoints occupy a separate
+// left gutter, so a stopped breakpoint never hides either state.
+fn lens_debug_execution_color() u32 {
+    if g_debug_paused { return ui_pack_color("#f4ce78") }
+    return col_muted()
+}
+fn lens_debug_draw_execution(r: ref ui_renderer, x: f64, y: f64, w: f64) {
+    lens_debug_draw_execution_height(r, x, y, w, LENS_DEBUG_ROW)
+}
+fn lens_debug_draw_execution_height(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    let background = ui_pack_color("#292929")
+    if g_debug_paused { background = ui_pack_color("#3d3422") }
+    ui_fill_round_rect(r, x, y + 0.5, w, h - 1.0, 4.0, background, 0.0)
+    ui_stroke_round_rect(r, x, y + 0.5, w, h - 1.0, 4.0, 1.0, lens_debug_execution_color(), 0.0)
+    ui_fill_triangle(r, x + 6.0, y + 5.0, x + 6.0, y + 15.0, x + 12.0, y + 10.0, lens_debug_execution_color(), 0.0)
+}
+fn lens_debug_draw_breakpoint(r: ref ui_renderer, v: ref view, x: f64, y: f64, enabled: bool) {
+    if enabled {
+        ui_fill_round_rect(r, x + 2.0, y + 5.0, 8.0, 10.0, 3.0, ui_pack_color("#f4ce78"), 0.0)
+    } else {
+        let color = ui_pack_color("#565656")
+        if raw_hit(v, x - 4.0, y, 20.0, LENS_DEBUG_ROW) { color = ui_pack_color("#f4ce78") }
+        ui_stroke_round_rect(r, x + 2.0, y + 5.0, 8.0, 10.0, 3.0, 1.0, color, 0.0)
+    }
+}
+
+fn lens_debug_draw_source(r: ref ui_renderer, v: ref view) {
+    let x = lens_debug_x()
+    let y = lens_debug_y()
+    let w = lens_debug_w()
+    let h = lens_debug_h()
+    lens_debug_panel_background(r, DEBUG_PANEL_SOURCE, "Debug / " + g_debug_status + " / " + g_debug_mode)
+    lens_draw_field(r, x + 12.0, y + 32.0, w - 24.0, 26.0, g_debug_target, "Target name (empty = project default)")
+    for index in 0 to 6 {
+        lens_draw_button(r, v, lens_debug_button_x(index), lens_debug_button_y(index), lens_debug_button_w(), 26.0, lens_debug_button_label(index), index == 1 && g_debug_paused)
+    }
+    draw_text_clipped(r, x + 12.0, lens_debug_source_y() - 40.0, w - 24.0, 20.0, g_debug_file, small_px(), col_text())
+    draw_text_clipped(r, x + 12.0, lens_debug_source_y() - 20.0, w - 24.0, 20.0, "Click line number: breakpoint | wheel: source", small_px(), col_muted())
+    let source_lines = lens_text_lines(g_debug_source)
+    for row in 0 to lens_debug_rows() {
+        let line = g_debug_scroll + row + 1
+        if g_debug_file == "" || line > source_lines { break }
+        let ry = lens_debug_source_y() + (row as f64) * LENS_DEBUG_ROW
+        let current = line == g_debug_line && g_debug_file == g_debug_stop_file
+        if current { lens_debug_draw_execution(r, x + 32.0, ry, w - 40.0) }
+        lens_debug_draw_breakpoint(r, v, x + 12.0, ry, has(g_debug_breaks, lens_debug_break_key(g_debug_file, line)))
+        let color = col_text()
+        if current && g_debug_paused { color = ui_pack_color("#fff2cd") }
+        draw_text_clipped(r, x + 50.0, ry, 44.0, LENS_DEBUG_ROW, itos(line), small_px(), color)
+        draw_text_clipped(r, x + 100.0, ry, w - 112.0, LENS_DEBUG_ROW, lens_debug_text_line(g_debug_source, line - 1), small_px(), color)
+    }
+    let output = g_debug_output
+    let lines = lens_text_lines(output)
+    for row in 0 to 2 {
+        draw_text_clipped(r, x + 12.0, y + h - 44.0 + (row as f64) * 18.0, w - 24.0, 18.0, lens_debug_text_line(output, clamp_i(lines - 3 + row, 0, 65535)), small_px(), col_muted())
+    }
+}
+fn lens_debug_snapshot_label() str {
+    if g_debug_paused { return " (paused)" }
+    return " (last stop)"
+}
+fn lens_debug_draw_instructions(r: ref ui_renderer) {
+    let p = lens_debug_panel_rect(DEBUG_PANEL_INSTRUCTIONS)
+    lens_debug_panel_background(r, DEBUG_PANEL_INSTRUCTIONS, "Instructions" + lens_debug_snapshot_label())
+    for row in 0 to lens_debug_instruction_rows() {
+        let index = row + g_debug_instruction_scroll
+        let raw = lens_debug_text_line(g_debug_instructions, index)
+        if raw == "" { break }
+        let text = lens_debug_instruction_label(raw)
+        let y = p.y + 36.0 + (row as f64) * LENS_DEBUG_INSTRUCTION_ROW
+        let current = index == 0
+        if current { lens_debug_draw_execution_height(r, p.x + 8.0, y, p.w - 16.0, LENS_DEBUG_INSTRUCTION_ROW - 3.0) }
+        let color = col_text()
+        if current && g_debug_paused { color = ui_pack_color("#fff2cd") }
+        draw_text_clipped(r, p.x + 30.0, y + 2.0, p.w - 42.0, 18.0, text, small_px(), color)
+        let cycles = lens_debug_instruction_cycles(g_debug_mode, raw)
+        lit cycle_px = 8.0
+        let cost_w = ui_text_width(r, cycles, cycle_px, FONT_MONO())
+        draw_text_clipped(r, p.x + p.w - 16.0 - cost_w, y + 21.0, cost_w, 10.0, cycles, cycle_px, col_muted())
+    }
+    draw_text_clipped(r, p.x + 12.0, p.y + p.h - 16.0, p.w - 24.0, 12.0, "est. cycles / + = variable / excludes debugger", 8.0, col_muted())
+}
+fn lens_debug_draw_state(r: ref ui_renderer, v: ref view) {
+    let p = lens_debug_panel_rect(DEBUG_PANEL_STATE)
+    let half = p.w * 0.5
+    lens_debug_panel_background(r, DEBUG_PANEL_STATE, "Registers & Stack" + lens_debug_snapshot_label())
+    draw_text_clipped(r, p.x + 12.0, lens_debug_data_header_y(), half - 24.0, 20.0, "Registers", small_px(), col_accent())
+    lens_draw_button(r, v, p.x + half - 90.0, lens_debug_data_header_y() - 2.0, 78.0, 22.0, lens_debug_format_label(g_debug_register_format) + " >", false)
+    draw_text_clipped(r, p.x + half, lens_debug_data_header_y(), half - 12.0, 20.0, "Stack", small_px(), col_accent())
+    lens_draw_button(r, v, p.x + p.w - 90.0, lens_debug_data_header_y() - 2.0, 78.0, 22.0, lens_debug_format_label(g_debug_stack_format) + " >", false)
+    for row in 0 to lens_debug_register_rows() {
+        let ry = lens_debug_data_y() + (row as f64) * LENS_DEBUG_REGISTER_ROW
+        let text = lens_debug_text_line(g_debug_registers, row + g_debug_register_scroll)
+        if text != "" {
+            let border = ui_pack_color("#4b5059")
+            if lens_debug_register_changed(text) { border = ui_pack_color("#f4ce78") }
+            ui_stroke_round_rect(r, p.x + 10.0, ry + 1.0, half - 22.0, LENS_DEBUG_REGISTER_ROW - 4.0, 5.0, 1.0, border, 0.0)
+            draw_text_clipped(r, p.x + 16.0, ry + 4.0, half - 34.0, 20.0, lens_debug_format_line(text, g_debug_register_format, true), small_px(), col_text())
+        }
+    }
+    for row in 0 to lens_debug_data_rows() {
+        let ry = lens_debug_data_y() + (row as f64) * LENS_DEBUG_ROW
+        draw_text_clipped(r, p.x + half, ry, half - 12.0, LENS_DEBUG_ROW, lens_debug_format_line(lens_debug_text_line(g_debug_stack, row + g_debug_stack_scroll), g_debug_stack_format, false), small_px(), col_text())
+    }
+}
+fn lens_debug_draw(r: ref ui_renderer, v: ref view) {
+    if !lens_debug_active() { return }
+    lens_debug_panels_init()
+    for pos in 0 to DEBUG_PANEL_COUNT {
+        let index = g_debug_panel_order[pos]
+        if index == DEBUG_PANEL_SOURCE { lens_debug_draw_source(r, v)
+        } else if index == DEBUG_PANEL_INSTRUCTIONS { lens_debug_draw_instructions(r)
+        } else { lens_debug_draw_state(r, v) }
+    }
+}

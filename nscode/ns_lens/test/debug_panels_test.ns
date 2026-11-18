@@ -1,0 +1,106 @@
+use std
+use os
+use view
+
+fn debug_panel_press(v: ref view, x: f64, y: f64) {
+    g_mouse_x = x
+    g_mouse_y = y
+    v.mouse_pressed = true
+    v.mouse_down = true
+    v.mouse_released = false
+    lens_debug_mouse(v)
+}
+fn debug_panel_release(v: ref view) {
+    v.mouse_down = false
+    v.mouse_released = true
+    lens_debug_mouse(v)
+    v.mouse_released = false
+}
+fn main() {
+    g_panel_state = false
+    g_lens_view_mode = LENS_MODE_DEBUG
+    g_lens_view_w = 1000.0
+    g_lens_body_h = 800.0
+    lens_debug_panels_init()
+    g_debug_panel_x[DEBUG_PANEL_SOURCE] = 16.0
+    g_debug_panel_y[DEBUG_PANEL_SOURCE] = 80.0
+    g_debug_panel_w[DEBUG_PANEL_SOURCE] = 320.0
+    g_debug_panel_h[DEBUG_PANEL_SOURCE] = 500.0
+    g_debug_panel_x[DEBUG_PANEL_INSTRUCTIONS] = 400.0
+    g_debug_panel_y[DEBUG_PANEL_INSTRUCTIONS] = 100.0
+    g_debug_panel_w[DEBUG_PANEL_INSTRUCTIONS] = 350.0
+    g_debug_panel_h[DEBUG_PANEL_INSTRUCTIONS] = 180.0
+    g_debug_panel_x[DEBUG_PANEL_STATE] = 400.0
+    g_debug_panel_y[DEBUG_PANEL_STATE] = 300.0
+    g_debug_panel_w[DEBUG_PANEL_STATE] = 350.0
+    g_debug_panel_h[DEBUG_PANEL_STATE] = 300.0
+    let v = view_create("debug panels test", 1000, 800)
+
+    debug_panel_press(v, 450.0, 120.0)
+    assert g_debug_panel_capture == DEBUG_PANEL_INSTRUCTIONS
+    g_mouse_x = 650.0
+    g_mouse_y = 260.0
+    lens_debug_mouse(v)
+    assert g_debug_panel_x[DEBUG_PANEL_INSTRUCTIONS] == 600.0
+    assert g_debug_panel_y[DEBUG_PANEL_INSTRUCTIONS] == 240.0
+    assert g_debug_panel_x[DEBUG_PANEL_STATE] == 400.0
+    assert g_debug_panel_x[DEBUG_PANEL_SOURCE] == 16.0
+    g_mouse_x = 2000.0
+    g_mouse_y = 2000.0
+    assert lens_debug_blocks(v)
+    lens_debug_mouse(v)
+    assert g_debug_panel_x[DEBUG_PANEL_INSTRUCTIONS] + g_debug_panel_w[DEBUG_PANEL_INSTRUCTIONS] <= g_lens_view_w - 4.0
+    assert g_debug_panel_y[DEBUG_PANEL_INSTRUCTIONS] + g_debug_panel_h[DEBUG_PANEL_INSTRUCTIONS] <= lens_debug_panel_bottom()
+    debug_panel_release(v)
+    assert g_debug_panel_capture == -1
+
+    // Only the state panel changes when its bottom-right corner is resized.
+    lens_debug_panel_raise(DEBUG_PANEL_STATE)
+    debug_panel_press(v, 746.0, 596.0)
+    assert g_debug_panel_capture == DEBUG_PANEL_STATE
+    assert g_debug_panel_edges == PANEL_EDGE_RIGHT | PANEL_EDGE_BOTTOM
+    g_mouse_x = 826.0
+    g_mouse_y = 656.0
+    lens_debug_mouse(v)
+    assert g_debug_panel_w[DEBUG_PANEL_STATE] == 430.0
+    assert g_debug_panel_h[DEBUG_PANEL_STATE] == 360.0
+    assert g_debug_panel_w[DEBUG_PANEL_INSTRUCTIONS] == 350.0
+    debug_panel_release(v)
+
+    // A shared draw/hit order gives only the front panel its wheel events.
+    g_debug_panel_x[DEBUG_PANEL_INSTRUCTIONS] = 400.0
+    g_debug_panel_y[DEBUG_PANEL_INSTRUCTIONS] = 300.0
+    lens_debug_panel_raise(DEBUG_PANEL_STATE)
+    g_mouse_x = 450.0
+    g_mouse_y = 350.0
+    assert lens_debug_panel_hit(v) == DEBUG_PANEL_STATE
+    lens_debug_panel_raise(DEBUG_PANEL_INSTRUCTIONS)
+    assert lens_debug_panel_hit(v) == DEBUG_PANEL_INSTRUCTIONS
+    g_debug_instructions = ""
+    for i in 0 to 50 { g_debug_instructions = g_debug_instructions + "instruction\n" }
+    v.scroll_y = -2.0
+    lens_debug_mouse(v)
+    assert g_debug_instruction_scroll == 6
+    assert g_debug_register_scroll == 0 && g_debug_stack_scroll == 0
+    assert v.scroll_y == 0.0
+
+    let root = "/tmp/ns_lens_debug_panels_" + itos((os_time_us() % 2000000000) as i32)
+    assert os_make_dirs(root + "/bin/ns_lens") != 0
+    g_workspace_root = root
+    g_panel_state = true
+    panel_state_save()
+    g_debug_panel_x[DEBUG_PANEL_INSTRUCTIONS] = 0.0
+    g_debug_panel_h[DEBUG_PANEL_STATE] = 0.0
+    panel_state_load()
+    assert g_debug_panel_x[DEBUG_PANEL_INSTRUCTIONS] == 400.0
+    assert g_debug_panel_y[DEBUG_PANEL_INSTRUCTIONS] == 300.0
+    assert g_debug_panel_w[DEBUG_PANEL_STATE] == 430.0
+    assert g_debug_panel_h[DEBUG_PANEL_STATE] == 360.0
+    assert g_debug_panel_x[DEBUG_PANEL_SOURCE] == 16.0
+    panel_state_apply("debug.instructions.w", "12")
+    assert g_debug_panel_w[DEBUG_PANEL_INSTRUCTIONS] == 350.0
+    lens_debug_reset()
+    assert !g_debug_panel_ready[DEBUG_PANEL_INSTRUCTIONS]
+    view_close(v)
+    print("debug panels: passed\n")
+}

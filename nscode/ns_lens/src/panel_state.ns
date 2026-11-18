@@ -95,7 +95,7 @@ fn panel_state_view_text() str {
     text = text + "history.info_open=" + panel_state_flag(g_lens_history_info_open) + "\n"
     text = text + "outline.scroll=" + ftos(g_outline_scroll) + "\n"
     text = text + "outline.selected=" + panel_state_relative(g_outline_selected_path) + "\n"
-    return text
+    return text + lens_debug_layout_text()
 }
 
 fn panel_state_save() {
@@ -146,6 +146,7 @@ fn panel_state_tick(moving: bool) {
 // opens in an older build.
 fn panel_state_apply(key: str, value: str) {
     let n = stof(value)
+    if lens_debug_layout_apply(key, n) { return }
     if key == "hints.open" {
         g_lens_hints_ready = true
         g_lens_hints_open = n != 0.0
@@ -188,7 +189,7 @@ fn panel_state_apply(key: str, value: str) {
     } else if key == "view.mode" {
         g_panel_view_loaded = true
         let mode = n as i32
-        if mode >= LENS_MODE_CODE && mode <= LENS_MODE_REF {
+        if (mode >= LENS_MODE_CODE && mode <= LENS_MODE_REF) || mode == LENS_MODE_DEBUG {
             g_lens_view_mode = mode
         }
     } else if key == "view.x" {
@@ -260,6 +261,7 @@ fn panel_state_view_finish() {
 }
 
 fn panel_state_load() {
+    lens_debug_panels_reset()
     g_panel_view_loaded = false
     if panel_state_save_allowed() == false {
         return

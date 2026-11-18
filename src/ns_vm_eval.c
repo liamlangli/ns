@@ -2,6 +2,7 @@
 #include "ns_fmt.h"
 #include "ns_shader.h"
 #include "ns_profile.h"
+#include "ns_native_rt.h"
 
 /**
  * value transfer semantics
@@ -2915,6 +2916,41 @@ ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, ns_nil);
 }
 
+static void ns_eval_debug_write(FILE *out, void *context) {
+    ns_vm *vm = context;
+    fprintf(out, "#frame\neval:%p\n#registers\nAST interpreter: no register file\n#stack\n", (void *)vm);
+    for (i32 i = (i32)ns_array_length(vm->call_stack) - 1; i >= 0; --i) {
+        ns_call *call = &vm->call_stack[i];
+        ns_str name = call->callee ? call->callee->name : ns_str_cstr("[unknown]");
+        fprintf(out, "#%u %.*s / scope %u\n", (u32)ns_array_length(vm->call_stack) - 1 - (u32)i,
+                name.len, name.data, call->scope_top);
+    }
+    fputs("Local bindings (raw bits, at VM stack offsets)\n", out);
+    size_t bytes = ns_array_length(vm->stack);
+    for (size_t i = 0; i < ns_array_length(vm->symbol_stack); ++i) {
+        ns_symbol *sym = &vm->symbol_stack[i];
+        if (sym->type != NS_SYMBOL_VALUE) continue;
+        u64 value = sym->val.o;
+        if (ns_type_in_stack(sym->val.t)) {
+            int n = ns_type_size(vm, sym->val.t);
+            if (n < 0 || sym->val.o > bytes || (size_t)n > bytes - sym->val.o) continue;
+            if (n > 8) n = 8;
+            value = 0;
+            memcpy(&value, vm->stack + sym->val.o, (size_t)n);
+            fprintf(out, "%.*s @%llu = 0x%016llx\n", sym->name.len, sym->name.data,
+                    (unsigned long long)sym->val.o, (unsigned long long)value);
+        } else {
+            fprintf(out, "%.*s [immediate] = 0x%016llx\n", sym->name.len, sym->name.data, (unsigned long long)value);
+        }
+    }
+    fprintf(out, "VM stack (%zu bytes, little-endian raw bytes)\n", bytes);
+    for (size_t i = 0; i < bytes; i += 8) {
+        fprintf(out, "@%zu ", i);
+        for (size_t k = i; k < bytes && k < i + 8; ++k) fprintf(out, " %02x", (unsigned char)vm->stack[k]);
+        fputc('\n', out);
+    }
+}
+
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *expr = n;
@@ -2934,6 +2970,8 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
         i32 next = expr->next;
         expr = &ctx->nodes[expr->next];
+        ns_code_loc debug_loc = ns_ast_state_loc(ctx, expr->state);
+        ns_debug_location(debug_loc.f.data, debug_loc.f.len, debug_loc.l, "eval (source)", "AST interpreter; no translated instruction stream", ns_eval_debug_write, vm);
         switch (expr->type) {
         case NS_AST_EXPR:
         case NS_AST_CALL_EXPR:

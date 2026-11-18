@@ -1,0 +1,44 @@
+use std
+use os
+
+fn main() {
+    assert lens_mode_at(5) == LENS_MODE_DEBUG
+    assert lens_mode_label(LENS_MODE_DEBUG) == "debug"
+    assert lens_mode_key_label(LENS_MODE_DEBUG) == "cmd+6"
+    assert lens_debug_text_line("a\nb\n", 0) == "a"
+    assert lens_debug_text_line("a\nb\n", 1) == "b"
+    assert lens_debug_text_line("a\nb\n", 2) == ""
+    assert lens_debug_text_line("a\nb", 1) == "b"
+    let state = "emu\nfile.ns\n7\nADD r1 r2 r3\n#registers\nr0 = 19\nr1 = 23\n#stack\n#0 add\n#1 main\n#stop 12\n"
+    assert lens_debug_section(state, "instructions") == "ADD r1 r2 r3\n"
+    assert lens_debug_section(state, "#registers") == "r0 = 19\nr1 = 23\n"
+    assert lens_debug_section(state, "#stack") == "#0 add\n#1 main\n"
+    assert lens_debug_section("eval\nf.ns\n2\nAST\n#stop 1\n", "#registers") == ""
+    g_lens_view_w = 400.0
+    g_lens_body_h = 800.0
+    lens_debug_panels_reset()
+    lens_debug_panels_init()
+    assert lens_debug_columns() == 3
+    assert lens_debug_data_y() + (lens_debug_data_rows() as f64) * LENS_DEBUG_ROW <= g_debug_panel_y[DEBUG_PANEL_STATE] + g_debug_panel_h[DEBUG_PANEL_STATE] - 12.0
+    for index in 0 to 6 {
+        assert lens_debug_button_x(index) + lens_debug_button_w() <= lens_debug_x() + lens_debug_w()
+    }
+    g_lens_view_w = 1200.0
+    g_debug_panel_w[DEBUG_PANEL_SOURCE] = 600.0
+    assert lens_debug_columns() == 6
+    lens_debug_toggle_break("/tmp/main.ns", 7)
+    assert has(g_debug_breaks, "/tmp/main.ns:7")
+    lens_debug_toggle_break("/tmp/main.ns", 7)
+    assert !has(g_debug_breaks, "/tmp/main.ns:7")
+    lens_debug_toggle_break("", 1)
+    lens_debug_toggle_break("/tmp/main.ns", 0)
+    assert !has(g_debug_breaks, "/tmp/main.ns:0")
+    g_debug_status = "changed"
+    g_debug_registers = "previous registers"
+    g_debug_stack = "previous stack"
+    lens_debug_reset()
+    assert g_debug_registers == "" && g_debug_stack == ""
+    assert g_debug_status == "Ready"
+    assert !g_debug_running && !g_debug_paused
+    print("debug: passed\n")
+}

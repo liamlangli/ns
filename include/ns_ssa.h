@@ -72,6 +72,7 @@ typedef struct ns_ssa_inst {
     i32 target0;
     i32 target1;
     i32 ast;
+    i32 debug_location; // backend string-table id, only for a debug build
     ns_type type;
     ns_str name;
     // Source namespace for a resolved direct call (for example "std" or

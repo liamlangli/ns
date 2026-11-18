@@ -57,6 +57,9 @@ fn main() {
     check("1 leaves history", lens_mode_shortcut_keys(v) && g_lens_view_mode == LENS_MODE_CODE)
     release(v, 49)
     press(v, 54)
+    check("6 selects debug", lens_mode_shortcut_keys(v) && g_lens_view_mode == LENS_MODE_DEBUG)
+    release(v, 54)
+    press(v, 55)
     let before = g_lens_view_mode
     check("other digits leave the mode alone", lens_mode_shortcut_keys(v) == false && g_lens_view_mode == before)
 

@@ -118,6 +118,9 @@ i32 os_pty_resize(i32 handle, i32 cols, i32 rows);
 i32 os_pty_running(i32 handle);
 void os_pty_close(i32 handle);
 
+// Start a debug child, logging stdout/stderr to <session>/output.log.
+// Returns a pid, or 0 on failure/unsupported hosts (Windows/iOS).
+i32 os_launch_ns_debug(const char *exe, const char *folder, const char *entry, const char *session);
 // Start `<exe> profile --live-port <port> [entry]` in `folder`. Returns the
 // child process id, or 0 when the process could not be started.
 i32 os_launch_ns_profile(const char *exe, const char *folder, const char *entry, i32 port);

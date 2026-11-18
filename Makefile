@@ -270,7 +270,7 @@ $(NS_BINDIR)/src/ns_appimage.o: NS_CFLAGS += $(NS_HOST_ZLIB_CFLAGS)
 # which is shipped for executables produced by `ns build`.
 $(NS_BINDIR)/src/ns_native_rt.o: NS_CFLAGS += -DNS_HOST_TOOL
 
-NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_cpu_test.c test/ns_compile_gpu_test.c test/ns_ast_cache_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_build_cache_test.c test/ns_lint_test.c test/ns_profile_test.c test/ns_patch_test.c
+NS_TEST_SRCS = test/ns_debug_test.c test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_cpu_test.c test/ns_compile_gpu_test.c test/ns_ast_cache_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_build_cache_test.c test/ns_lint_test.c test/ns_profile_test.c test/ns_patch_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -396,6 +396,7 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 # `make test` may run without `make all`. Depend on `std` so every native
 # module the .ns suites load (io, compress, os, gpu, ...) is built first.
 test: $(NS_TEST_TARGETS) $(TARGET) std
+	$(NS_BINDIR)/ns_debug_test
 	$(NS_BINDIR)/ns_json_test
 	$(NS_BINDIR)/ns_expr_test
 	$(NS_BINDIR)/ns_compile_test
@@ -431,6 +432,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_lint_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_run_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	python3 test/ns_debug_test.py "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_app_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_patch_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_build_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"

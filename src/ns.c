@@ -96,6 +96,7 @@ typedef struct ns_compile_option_t {
     i32 positional_count;
     i32 program_argc;
     i8 **program_argv;
+    ns_str debug_session;
     ns_str shader_target;
     ns_str entry;
     ns_str output;
@@ -182,6 +183,9 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.wasm_only = true;
         } else if (strcmp(argv[i], "--pe") == 0) {
             option.pe_only = true;
+        } else if (strcmp(argv[i], "--debug-session") == 0) {
+            if (++i >= argc) ns_exit(1, "usage", "--debug-session needs a directory.\n");
+            option.debug_session = ns_str_cstr(argv[i]);
         } else if (strcmp(argv[i], "--cpu") == 0) {
             option.cpu = true;
         } else if (strcmp(argv[i], "--cpu-dis") == 0) {
@@ -299,6 +303,7 @@ void ns_help() {
     printf("  --wasm            emit webassembly module (.wasm)\n");
     printf("  --cpu             emit an ns_cpu bytecode image (.nsc, default bin/a.nsc);\n");
     printf("                    with run, execute on the ns_cpu interpreter instead\n");
+    printf("  --debug-session <dir>  run with Lens source-breakpoint protocol\n");
     printf("  --cpu-dis         print the ns_cpu code of a .ns file or .nsc image\n");
     printf("  --shader <target> transpile shader fns to msl | glsl | hlsl | wgsl source\n");
     printf("  --entry <name>    shader entry fn (default: every vs_*/fs_*/ps_*/cs_* fn)\n");
@@ -3277,6 +3282,16 @@ static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
         ns_ssa_fn *fn = &ssa->fns[fi];
         for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
             ns_ssa_inst *inst = &fn->insts[ii];
+            if (getenv("NS_DEBUG_SESSION")) {
+                ns_str loc = ns_ssa_assert_loc(ssa, inst);
+                if (loc.len > 0) {
+                    ns_bool seen = false;
+                    for (i32 si = 0; si < (i32)ns_array_length(tab); ++si)
+                        if (ns_str_equals(tab[si], loc)) { seen = true; break; }
+                    if (!seen) ns_array_push(tab, loc);
+                    else ns_str_free(loc);
+                } else ns_str_free(loc);
+            }
             ns_str value;
             if (inst->op == NS_SSA_OP_ASSERT) {
                 // The backends intern assert locations in this same scan order.
@@ -6288,6 +6303,12 @@ static ns_str ns_linked_run_executable(ns_str filename, ns_str target_name) {
     ns_asm_get_current_target(&target);
     if (kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) kind = NS_BUILD_EXE;
 
+    const char *debug = getenv("NS_DEBUG_SESSION");
+    if (debug && debug[0]) {
+        ns_str output = ns_path_join(ns_str_cstr(debug), ns_str_cstr("program"));
+        ns_exec_build_target(filename, output, NS_BUILD_EXE, true, target_name);
+        return output;
+    }
     ns_str output = ns_build_default_output(&in, kind);
     ns_exec_build_target(filename, ns_str_null, (u8)kind, false, target_name);
 
@@ -6326,6 +6347,10 @@ static void ns_exec_linked(ns_str executable) {
     CloseHandle(process.hProcess);
     exit((i32)status);
 #else
+    if (getenv("NS_DEBUG_SESSION")) {
+        execl(executable.data, executable.data, (char *)0);
+        ns_exit(1, "run", "failed to launch debug executable.\n");
+    }
     pid_t pid = fork();
     if (pid < 0) {
         ns_exit(1, "run", "failed to launch linked executable %.*s.\n",
@@ -6487,6 +6512,8 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
     // An explicit path to a declared entry runs under that target's settings.
     if (target_name.len == 0) target_name = ns_manifest_target_for_entry(scope, filename);
     ns_manifest_selection selection = ns_manifest_select(scope, target_name);
+    if (getenv("NS_DEBUG_SESSION") && selection.mode == NS_RUN_WASM)
+        ns_exit(1, "debug", "browser targets do not yet support Lens breakpoints.\n");
     ns_str target = selection.platform;
     ns_asm_target parsed_triple;
     if (target.len > 0 && !ns_str_equals(target, ns_str_cstr("wasm")) &&
@@ -7406,6 +7433,11 @@ i32 main(i32 argc, i8** argv) {
         }
     }
 
+    if (option.debug_session.len > 0) {
+        if (!option.run) ns_exit(1, "usage", "--debug-session requires ns run.\n");
+        ns_setenv("NS_DEBUG_SESSION", option.debug_session.data);
+    }
+    ns_setenv("NS_LENS_NS", ns_project_current_executable().data);
     ns_configure_vm_runtime_paths(&vm);
 
     if (option.profile_view) {

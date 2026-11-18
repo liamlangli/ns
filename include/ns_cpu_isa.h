@@ -60,7 +60,8 @@
     X(FNADDR, "df") \
     X(RET, "r") \
     X(ASSERT, "rl") \
-    X(TRAP, "l")
+    X(TRAP, "l") \
+    X(DEBUG, "l")
 
 typedef enum ns_cpu_op {
 #define NS_CPU_OP_ENUM(name, fmt) NS_CPU_##name,

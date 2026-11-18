@@ -1,0 +1,92 @@
+// Snapshot deltas are keyed by register name, never by the visible row. CPU
+// virtual register numbers belong to a frame; physical registers to a thread.
+use std
+
+let g_debug_register_values = [str: str](8)
+let g_debug_changed_registers = set[str](8)
+let g_debug_register_context = ""
+let g_debug_pending_step = false
+lit DEBUG_REGISTER_FRAME_CACHE = 32
+let g_debug_register_frame_keys = [str](DEBUG_REGISTER_FRAME_CACHE)
+let g_debug_register_frame_values = [str](DEBUG_REGISTER_FRAME_CACHE)
+let g_debug_register_frame_next: i32 = 0
+
+fn lens_debug_register_name(text: str) str {
+    for i in 0 to text.len {
+        if text[i] == 61 { return lens_debug_token(substr(text, 0, i), 0) }
+    }
+    return ""
+}
+fn lens_debug_register_value(text: str) str {
+    let start = -1
+    let end = text.len
+    for i in 0 to text.len {
+        if start < 0 && text[i] == 61 { start = i + 1 }
+        if start >= 0 && text[i] == 40 {
+            end = i
+            break
+        }
+    }
+    if start < 0 { return "" }
+    return outline_trim(substr(text, start, end - start))
+}
+fn lens_debug_registers_clear() {
+    g_debug_register_values = [str: str](8)
+    g_debug_changed_registers = set[str](8)
+    g_debug_register_context = ""
+    g_debug_pending_step = false
+    g_debug_register_frame_keys = [str](DEBUG_REGISTER_FRAME_CACHE)
+    g_debug_register_frame_values = [str](DEBUG_REGISTER_FRAME_CACHE)
+    g_debug_register_frame_next = 0
+}
+fn lens_debug_register_map(registers: str) [str: str] {
+    let capacity = clamp_i(lens_text_lines(registers) * 2 + 1, 8, 262144)
+    let values = [str: str](capacity)
+    let start = 0
+    for i in 0 to registers.len + 1 {
+        if i == registers.len || registers[i] == 10 {
+            let text = substr(registers, start, i - start)
+            let name = lens_debug_register_name(text)
+            if name != "" {
+                let value = lens_debug_register_value(text)
+                values[name] = value
+            }
+            start = i + 1
+        }
+    }
+    return values
+}
+fn lens_debug_registers_update(registers: str, context: str, stepping: bool) {
+    let values = lens_debug_register_map(registers)
+    let capacity = clamp_i(lens_text_lines(registers) * 2 + 1, 8, 262144)
+    let changed = set[str](capacity)
+    let slot = -1
+    if context != "" {
+        for index in 0 to DEBUG_REGISTER_FRAME_CACHE {
+            if g_debug_register_frame_keys[index] == context { slot = index }
+        }
+    }
+    if slot >= 0 && stepping {
+        let previous = lens_debug_register_map(g_debug_register_frame_values[slot])
+        for name in values {
+            if has(previous, name) {
+                if previous[name] != values[name] { insert(changed, name) }
+            }
+        }
+    }
+    if context != "" {
+        if slot < 0 {
+            slot = g_debug_register_frame_next
+            g_debug_register_frame_next = (slot + 1) % DEBUG_REGISTER_FRAME_CACHE
+        }
+        g_debug_register_frame_keys[slot] = context
+        g_debug_register_frame_values[slot] = registers
+    }
+    g_debug_register_values = values
+    g_debug_changed_registers = changed
+    g_debug_register_context = context
+}
+fn lens_debug_register_changed(text: str) bool {
+    let name = lens_debug_register_name(text)
+    return name != "" && has(g_debug_changed_registers, name)
+}

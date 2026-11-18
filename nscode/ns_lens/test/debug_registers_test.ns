@@ -1,0 +1,56 @@
+use std
+
+fn main() {
+    lens_debug_registers_clear()
+    let first = "pc = 3 (16-bit code units)\nr0 = 0x0000000000000013 (19)\nr1 [const] = 0x0000000000000017 (23)\nq0 = 0000000000000001 0000000000000002\n"
+    lens_debug_registers_update(first, "cpu:thread:0:main", false)
+    assert !lens_debug_register_changed("r0 = 0x0000000000000013 (19)")
+    assert !lens_debug_register_changed("pc = 3")
+    let second = "r1 = 0x0000000000000017 (different decimal annotation)\nq0 = 0000000000000001 0000000000000003\nr0 = 0x000000000000002a (42)\npc = 10 (16-bit code units)\nr2 = 0x0000000000000009 (9)\n"
+    lens_debug_registers_update(second, "cpu:thread:0:main", true)
+    assert lens_debug_register_changed("r0 = 0x000000000000002a (42)")
+    assert lens_debug_register_changed("q0 = 0000000000000001 0000000000000003")
+    assert lens_debug_register_changed("pc = 10")
+    assert !lens_debug_register_changed("r1 [const] = 0x0000000000000017 (23)")
+    assert !lens_debug_register_changed("r2 = 0x0000000000000009 (9)")
+    lens_debug_registers_update(second, "cpu:thread:0:main", true)
+    assert !lens_debug_register_changed("r0 = 0x000000000000002a (42)")
+    assert !lens_debug_register_changed("q0 = 0000000000000001 0000000000000003")
+    lens_debug_registers_update("q0 = 0000000000000001 0000000000000003\n", "simd", false)
+    lens_debug_registers_update("q0 = 0000000000000002 0000000000000003\n", "simd", true)
+    assert lens_debug_register_changed("q0 = 0000000000000002 0000000000000003")
+    // Entering another virtual frame must not compare its r0 to the caller.
+    lens_debug_registers_update("r0 = 0x0000000000000063 (99)\n", "cpu:thread:8:helper", true)
+    assert !lens_debug_register_changed("r0 = 0x0000000000000063 (99)")
+    // Returning to a caller uses that caller's own last stopped values.
+    lens_debug_registers_update("r0 = 0x000000000000002b (43)\n", "cpu:thread:0:main", true)
+    assert lens_debug_register_changed("r0 = 0x000000000000002b (43)")
+    lens_debug_registers_update("r0 = 0x000000000000002c (44)\n", "cpu:thread:0:main", false)
+    assert !lens_debug_register_changed("r0 = 0x000000000000002c (44)")
+    lens_debug_registers_update("r0 = 0x000000000000002d (45)\n", "cpu:thread:0:main", true)
+    assert lens_debug_register_changed("r0 = 0x000000000000002d (45)")
+    lens_debug_registers_update("x0 = 0x1\n", "native-thread:1", false)
+    lens_debug_registers_update("x0 = 0x2\n", "native-thread:2", true)
+    assert !lens_debug_register_changed("x0 = 0x2")
+    lens_debug_registers_update("x0 = 0x3\n", "native-thread:1", true)
+    assert lens_debug_register_changed("x0 = 0x3")
+    lens_debug_registers_update("x0 = 0x4\n", "", true)
+    assert !lens_debug_register_changed("x0 = 0x4")
+    lens_debug_clear_snapshot()
+    lens_debug_registers_update(first, "cpu:thread:0:main", true)
+    assert !lens_debug_register_changed("r0 = 0x0000000000000013 (19)")
+    let framed = "emu\nf.ns\n3\nADD r1 r0 r0\n#frame\ncpu:thread:0:main\n#registers\nr0 = 1\n#stack\n#0 main\n#stop 1\n"
+    assert lens_debug_section(framed, "instructions") == "ADD r1 r0 r0\n"
+    assert lens_debug_section(framed, "#frame") == "cpu:thread:0:main\n"
+    assert lens_debug_section(framed, "#registers") == "r0 = 1\n"
+    assert lens_debug_section(framed, "#stack") == "#0 main\n"
+    lens_debug_registers_clear()
+    for index in 0 to DEBUG_REGISTER_FRAME_CACHE + 1 {
+        lens_debug_registers_update("r0 = 1\n", "frame:" + itos(index), false)
+    }
+    lens_debug_registers_update("r0 = 2\n", "frame:0", true)
+    assert !lens_debug_register_changed("r0 = 2")
+    lens_debug_registers_update("r0 = 3\n", "frame:0", true)
+    assert lens_debug_register_changed("r0 = 3")
+    print("debug register changes: passed\n")
+}

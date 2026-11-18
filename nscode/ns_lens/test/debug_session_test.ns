@@ -1,0 +1,57 @@
+// Exercise the actual Lens controller and child launcher, not just the CLI protocol.
+use std
+use os
+use task
+
+fn debug_wait_pause() bool {
+    let deadline = os_time() + 15.0
+    loop os_time() < deadline && g_debug_running {
+        lens_debug_poll()
+        if g_debug_paused { return true }
+        sleep(20)
+    }
+    return false
+}
+
+fn main() {
+    let root = "/tmp/ns_lens_debug_" + itos((os_time_us() % 2000000000) as i32)
+    assert os_make_dirs(root + "/src") != 0
+    assert os_write_file_atomic(root + "/ns.mod", "schema = \"ns.mod/v2\"\nname = \"debug_test\"\ntype = \"cli\"\nsource = \"src\"\nentry = \"main.ns\"\n") != 0
+    assert os_write_file_atomic(root + "/src/main.ns", "use std\nfn main() {\n    let value = 42\n    print(`debug value {value}\\n`)\n    assert value == 42\n}\n") != 0
+    g_workspace_root = root
+    g_lens_body_h = 700.0
+    g_lens_view_w = 1000.0
+    lens_debug_source(root + "/src/main.ns")
+    lens_debug_toggle_break(g_debug_file, 4)
+    lens_debug_start()
+    if g_debug_pid <= 0 {
+        print("debug session: skipped (no local debug backend)\n")
+        return
+    }
+    if debug_wait_pause() == false { print(g_debug_status + "\n" + g_debug_output + "\n"); lens_debug_shutdown(); assert false }
+    assert g_debug_line == 3
+    assert g_debug_registers == "AST interpreter: no register file\n"
+    assert g_debug_stack != ""
+    assert g_debug_file == root + "/src/main.ns"
+    lens_debug_command("continue")
+    assert debug_wait_pause()
+    assert g_debug_line == 4
+    lens_debug_command("step")
+    assert debug_wait_pause()
+    assert g_debug_line == 5
+    lens_debug_command("continue")
+    let deadline = os_time() + 15.0
+    loop g_debug_running && os_time() < deadline {
+        lens_debug_poll()
+        sleep(20)
+    }
+    assert !g_debug_running
+    assert g_debug_status == "Exited"
+    lens_debug_start()
+    assert debug_wait_pause()
+    lens_debug_shutdown()
+    assert g_debug_pid == 0 && !g_debug_running
+    assert os_read_file(g_debug_dir + "/alive") == "0"
+    lens_debug_reset()
+    print("debug session: passed\n")
+}

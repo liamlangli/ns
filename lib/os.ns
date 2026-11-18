@@ -255,6 +255,11 @@ ref fn os_ssh_close(handle: i32)
 // an empty `entry` lets the child resolve its own project entry. Returns the
 // child process id, or 0 when the process could not be started.
 ref fn os_launch_ns_profile(exe: str, folder: str, entry: str, port: i32) i32
+// Start a local debug run without a shell; stdout/stderr go to
+// <session>/output.log. `session` is an existing private absolute directory.
+// An empty entry selects the project default. Returns a child pid, or 0 on
+// unsupported platforms (currently Windows/iOS). Use process_alive/stop.
+ref fn os_launch_ns_debug(exe: str, folder: str, entry: str, session: str) i32
 ref fn os_process_alive(pid: i32) i32
 ref fn os_process_stop(pid: i32) i32
 

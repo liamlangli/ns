@@ -68,6 +68,7 @@ fn lens_frame(r: ref ui_renderer, v: ref view) {
         g_lens_poll_time = now
         workspace_poll_changes()
         terminal_poll()
+        lens_debug_poll()
     }
     window_size_tick(v.width, v.height, now)
     let resized = v.framebuffer_width != g_lens_frame_w || v.framebuffer_height != g_lens_frame_h || v.display_ratio != g_lens_frame_ratio

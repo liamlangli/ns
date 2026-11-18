@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdio.h>
 
 // Linear-memory runtime used by AArch64-compiled ns programs. Addresses are
 // 32-bit offsets into a growable heap so SSA's Wasm32 field/array layout
@@ -141,3 +142,14 @@ void ns_rt_task_cancel(int64_t t);
 int64_t ns_rt_task_done(int64_t t);
 int64_t ns_rt_task_cancelled(int64_t t);
 void ns_rt_task_sleep(int64_t ms);
+
+// Cooperative debugger used only by explicitly instrumented debug runs.
+// Source paths are byte strings (not necessarily NUL terminated).
+typedef void (*ns_debug_snapshot_fn)(FILE *out, void *context);
+void ns_debug_location(const char *file, int len, int line, const char *mode, const char *instructions,
+                       ns_debug_snapshot_fn snapshot, void *context);
+void ns_rt_debug_location(int64_t location, const uint64_t *registers, const uint64_t *stack, int64_t stack_bytes);
+
+// Decode instruction boundaries/classes for the emitted x86-64 subset. Returns
+// 0 on an unsupported/truncated encoding; never guesses a boundary for AVX.
+int ns_debug_x86_instruction(const uint8_t *code, int count, const char **kind);

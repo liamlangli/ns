@@ -889,6 +889,7 @@ fn lens_open_root(root: str) bool {
     // The panel layout belongs to the project being left; write it before the
     // root changes, then adopt the new project's own layout.
     panel_state_save()
+    lens_debug_reset()
     let previous = g_workspace_root
     g_lens_editing = false
     g_lens_reading = false
@@ -926,6 +927,7 @@ fn lens_open_root(root: str) bool {
 
 // No project: the window shows its Open Folder button and the recent list.
 fn lens_close_root() {
+    lens_debug_reset()
     os_watch_stop()
     lens_sound_close()
     g_workspace_root = ""
@@ -937,16 +939,18 @@ fn lens_mode_y() f64 { return main_menu_h() + (LENS_TOP_BAR_H - LENS_MODE_H) * 0
 
 fn lens_mode_popup_y() f64 { return lens_mode_y() + LENS_MODE_H + 2.0 }
 
-lit LENS_MODE_ROWS = 5
+lit LENS_MODE_ROWS = 6
 
 fn lens_mode_at(row: i32) i32 {
     if row == 1 { return LENS_MODE_REF }
     if row == 4 { return LENS_MODE_HISTORY }
+    if row == 5 { return LENS_MODE_DEBUG }
     if row > 1 { return row - 1 }
     return LENS_MODE_CODE
 }
 
 fn lens_mode_label(mode: i32) str {
+    if mode == LENS_MODE_DEBUG { return "debug" }
     if mode == LENS_MODE_REF { return "ref" }
     if mode == LENS_MODE_HISTORY { return "history" }
     if mode == LENS_MODE_CHANGE {
@@ -959,6 +963,7 @@ fn lens_mode_label(mode: i32) str {
 }
 
 fn lens_mode_key_label(mode: i32) str {
+    if mode == LENS_MODE_DEBUG { return "cmd+6" }
     if mode == LENS_MODE_REF { return "cmd+2" }
     if mode == LENS_MODE_CHANGE { return "cmd+3" }
     if mode == LENS_MODE_FULL { return "cmd+4" }
@@ -985,6 +990,7 @@ fn lens_mode_shortcut_keys(v: ref view) bool {
         lens_set_mode(LENS_MODE_FULL)
         return true
     }
+    if key_edge(v, 54) { lens_set_mode(LENS_MODE_DEBUG); return true }
     if key_edge(v, 53) {
         lens_set_mode(LENS_MODE_HISTORY)
         return true
@@ -1231,6 +1237,9 @@ fn lens_edge_cursor(edges: i32) i32 {
 // press that is dragging anything else, the map included, keeps the arrow;
 // a terminal text selection keeps the I-beam.
 fn lens_pointer_cursor(v: ref view) i32 {
+    if lens_debug_active() && lens_ui_shown() && !lens_menu_blocks() && !g_lens_mode_block && lens_debug_blocks(v) {
+        return lens_debug_panel_cursor(v)
+    }
     if g_terminal_resize_edges != PANEL_EDGE_NONE {
         return lens_edge_cursor(g_terminal_resize_edges)
     }
@@ -1310,8 +1319,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     // Floating panels take pointer input before the map. The terminal is drawn
     // above the outline, so it also wins when their rectangles overlap.
     if shown && lens_menu_blocks() == false {
-        terminal_mouse(v, w, h)
-        outline_mouse(v, w, h)
+        lens_debug_mouse(v)
+        if lens_debug_blocks(v) == false { terminal_mouse(v, w, h) }
+        if lens_debug_blocks(v) == false { outline_mouse(v, w, h) }
         // The history panels sit under the outline and the terminal.
         if lens_history_active() && !outline_blocks_pointer(v) && !terminal_blocks_pointer(v) {
             lens_history_mouse(v, w, h)
@@ -1329,7 +1339,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let screen_y = g_mouse_y
     let over_map = hit(v, 0.0, 0.0, map_w, h)
     if shown {
-        let over_panel = outline_blocks_pointer(v) || terminal_blocks_pointer(v) || lens_history_blocks_pointer(v, w)
+        let over_panel = lens_debug_blocks(v) || outline_blocks_pointer(v) || terminal_blocks_pointer(v) || lens_history_blocks_pointer(v, w)
         over_map = g_lens_mode_block == false && lens_menu_blocks() == false && over_panel == false && !lens_ref_depth_hit(v, w) && hit(v, 0.0, bar_bottom, map_w, h - STATUS_BAR_H - bar_bottom)
     }
     let now = os_time()
@@ -1689,6 +1699,7 @@ fn lens_draw_controls(r: ref ui_renderer, v: ref view, w: f64, h: f64, top: f64,
     if lens_history_active() { lens_history_draw_panels(r, v, w, h) }
     outline_draw(r, v, w, h)
     terminal_draw(r, v, w, h)
+    lens_debug_draw(r, v)
     lens_draw_mode_menu(r, v, w)
     lens_draw_menus(r, v, w, h)
 }

@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <string.h>
+#include <time.h>
+#if defined(__APPLE__) || defined(__linux__)
+#include <execinfo.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -2243,3 +2247,293 @@ ns_rt_host_str ns_os_read_file(ns_rt_host_str path) {
     return ns_os_read_file_part(path, 0, size);
 }
 #endif
+
+
+// File protocol: each session owns a private directory. The UI atomically
+// replaces command / breakpoints; the runtime atomically publishes stopped
+// snapshots. No socket or feature-module dependency enters the interpreter.
+static atomic_flag ns_debug_lock = ATOMIC_FLAG_INIT;
+static unsigned long ns_debug_command;
+static unsigned long ns_debug_event;
+static int ns_debug_step = 1;
+static char ns_debug_previous[8192];
+
+static void ns_debug_sleep(void) {
+#ifdef _WIN32
+    Sleep(10);
+#else
+    struct timespec delay = {0, 10000000};
+    nanosleep(&delay, NULL);
+#endif
+}
+
+static int ns_debug_read(const char *dir, const char *name, char *out, size_t cap) {
+    char path[8192];
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    FILE *f = fopen(path, "rb");
+    if (!f) { out[0] = 0; return 0; }
+    size_t n = fread(out, 1, cap - 1, f);
+    out[n] = 0;
+    fclose(f);
+    return 1;
+}
+
+void ns_debug_location(const char *file, int len, int line, const char *mode, const char *instructions,
+                       ns_debug_snapshot_fn snapshot, void *context) {
+    const char *dir = getenv("NS_DEBUG_SESSION");
+    if (!dir || !dir[0] || !file || line <= 0 || len <= 0) return;
+    while (atomic_flag_test_and_set(&ns_debug_lock)) ns_debug_sleep();
+    // Preserve the workspace spelling of symlinked roots (/tmp vs
+    // /private/tmp on macOS), so a source breakpoint uses the same identity
+    // before and after the compiler resolves the project working directory.
+    char root[4096], cwd[4096], mapped[8192];
+#ifdef _WIN32
+    int have_cwd = GetCurrentDirectoryA(sizeof(cwd), cwd) > 0;
+#else
+    int have_cwd = getcwd(cwd, sizeof(cwd)) != NULL;
+#endif
+    if (have_cwd && ns_debug_read(dir, "root", root, sizeof(root)) && root[0]) {
+        size_t prefix = strlen(cwd);
+        if ((size_t)len > prefix && !memcmp(file, cwd, prefix) && file[prefix] == '/') {
+            snprintf(mapped, sizeof(mapped), "%s%.*s", root, len - (int)prefix, file + prefix);
+            file = mapped;
+            len = (int)strlen(mapped);
+        }
+    }
+    char location[8192], command[128], action[32] = "", breaks[65536];
+    snprintf(location, sizeof(location), "%.*s:%d", len, file, line);
+    int changed = strcmp(location, ns_debug_previous) != 0;
+    unsigned long seq = 0;
+    ns_debug_read(dir, "command", command, sizeof(command));
+    if (sscanf(command, "%lu %31s", &seq, action) == 2 && seq != ns_debug_command) {
+        ns_debug_command = seq;
+        if (!strcmp(action, "stop")) exit(0);
+        if (!strcmp(action, "pause")) ns_debug_step = 2;
+    }
+    int breakpoint = 0;
+    if (changed && ns_debug_read(dir, "breakpoints", breaks, sizeof(breaks))) {
+        for (char *at = breaks; *at;) {
+            char *end = strchr(at, '\n');
+            size_t n = end ? (size_t)(end - at) : strlen(at);
+            if (strlen(location) == n && !memcmp(at, location, n)) { breakpoint = 1; break; }
+            if (!end) break;
+            at = end + 1;
+        }
+    }
+    if ((ns_debug_step == 1 && changed) || ns_debug_step == 2 || breakpoint) {
+        fflush(NULL);
+        char path[8192], temp[8192];
+        snprintf(path, sizeof(path), "%s/state", dir);
+        snprintf(temp, sizeof(temp), "%s/state.tmp", dir);
+        FILE *f = fopen(temp, "wb");
+        if (!f) { atomic_flag_clear(&ns_debug_lock); return; }
+        fprintf(f, "%s\n%.*s\n%d\n%s\n", mode, len, file, line, instructions ? instructions : "");
+        if (snapshot) snapshot(f, context);
+        fprintf(f, "#stop %lu\n", ++ns_debug_event);
+        fclose(f);
+#ifdef _WIN32
+        remove(path);
+#endif
+        rename(temp, path);
+        for (;;) {
+            // Closing Lens removes its heartbeat; a stopped child must not be
+            // left waiting forever after its owning UI has gone away.
+            char alive[64];
+            if (!ns_debug_read(dir, "alive", alive, sizeof(alive)) || atol(alive) <= 0 || time(NULL) - atol(alive) > 10) exit(0);
+            ns_debug_read(dir, "command", command, sizeof(command));
+            if (sscanf(command, "%lu %31s", &seq, action) == 2 && seq != ns_debug_command) {
+                ns_debug_command = seq;
+                if (!strcmp(action, "stop")) exit(0);
+                if (!strcmp(action, "continue") || !strcmp(action, "step")) {
+                    ns_debug_step = !strcmp(action, "step");
+                    break;
+                }
+            }
+            ns_debug_sleep();
+        }
+    }
+    snprintf(ns_debug_previous, sizeof(ns_debug_previous), "%s", location);
+    atomic_flag_clear(&ns_debug_lock);
+}
+
+// This is a bounded length/class decoder for the native emitter's subset,
+// not a disassembler. Keep unsupported bytes on an explicitly unknown row:
+// an arbitrary eight-byte chunk must never get one instruction's cycle cost.
+int ns_debug_x86_instruction(const uint8_t *code, int count, const char **kind) {
+    if (!kind) return 0;
+    *kind = "unknown";
+    if (!code || count <= 0) return 0;
+    int at = 0, wide = 0, short_operand = 0;
+    while (at < count && at < 15) {
+        unsigned byte = code[at];
+        if (byte >= 0x40 && byte <= 0x4f) { wide = !!(byte & 8); at++; }
+        else if (byte == 0x66) { short_operand = 1; at++; }
+        else if (byte == 0xf2 || byte == 0xf3) at++;
+        else break;
+    }
+    if (at >= count || at >= 15) return 0;
+    unsigned op = code[at++];
+    const char *category = "alu";
+    int immediate = 0, modrm = 0;
+    if (op == 0x90 || op == 0x9c || op == 0x9d || op == 0xc9 || (op >= 0x50 && op <= 0x5f)) {
+        if (op != 0x90) category = "memory";
+    } else if (op == 0xc3) category = "branch";
+    else if (op >= 0xb8 && op <= 0xbf) immediate = wide ? 8 : (short_operand ? 2 : 4);
+    else if (op >= 0xb0 && op <= 0xb7) immediate = 1;
+    else if (op == 0xe8 || op == 0xe9) { immediate = 4; category = op == 0xe8 ? "call" : "branch"; }
+    else if (op == 0xeb || (op >= 0x70 && op <= 0x7f)) { immediate = 1; category = "branch"; }
+    else if (op == 0x0f) {
+        if (at >= count) return 0;
+        unsigned second = code[at++];
+        if (second >= 0x80 && second <= 0x8f) { immediate = 4; category = "branch"; }
+        else if (second == 0xaf) { modrm = 1; category = "multiply"; }
+        else if ((second >= 0x90 && second <= 0x9f) || second == 0xb6 || second == 0xb7 || second == 0xbe || second == 0xbf) modrm = 1;
+        else if (second == 0x10 || second == 0x11 || second == 0x28 || second == 0x29 || second == 0x6e || second == 0x7e || second == 0x6f || second == 0x7f || second == 0x57 || second == 0xef) modrm = 1;
+        else if (second == 0x2a || second == 0x2c || second == 0x2d || second == 0x2e || second == 0x5a || second == 0x58 || second == 0x59 || second == 0x5c || second == 0x5e) {
+            modrm = 1; category = second == 0x5e ? "fp_divide" : "fp";
+        } else return 0;
+    } else {
+        switch (op) {
+        case 0x01: case 0x03: case 0x09: case 0x0b: case 0x21: case 0x23:
+        case 0x29: case 0x2b: case 0x31: case 0x33: case 0x39: case 0x3b:
+        case 0x63: case 0x84: case 0x85: case 0x88: case 0x89: case 0x8a:
+        case 0x8b: case 0x8d: case 0xd1: case 0xd3: case 0xf6: case 0xf7: case 0xff:
+            modrm = 1; break;
+        case 0x80: case 0x83: case 0xc1: case 0xc6: modrm = 1; immediate = 1; break;
+        case 0x81: case 0xc7: modrm = 1; immediate = short_operand ? 2 : 4; break;
+        case 0x69: modrm = 1; immediate = short_operand ? 2 : 4; category = "multiply"; break;
+        case 0x6b: modrm = 1; immediate = 1; category = "multiply"; break;
+        default: return 0;
+        }
+    }
+    if (modrm) {
+        if (at >= count) return 0;
+        unsigned byte = code[at++], mod = byte >> 6, reg = (byte >> 3) & 7, rm = byte & 7;
+        if ((op == 0xf6 || op == 0xf7) && reg == 1) return 0;
+        if (op == 0xff && (reg == 3 || reg == 5 || reg == 7)) return 0;
+        if ((op == 0xf6 || op == 0xf7) && reg == 0) immediate = op == 0xf6 ? 1 : (short_operand ? 2 : 4);
+        if ((op == 0xf6 || op == 0xf7) && reg >= 4) category = reg >= 6 ? "divide" : "multiply";
+        if (op == 0xff && (reg == 2 || reg == 4)) category = reg == 2 ? "call" : "branch";
+        if (mod != 3) {
+            // Include the possible cache miss even for arithmetic operands.
+            // LEA only computes an address and never reads the pointed data.
+            if (op != 0x8d) {
+                if (!strcmp(category, "call")) category = "call_memory";
+                else if (!strcmp(category, "branch")) category = "branch_memory";
+                else category = "memory";
+            }
+            if (rm == 4) {
+                if (at >= count) return 0;
+                unsigned sib = code[at++];
+                if (mod == 0 && (sib & 7) == 5) at += 4;
+            } else if (mod == 0 && rm == 5) at += 4;
+            if (mod == 1) at++;
+            if (mod == 2) at += 4;
+        }
+    }
+    at += immediate;
+    if (at > count || at > 15) return 0;
+    *kind = category;
+    return at;
+}
+
+// Native snapshots come from the compiler's safepoint spill, before the
+// debugger's own C code or argument setup can change target registers.
+typedef struct ns_debug_native_snapshot {
+    const uint64_t *registers, *stack;
+    int64_t bytes;
+    const unsigned char *pc;
+} ns_debug_native_snapshot;
+
+static void ns_debug_native_write(FILE *out, void *context) {
+    ns_debug_native_snapshot *s = context;
+    const uint64_t *r = s->registers;
+    // Snapshot callbacks hold ns_debug_lock, so this counter is serialized.
+    // A TLS lifetime ID avoids matching a later thread that reuses an OS id.
+    static uint64_t next_thread_id;
+#if defined(_MSC_VER)
+    static __declspec(thread) uint64_t thread_id;
+#else
+    static __thread uint64_t thread_id;
+#endif
+    if (!thread_id) thread_id = ++next_thread_id;
+    fprintf(out, "#frame\nnative-thread:%llu\n#registers\n", (unsigned long long)thread_id);
+#if defined(__aarch64__)
+    for (int i = 0; i < 31; ++i) fprintf(out, "x%-2d = 0x%016llx\n", i, (unsigned long long)r[i]);
+    fprintf(out, "sp  = 0x%016llx\n", (unsigned long long)r[31]);
+    fprintf(out, "nzcv = 0x%016llx\n", (unsigned long long)r[96]);
+    for (int i = 0; i < 32; ++i) fprintf(out, "q%-2d = %016llx %016llx\n", i,
+        (unsigned long long)r[32 + i * 2 + 1], (unsigned long long)r[32 + i * 2]);
+#elif defined(__x86_64__) || defined(_M_X64)
+    static const char *const names[] = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+                                        "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"};
+    for (int i = 0; i < 16; ++i) fprintf(out, "%s = 0x%016llx\n", names[i], (unsigned long long)r[i]);
+    fprintf(out, "rflags = 0x%016llx\n", (unsigned long long)r[48]);
+    for (int i = 0; i < 16; ++i) fprintf(out, "xmm%-2d = %016llx %016llx\n", i,
+        (unsigned long long)r[16 + i * 2 + 1], (unsigned long long)r[16 + i * 2]);
+#endif
+    fprintf(out, "pc = %p\n#stack\nCurrent native frame (%lld bytes, raw words)\n", (const void *)s->pc, (long long)s->bytes);
+    int64_t count = s->bytes / 8;
+    if (count > 4096) count = 4096;
+    for (int64_t i = 0; i < count; ++i)
+        fprintf(out, "%p  0x%016llx\n", (const void *)(s->stack + i), (unsigned long long)s->stack[i]);
+    if (s->bytes / 8 > count) fputs("[frame truncated after 4096 words]\n", out);
+#if defined(__APPLE__) || defined(__linux__)
+    void *frames[64];
+    int n = backtrace(frames, 64);
+    char **symbols = backtrace_symbols(frames, n);
+    fputs("Native call stack (includes debugger helper frames)\n", out);
+    for (int i = 0; i < n; ++i) fprintf(out, "#%d %s\n", i, symbols ? symbols[i] : "[symbol unavailable]");
+    free(symbols);
+#endif
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+void ns_rt_debug_location(int64_t location, const uint64_t *registers, const uint64_t *stack, int64_t stack_bytes) {
+    if (!getenv("NS_DEBUG_SESSION")) return;
+    if (location < 0 || location >= ns_rt_nstr || !ns_rt_strtab || !registers) return;
+    const char *loc = ns_rt_strtab[location];
+    const char *colon = strrchr(loc, ':');
+    if (!colon) return;
+    char listing[2048] = "";
+    ns_debug_native_snapshot snapshot = {registers, stack, stack_bytes, NULL};
+#if defined(__GNUC__) || defined(__clang__)
+    const unsigned char *pc = __builtin_extract_return_addr(__builtin_return_address(0));
+    // Skip the register-restore sequence, so PC denotes the program operation
+    // following the safepoint, not the debugger instrumentation itself.
+#if defined(__aarch64__)
+    pc += registers[97];
+#else
+    pc += registers[49];
+#endif
+    snapshot.pc = pc;
+    size_t count = 4096 - ((uintptr_t)pc & 4095);
+    if (count > 32) count = 32;
+    size_t used = 0;
+#if defined(__aarch64__)
+    for (size_t i = 0; i + 4 <= count; i += 4) {
+        uint32_t word; memcpy(&word, pc + i, 4);
+        used += (size_t)snprintf(listing + used, sizeof(listing) - used,
+                                "%p  %08x\n", (const void *)(pc + i), word);
+    }
+#else
+    for (size_t i = 0, row = 0; i < count && row < 8; ++row) {
+        const char *kind = "unknown";
+        int length = ns_debug_x86_instruction(pc + i, (int)(count - i), &kind);
+        // The final row can contain unsupported bytes, explicitly without a
+        // cycle estimate. Stop here rather than inventing a following boundary.
+        size_t size = length > 0 ? (size_t)length : count - i;
+        used += (size_t)snprintf(listing + used, sizeof(listing) - used, "%p ", (const void *)(pc + i));
+        for (size_t j = 0; j < size; ++j)
+            used += (size_t)snprintf(listing + used, sizeof(listing) - used, " %02x", pc[i + j]);
+        used += (size_t)snprintf(listing + used, sizeof(listing) - used, "\t%s\n", kind);
+        if (length <= 0) break;
+        i += size;
+    }
+#endif
+#endif
+    ns_debug_location(loc, (int)(colon - loc), atoi(colon + 1), "exec (hardware encodings)", listing,
+                      ns_debug_native_write, &snapshot);
+}

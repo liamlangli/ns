@@ -1011,6 +1011,37 @@ static os_child *os_child_find(i32 pid) {
 #include <sys/wait.h>
 #endif
 
+// Launch before any debugger protocol is active in the child. Unlike a PTY
+// login shell this cannot flush a queued command during terminal startup.
+i32 os_launch_ns_debug(const char *exe, const char *folder, const char *entry, const char *session) {
+#if defined(NS_WIN) || (defined(__APPLE__) && !TARGET_OS_OSX)
+    ns_unused(exe); ns_unused(folder); ns_unused(entry); ns_unused(session);
+    return 0;
+#else
+    if (!exe || !exe[0] || !folder || !folder[0] || !session || !session[0]) return 0;
+    char output[8192];
+    if (snprintf(output, sizeof(output), "%s/output.log", session) >= (int)sizeof(output)) return 0;
+    int fd = open(output, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return 0;
+    pid_t pid = fork();
+    if (pid < 0) { close(fd); return 0; }
+    if (pid == 0) {
+        setsid();
+        if (chdir(folder) != 0) _exit(127);
+        dup2(fd, STDOUT_FILENO);
+        dup2(fd, STDERR_FILENO);
+        for (int handle = 3; handle < 4096; ++handle) close(handle);
+        if (entry && entry[0])
+            execlp(exe, exe, "run", "--debug-session", session, entry, (char *)NULL);
+        else
+            execlp(exe, exe, "run", "--debug-session", session, (char *)NULL);
+        _exit(127);
+    }
+    close(fd);
+    return (i32)pid;
+#endif
+}
+
 i32 os_launch_ns_profile(const char *exe, const char *folder, const char *entry, i32 port) {
     if (!exe || !exe[0] || port <= 0 || port > 65535) return 0;
     char port_text[16];

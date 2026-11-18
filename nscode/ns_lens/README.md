@@ -430,3 +430,123 @@ and a throwaway loopback sshd.
 A real-device acceptance pass should import a throwaway encrypted key, verify
 and trust a test host, clone/edit/save/commit/push a test repository, restart the
 app, and check Chinese input and keyboard/rotation behavior on iPhone and iPad.
+
+## Debug mode
+
+Choose **debug** from the mode dropdown, or press **Cmd+6**. For a local
+project with an `ns.mod`, **Run** launches the default target; enter a target
+name in the field to select another `[[targets]]` entry. Lens saves the active
+editor document before launching. The program initially pauses at its first
+executable source location. **Continue**, **Step** (into the next distinct
+source line), **Pause** and **Stop** control the session. Pause takes effect
+at a source safepoint; a blocking native call must return first.
+
+The source panel marks the paused source line with an opaque amber band,
+border and execution arrow. The Instructions panel uses the same treatment
+for its current PC row. Breakpoints have a separate left gutter: a small filled
+yellow rounded rectangle means enabled, and a hollow rectangle means absent.
+Both markers stay visible when execution pauses on a breakpoint. **Use selected**
+loads the map's selected file; click a line number to toggle a source
+breakpoint, including before Run. Breakpoints apply to executable locations;
+blank lines and declarations without runtime work do not stop. The source
+pane scrolls independently of the map. Breakpoints stay for this window's
+current project and are cleared when another project opens.
+
+The instruction pane follows the actual runtime selected by `ns run`:
+
+- `eval`: source execution in the AST interpreter.
+- `emu`: decoded ns_cpu operations, register operands and runtime/function names.
+- `exec`: addresses and encoded hardware instructions read from the running
+  executable (AArch64 words or x86-64 bytes). This initial view does not decode
+  native mnemonics or offer instruction stepping.
+
+A foreign-machine exec target falls back to eval, just as an ordinary run
+does. Browser targets report that breakpoints are unsupported. Local debugging
+uses a direct child-process launcher; it is unavailable on iOS and current
+Windows builds. This is a cooperative source debugger. Restart the session
+after changing source.
+
+Debug mode has three independent floating panels: source and run controls,
+**Instructions**, and **Registers & Stack**. Drag each panel by its title bar
+to place it freely, and resize it from any edge or corner. Clicking a panel
+brings it above the other debug panels; input is captured throughout a drag
+or resize, so it does not pan or select the map underneath. Each project's
+`bin/ns_lens/layout` remembers all three panels' positions and sizes.
+
+Source, instructions, registers and stack scroll independently within their
+panels. Continuing keeps the last stopped snapshot visible with a `last stop`
+label until the next pause. The runtime publishes instructions, registers and
+stack together in a single atomic state file.
+
+- `emu` shows every register in the active ns_cpu frame, including constants,
+  as hexadecimal bits and signed decimal. Stack lists the current function,
+  saved caller frames with their registers, and the active register-stack
+  window at its real word offsets.
+- `exec` saves the target state before setting up the debug call. AArch64
+  captures x0-x30, SP, NZCV and q0-q31; x86-64 captures the general registers,
+  RSP, RFLAGS and xmm0-xmm15 (128-bit SIMD lanes). PC points to the program
+  operation after the safepoint restore. Stack shows the allocated current
+  native frame as address/word pairs (up to 4096 words, explicitly marked
+  when truncated) and a bounded native backtrace including debugger helper
+  frames. Registers are restored before execution resumes.
+- `eval` explicitly reports that the AST interpreter has no register file.
+  Stack shows interpreter call frames, named local bindings as raw bits, and
+  the VM byte stack. Aggregate binding previews show the first eight bytes;
+  the full backing bytes remain in the raw stack view.
+
+Registers are shown as individual rounded outlines without a background fill.
+After **Step**, only registers whose raw values changed since the last pause
+in the same register frame/thread get a yellow outline. Unchanged registers
+keep their normal outline; the next pause replaces the change set, and a
+restart clears the baseline.
+Comparison uses register names, including both halves of SIMD values. A new
+virtual frame or another native thread establishes a fresh baseline, so reused
+register numbers in a callee do not look like changes to the caller's values.
+The last 32 frame/thread baselines are retained, so stepping back to a caller
+can still highlight its changed return register. First snapshots, newly
+appearing registers, evicted frame baselines and stops after Continue stay neutral.
+
+Each instruction has a small cycle estimate at its lower-right corner. These are deliberately coarse,
+heuristic latency/host-work classes, not measurements and not a throughput or
+wall-time prediction. They are not additive: pipelining and overlapping work
+can make a run shorter than the sum. Debug safepoints and debugger I/O are
+excluded.
+
+Native rows use broad classes such as ALU `~1-3 cyc`, divide `~5-40 cyc`, and
+memory `~4-300+ cyc` to allow for cache behavior. Calls show entry/branch cost
+plus `body`; the callee's execution is not assigned a made-up fixed cost.
+AArch64 classification uses instruction encoding masks. The emitted x86-64
+subset is split at decoded instruction boundaries before assigning a class;
+unsupported/truncated encodings remain an unknown byte row (`~? cyc`).
+
+For ns_cpu, the estimates include the VM dispatch and helper entry: simple
+operations are tens of host cycles, allocation/formatting hundreds to
+thousands, and I/O/calls explicitly carry variable work or waiting. These VM
+ranges are engineering heuristics, not calibrated benchmark results. A `+`
+means data size, cache misses, callee work or waiting can increase the cost
+without a fixed upper bound. AST interpretation and unknown instructions show
+`n/a` or `?` rather than fabricated numbers.
+
+The native class scale is informed by the latency/throughput distinction and
+instruction groups in the [Arm Cortex-A77 Software Optimization Guide](https://documentation-service.arm.com/static/5f05e6b9cafe527e86f61ac3).
+It is not a claim that the host is an A77 or that these are its exact timings.
+
+Snapshots show raw machine values, not typed watch expressions. The native
+SIMD view does not include AVX upper lanes or architecture-specific control
+registers beyond the flags listed above.
+
+Each run uses its own `bin/ns_lens/debug/<session>/` directory for protocol
+files and its instrumented native executable. Ordinary build artifacts are
+kept separately. Build errors and program output appear at the panel's bottom;
+complete output is saved in the session's `output.log`. Stop,
+project switching and window termination close that child session. A paused
+child exits if the owner's heartbeat expires.
+
+For a standalone Lens binary, `ns` must be on PATH; `NS_LENS_NS` can name an
+explicit toolchain executable. Launching Lens through `ns` supplies this path.
+The underlying CLI is `ns run --debug-session <directory> [target]`; the
+controller owns `alive` (epoch seconds), optional `root`, `breakpoints`
+(one `file:line` per line), and atomic `command` (`sequence action`) files.
+The runtime atomically publishes `state` with mode, file, line, instructions,
+`#frame`, `#registers` and `#stack` sections, and a changing stop marker. Sequence numbers
+prevent commands being replayed.

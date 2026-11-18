@@ -1,0 +1,210 @@
+// Three independent floating windows. Their order is shared by drawing and
+// hit testing, and one captured title/edge keeps input until mouse release.
+use std
+use view
+use ui
+
+lit DEBUG_PANEL_SOURCE = 0
+lit DEBUG_PANEL_INSTRUCTIONS = 1
+lit DEBUG_PANEL_STATE = 2
+lit DEBUG_PANEL_COUNT = 3
+lit DEBUG_PANEL_TITLE_H = 30.0
+let g_debug_panel_x = [f64](3)
+let g_debug_panel_y = [f64](3)
+let g_debug_panel_w = [f64](3)
+let g_debug_panel_h = [f64](3)
+let g_debug_panel_ready = [bool](3)
+let g_debug_panel_order = [i32](3)
+let g_debug_panel_order_ready = false
+let g_debug_panel_capture: i32 = -1
+let g_debug_panel_edges: i32 = 0
+let g_debug_panel_origin = panel_rect(0.0, 0.0, 0.0, 0.0)
+let g_debug_panel_press_x: f64 = 0.0
+let g_debug_panel_press_y: f64 = 0.0
+
+fn lens_debug_panel_min_w(index: i32) f64 {
+    if index == DEBUG_PANEL_SOURCE { return 300.0 }
+    return 280.0
+}
+fn lens_debug_panel_min_h(index: i32) f64 {
+    if index == DEBUG_PANEL_SOURCE { return 280.0 }
+    if index == DEBUG_PANEL_STATE { return 180.0 }
+    return 140.0
+}
+fn lens_debug_panel_top() f64 { return lens_mode_popup_y() + 8.0 }
+fn lens_debug_panel_bottom() f64 { return main_menu_h() + g_lens_body_h - STATUS_BAR_H - 8.0 }
+
+fn lens_debug_panels_reset() {
+    for index in 0 to DEBUG_PANEL_COUNT { g_debug_panel_ready[index] = false }
+    g_debug_panel_order_ready = false
+    g_debug_register_format = 0
+    g_debug_stack_format = 0
+    g_debug_panel_capture = -1
+    g_debug_panel_edges = PANEL_EDGE_NONE
+}
+fn lens_debug_panel_order_init() {
+    if g_debug_panel_order_ready { return }
+    for index in 0 to DEBUG_PANEL_COUNT { g_debug_panel_order[index] = index }
+    g_debug_panel_order_ready = true
+}
+fn lens_debug_panel_defaults(index: i32) {
+    let width = g_lens_view_w
+    let height = g_lens_body_h
+    if width < 1.0 { width = 1280.0 }
+    if height < 1.0 { height = 900.0 }
+    let top = lens_debug_panel_top()
+    let available = clamp(height - 130.0, 320.0, 2000.0)
+    let source_w = clamp(width * 0.46, 300.0, 760.0)
+    let right_w = clamp(width - source_w - 44.0, 280.0, 2000.0)
+    g_debug_panel_x[index] = 16.0
+    g_debug_panel_y[index] = top
+    g_debug_panel_w[index] = source_w
+    g_debug_panel_h[index] = available
+    if index != DEBUG_PANEL_SOURCE {
+        g_debug_panel_x[index] = source_w + 28.0
+        g_debug_panel_w[index] = right_w
+        g_debug_panel_h[index] = clamp(available * 0.4, 140.0, 600.0)
+        if index == DEBUG_PANEL_STATE {
+            g_debug_panel_y[index] = top + g_debug_panel_h[index] + 12.0
+            g_debug_panel_h[index] = clamp(available * 0.6 - 12.0, 180.0, 1200.0)
+        }
+    }
+    if width < 900.0 {
+        g_debug_panel_x[index] = 16.0 + (index as f64) * 16.0
+        g_debug_panel_y[index] = top + (index as f64) * 36.0
+        g_debug_panel_w[index] = clamp(width - 64.0, lens_debug_panel_min_w(index), 800.0)
+    }
+    g_debug_panel_ready[index] = true
+}
+fn lens_debug_panel_clamp(index: i32) {
+    let min_w = lens_debug_panel_min_w(index)
+    let min_h = lens_debug_panel_min_h(index)
+    g_debug_panel_w[index] = clamp(g_debug_panel_w[index], min_w, clamp(g_lens_view_w - 8.0, min_w, 10000.0))
+    g_debug_panel_h[index] = clamp(g_debug_panel_h[index], min_h, clamp(lens_debug_panel_bottom() - lens_debug_panel_top(), min_h, 10000.0))
+    g_debug_panel_x[index] = clamp(g_debug_panel_x[index], 4.0, clamp(g_lens_view_w - g_debug_panel_w[index] - 4.0, 4.0, 10000.0))
+    g_debug_panel_y[index] = clamp(g_debug_panel_y[index], lens_debug_panel_top(), clamp(lens_debug_panel_bottom() - g_debug_panel_h[index], lens_debug_panel_top(), 10000.0))
+}
+fn lens_debug_panels_init() {
+    lens_debug_panel_order_init()
+    for index in 0 to DEBUG_PANEL_COUNT {
+        if !g_debug_panel_ready[index] { lens_debug_panel_defaults(index) }
+        lens_debug_panel_clamp(index)
+    }
+}
+fn lens_debug_panel_rect(index: i32) panel_rect {
+    return panel_rect(g_debug_panel_x[index], g_debug_panel_y[index], g_debug_panel_w[index], g_debug_panel_h[index])
+}
+fn lens_debug_panel_hit(v: ref view) i32 {
+    for back in 0 to DEBUG_PANEL_COUNT {
+        let index = g_debug_panel_order[DEBUG_PANEL_COUNT - 1 - back]
+        let p = lens_debug_panel_rect(index)
+        if raw_hit(v, p.x, p.y, p.w, p.h) { return index }
+    }
+    return -1
+}
+fn lens_debug_panel_raise(index: i32) {
+    let pos = 0
+    for i in 0 to DEBUG_PANEL_COUNT {
+        if g_debug_panel_order[i] == index { pos = i }
+    }
+    for i in pos to DEBUG_PANEL_COUNT - 1 { g_debug_panel_order[i] = g_debug_panel_order[i + 1] }
+    g_debug_panel_order[DEBUG_PANEL_COUNT - 1] = index
+}
+fn lens_debug_panel_drag(v: ref view) bool {
+    if g_debug_panel_capture < 0 { return false }
+    let index = g_debug_panel_capture
+    if v.mouse_released || !v.mouse_down {
+        g_debug_panel_capture = -1
+        g_debug_panel_edges = PANEL_EDGE_NONE
+        panel_state_save()
+    } else {
+        let dx = g_mouse_x - g_debug_panel_press_x
+        let dy = g_mouse_y - g_debug_panel_press_y
+        let p = g_debug_panel_origin
+        if g_debug_panel_edges == PANEL_EDGE_NONE {
+            g_debug_panel_x[index] = p.x + dx
+            g_debug_panel_y[index] = p.y + dy
+        } else {
+            let resized = panel_resized_rect(p.x, p.y, p.w, p.h, g_debug_panel_edges, dx, dy, lens_debug_panel_min_w(index), lens_debug_panel_min_h(index), 4.0, lens_debug_panel_top(), g_lens_view_w - 4.0, lens_debug_panel_bottom())
+            g_debug_panel_x[index] = resized.x
+            g_debug_panel_y[index] = resized.y
+            g_debug_panel_w[index] = resized.w
+            g_debug_panel_h[index] = resized.h
+        }
+        lens_debug_panel_clamp(index)
+    }
+    v.mouse_pressed = false
+    v.mouse_right_pressed = false
+    v.scroll_y = 0.0
+    g_lens_input_dirty = true
+    return true
+}
+fn lens_debug_panel_grab(v: ref view, index: i32) bool {
+    if !v.mouse_pressed { return false }
+    let p = lens_debug_panel_rect(index)
+    lens_debug_panel_raise(index)
+    let edges = panel_edge_mask(p.x, p.y, p.w, p.h)
+    if edges == PANEL_EDGE_NONE && !raw_hit(v, p.x, p.y, p.w, DEBUG_PANEL_TITLE_H) { return false }
+    g_debug_panel_capture = index
+    g_debug_panel_edges = edges
+    g_debug_panel_origin = p
+    g_debug_panel_press_x = g_mouse_x
+    g_debug_panel_press_y = g_mouse_y
+    v.mouse_pressed = false
+    return true
+}
+fn lens_debug_panel_cursor(v: ref view) i32 {
+    if g_debug_panel_capture >= 0 { return lens_edge_cursor(g_debug_panel_edges) }
+    let index = lens_debug_panel_hit(v)
+    if index < 0 { return VIEW_CURSOR_ARROW }
+    let p = lens_debug_panel_rect(index)
+    return lens_edge_cursor(panel_edge_mask(p.x, p.y, p.w, p.h))
+}
+fn lens_debug_panel_key(index: i32) str {
+    if index == DEBUG_PANEL_SOURCE { return "debug.source" }
+    if index == DEBUG_PANEL_INSTRUCTIONS { return "debug.instructions" }
+    return "debug.state"
+}
+fn lens_debug_layout_text() str {
+    let text = `debug.register_format={g_debug_register_format}\ndebug.stack_format={g_debug_stack_format}\n`
+    for index in 0 to DEBUG_PANEL_COUNT {
+        if g_debug_panel_ready[index] {
+            let key = lens_debug_panel_key(index)
+            text = text + key + ".x=" + ftos(g_debug_panel_x[index]) + "\n"
+            text = text + key + ".y=" + ftos(g_debug_panel_y[index]) + "\n"
+            text = text + key + ".w=" + ftos(g_debug_panel_w[index]) + "\n"
+            text = text + key + ".h=" + ftos(g_debug_panel_h[index]) + "\n"
+        }
+    }
+    return text
+}
+fn lens_debug_layout_apply(key: str, value: f64) bool {
+    if key == "debug.register_format" {
+        g_debug_register_format = clamp_i(value as i32, 0, DEBUG_FORMAT_COUNT - 1)
+        return true
+    }
+    if key == "debug.stack_format" {
+        g_debug_stack_format = clamp_i(value as i32, 0, DEBUG_FORMAT_COUNT - 1)
+        return true
+    }
+    for index in 0 to DEBUG_PANEL_COUNT {
+        let prefix = lens_debug_panel_key(index)
+        let matches = key == prefix + ".x" || key == prefix + ".y" || key == prefix + ".w" || key == prefix + ".h"
+        if matches {
+            if !g_debug_panel_ready[index] { lens_debug_panel_defaults(index) }
+            if key == prefix + ".x" { g_debug_panel_x[index] = value }
+            if key == prefix + ".y" { g_debug_panel_y[index] = value }
+            if key == prefix + ".w" && value >= lens_debug_panel_min_w(index) { g_debug_panel_w[index] = value }
+            if key == prefix + ".h" && value >= lens_debug_panel_min_h(index) { g_debug_panel_h[index] = value }
+            return true
+        }
+    }
+    return false
+}
+fn lens_debug_panel_background(r: ref ui_renderer, index: i32, title: str) {
+    let p = lens_debug_panel_rect(index)
+    ui_fill_round_rect(r, p.x, p.y, p.w, p.h, 6.0, col_outline_bg(), 0.0)
+    ui_stroke_round_rect(r, p.x, p.y, p.w, p.h, 6.0, 1.0, col_muted(), 0.0)
+    draw_text_clipped(r, p.x + 12.0, p.y + 7.0, p.w - 24.0, 20.0, title, small_px(), col_text())
+    draw_panel_grip(r, p.x, p.y, p.w, p.h)
+}

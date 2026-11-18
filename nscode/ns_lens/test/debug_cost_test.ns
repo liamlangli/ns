@@ -1,0 +1,26 @@
+use std
+
+fn main() {
+    assert lens_debug_instruction_cycles("emu (ns_cpu)", "add +3 ADDW r2 r0 r1") == "~20-80 cyc"
+    assert lens_debug_cpu_cycles("main +10 RT r0 ns_rt_print (r1)") == "~1k+ cyc (wait/work)"
+    assert lens_debug_cpu_cycles("main +10 RT r0 ns_rt_strcat (r1,r2)") == "~100+ cyc (size)"
+    assert lens_debug_cpu_cycles("main +10 FFI r0 #1 ()") == "~100-1k cyc + body"
+    assert lens_debug_cpu_cycles("main +10 CALL r0 helper ()") == "~50-300 cyc + body"
+    assert lens_debug_cpu_cycles("main +10 FUTURE r0") == "~? cyc"
+    assert lens_debug_instruction_cycles("eval (source)", "AST interpreter") == "n/a (AST)"
+    assert lens_debug_native_class("0x1000 d2800000") == "alu"
+    assert lens_debug_native_class("0x1000 f9400000") == "memory"
+    assert lens_debug_native_class("0x1000 a9407bfd") == "memory"
+    assert lens_debug_native_class("0x1000 9b027c20") == "multiply"
+    assert lens_debug_native_class("0x1000 9ac10c00") == "divide"
+    assert lens_debug_native_class("0x1000 1e611800") == "fp_divide"
+    assert lens_debug_native_class("0x1000 94000001") == "call"
+    assert lens_debug_native_class("0x1000 d63f0200") == "call"
+    assert lens_debug_native_class("0x1000 d65f03c0") == "branch"
+    assert lens_debug_native_class("0x1000 00000000") == "unknown"
+    assert lens_debug_native_class("0x1000 48 89 d8\talu") == "alu"
+    assert lens_debug_instruction_label("0x1000 48 89 d8\talu") == "0x1000 48 89 d8"
+    assert lens_debug_native_class("0x1000 48 89 d8") == "unknown"
+    assert lens_debug_instruction_cycles("exec", "0x1000 f9400000") == "~4-300+ cyc"
+    print("debug cost model: passed\n")
+}

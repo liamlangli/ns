@@ -260,7 +260,7 @@ fn lens_hint_action(i: i32) str {
 // Keys belong to the search box, the commit dialog, the branch dialogs, the
 // ignore editor, an outline prompt or the terminal while any of them is open.
 fn lens_typing() bool {
-    return g_lens_ignore_open || g_lens_commit_open || g_lens_search_open || g_lens_branch_create_open || g_lens_remote_open || outline_prompt_active() || terminal_focused()
+    return (lens_debug_active() && g_debug_target_focus) || g_lens_ignore_open || g_lens_commit_open || g_lens_search_open || g_lens_branch_create_open || g_lens_remote_open || outline_prompt_active() || terminal_focused()
 }
 
 // Pointer input the map must not also take this frame. Floating panels block
@@ -634,6 +634,7 @@ fn lens_menu_keys(v: ref view) {
         lens_search_set_query(lens_field_edit(v, g_lens_search_query))
         return
     }
+    if lens_debug_active() && g_debug_target_focus { return }
     // The outline's name prompt and the terminal own every key while active.
     if outline_prompt_active() {
         outline_prompt_keys(v)

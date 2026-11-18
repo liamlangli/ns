@@ -1,0 +1,105 @@
+// Deliberately broad latency classes, not measurements or throughput counts.
+// Native estimates assume an ordinary modern out-of-order core. VM estimates
+// include dispatch/helper entry but exclude debug safepoints. '+' means data,
+// cache misses, callee work or waiting can increase the cost without a bound.
+use std
+
+fn lens_debug_prefix(text: str, prefix: str) bool {
+    if text.len < prefix.len { return false }
+    return substr(text, 0, prefix.len) == prefix
+}
+fn lens_debug_token(text: str, wanted: i32) str {
+    let index = 0
+    let row = 0
+    loop index < text.len {
+        loop index < text.len && (text[index] == 32 || text[index] == 9) { index = index + 1 }
+        let start = index
+        loop index < text.len && text[index] != 32 && text[index] != 9 { index = index + 1 }
+        if row == wanted { return substr(text, start, index - start) }
+        row = row + 1
+    }
+    return ""
+}
+fn lens_debug_instruction_label(text: str) str {
+    for i in 0 to text.len {
+        if text[i] == 9 { return substr(text, 0, i) }
+    }
+    return text
+}
+fn lens_debug_hex_word(text: str) i64 {
+    if text.len != 8 { return -1 }
+    let value: i64 = 0
+    for c in text {
+        let digit = -1
+        if c >= 48 && c <= 57 { digit = c - 48 }
+        if c >= 97 && c <= 102 { digit = c - 97 + 10 }
+        if c >= 65 && c <= 70 { digit = c - 65 + 10 }
+        if digit < 0 { return -1 }
+        value = value * 16 + (digit as i64)
+    }
+    return value
+}
+fn lens_debug_native_class(text: str) str {
+    for i in 0 to text.len {
+        if text[i] == 9 { return substr(text, i + 1, text.len - i - 1) }
+    }
+    let word = lens_debug_hex_word(lens_debug_token(text, 1))
+    if word < 0 { return "unknown" }
+    if (word & 0xfc000000) == 0x94000000 || (word & 0xfffffc1f) == 0xd63f0000 { return "call" }
+    if (word & 0x3a000000) == 0x28000000 || (word & 0x3b000000) == 0x38000000 || (word & 0x3b000000) == 0x39000000 || (word & 0x3b000000) == 0x18000000 { return "memory" }
+    if (word & 0x7c000000) == 0x14000000 || (word & 0xff000010) == 0x54000000 || (word & 0x7e000000) == 0x34000000 || (word & 0x7e000000) == 0x36000000 || (word & 0xfffffc1f) == 0xd61f0000 || (word & 0xfffffc1f) == 0xd65f0000 { return "branch" }
+    if (word & 0x7fe0fc00) == 0x1ac00800 || (word & 0x7fe0fc00) == 0x1ac00c00 { return "divide" }
+    if (word & 0x7f000000) == 0x1b000000 { return "multiply" }
+    if (word & 0xffa0fc00) == 0x1e201800 { return "fp_divide" }
+    let move = word & 0x7fff0000
+    if move == 0x1e660000 || move == 0x1e670000 || move == 0x1e260000 || move == 0x1e270000 { return "alu" }
+    if (word & 0x5f000000) == 0x1e000000 { return "fp" }
+    if (word & 0x1c000000) == 0x10000000 || (word & 0x0e000000) == 0x0a000000 || word == 0xd503201f { return "alu" }
+    return "unknown"
+}
+fn lens_debug_native_cycles(kind: str) str {
+    if kind == "alu" { return "~1-3 cyc" }
+    if kind == "multiply" { return "~3-8 cyc" }
+    if kind == "divide" { return "~5-40 cyc" }
+    if kind == "fp" { return "~2-12 cyc" }
+    if kind == "fp_divide" { return "~8-40 cyc" }
+    if kind == "memory" { return "~4-300+ cyc" }
+    if kind == "branch" { return "~1-20 cyc" }
+    if kind == "call" { return "~2-20 cyc + body" }
+    if kind == "call_memory" { return "~5-300+ cyc + body" }
+    if kind == "branch_memory" { return "~4-300+ cyc" }
+    return "~? cyc"
+}
+fn lens_debug_helper_cycles(helper: str) str {
+    if helper == "ns_rt_print" || helper == "ns_rt_open" || helper == "ns_rt_read" || helper == "ns_rt_write" || lens_debug_prefix(helper, "ns_rt_task_") { return "~1k+ cyc (wait/work)" }
+    if helper == "ns_rt_alloc" || helper == "ns_rt_array_new" || helper == "ns_rt_map_new" || helper == "ns_rt_clone" { return "~100-10k+ cyc" }
+    if helper == "ns_rt_strcat" || helper == "ns_rt_substr" || helper == "ns_rt_strcmp" || helper == "ns_rt_copy" || helper == "ns_rt_utf8_len" { return "~100+ cyc (size)" }
+    if helper == "ns_rt_ftos" || helper == "ns_rt_fmtf" { return "~100-10k cyc" }
+    if helper == "ns_rt_itos" || helper == "ns_rt_utos" { return "~100-1k cyc" }
+    if lens_debug_prefix(helper, "ns_rt_map_") { return "~100+ cyc (probe)" }
+    if lens_debug_prefix(helper, "ns_rt_scope_") { return "~20-200 cyc" }
+    return "~50+ cyc (helper)"
+}
+fn lens_debug_cpu_cycles(text: str) str {
+    let op = lens_debug_token(text, 2)
+    if op == "RT" { return lens_debug_helper_cycles(lens_debug_token(text, 4)) }
+    if op == "CALL" || op == "CALLI" { return "~50-300 cyc + body" }
+    if op == "FFI" { return "~100-1k cyc + body" }
+    if op == "STCOPY" || op == "ASTCOPY" { return "~100+ cyc (size)" }
+    if lens_debug_prefix(op, "LD") || lens_debug_prefix(op, "ST") || lens_debug_prefix(op, "AIDX") || lens_debug_prefix(op, "AST") || op == "ASLOT" || op == "GGET" || op == "GSET" { return "~30-300+ cyc" }
+    if op == "DIVS" || op == "DIVU" || op == "MODS" || op == "MODU" { return "~40-200 cyc" }
+    if op == "FDIV32" || op == "FDIV64" { return "~60-300 cyc" }
+    if op == "MUL" || op == "MULW" { return "~20-120 cyc" }
+    if lens_debug_prefix(op, "FADD") || lens_debug_prefix(op, "FSUB") || lens_debug_prefix(op, "FMUL") || lens_debug_prefix(op, "FNEG") || lens_debug_prefix(op, "FEQ") || lens_debug_prefix(op, "FNE") || lens_debug_prefix(op, "FLT") || lens_debug_prefix(op, "FLE") || lens_debug_prefix(op, "F32TO") || lens_debug_prefix(op, "F64TO") || lens_debug_prefix(op, "I2F") { return "~20-160 cyc" }
+    if op == "JMP" || op == "RET" || lens_debug_prefix(op, "B") { return "~20-100 cyc" }
+    if op == "NOP" || op == "MOV" || op == "ZERO" || op == "ADD" || op == "ADDW" || op == "ADDI" || op == "SUB" || op == "SUBW" || op == "AND" || op == "OR" || op == "XOR" || op == "NEG" || op == "NEGW" || op == "NOT" || lens_debug_prefix(op, "SH") || lens_debug_prefix(op, "SEXT") || lens_debug_prefix(op, "ZEXT") || op == "EQ" || op == "NE" || op == "LTS" || op == "LES" || op == "LTU" || op == "LEU" || op == "ASSERT" { return "~20-80 cyc" }
+    if op == "FNADDR" { return "~50-300 cyc" }
+    return "~? cyc"
+}
+fn lens_debug_instruction_cycles(mode: str, text: str) str {
+    if text == "" { return "" }
+    if lens_debug_prefix(mode, "eval") { return "n/a (AST)" }
+    if lens_debug_prefix(mode, "emu") { return lens_debug_cpu_cycles(text) }
+    if lens_debug_prefix(mode, "exec") { return lens_debug_native_cycles(lens_debug_native_class(text)) }
+    return "~? cyc"
+}

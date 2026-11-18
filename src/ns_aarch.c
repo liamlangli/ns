@@ -1551,6 +1551,45 @@ static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn, ns_b
             ns_ssa_inst *inst = &fn->insts[bb->insts[ii]];
             c.inst_idx = ii;
             c.pinned = 0;
+            if (getenv("NS_DEBUG_SESSION") && !(inst->op == NS_SSA_OP_BR && c.fused >= 0 && c.fused == inst->a) &&
+                inst->op != NS_SSA_OP_PARAM &&
+                (inst->op != NS_SSA_OP_ARG || c.arg_seq == 0) &&
+                (inst->op != NS_SSA_OP_CALL || c.arg_seq == 0) &&
+                inst->op != NS_SSA_OP_CONST && inst->op != NS_SSA_OP_PHI &&
+                inst->op != NS_SSA_OP_UNDEF &&
+                !(ns_str_equals_STR(fn->name, "__module_init") && inst->op == NS_SSA_OP_RET)) {
+                if (inst->debug_location >= 0) {
+                    i32 id = inst->debug_location;
+                    ns_aarch_emit_u32(&c, ns_aarch_sub_sp_imm(800));
+                    for (u32 reg = 0; reg < 30; reg += 2)
+                        ns_aarch_emit_u32(&c, 0xA9000000u | (reg << 15) | ((reg + 1) << 10) | (31u << 5) | reg);
+                    ns_aarch_emit_u32(&c, 0xF9000000u | (30u << 10) | (31u << 5) | 30u);
+                    ns_aarch_emit_u32(&c, 0x910003E9u | (800u << 10)); // x9 = original sp
+                    ns_aarch_emit_u32(&c, 0xF9000000u | (31u << 10) | (31u << 5) | 9u);
+                    for (u32 reg = 0; reg < 32; reg += 2)
+                        ns_aarch_emit_u32(&c, 0xAD000000u | ((16u + reg) << 15) | ((reg + 1) << 10) | (31u << 5) | reg);
+                    ns_aarch_emit_u32(&c, 0xD53B4209u); // mrs x9, nzcv
+                    ns_aarch_emit_u32(&c, 0xF9000000u | (96u << 10) | (31u << 5) | 9u);
+                    u32 resume_fix = (u32)ns_array_length(c.text);
+                    ns_aarch_emit_u32(&c, ns_aarch_movz(9, 0, 0));
+                    ns_aarch_emit_u32(&c, 0xF9000000u | (97u << 10) | (31u << 5) | 9u);
+                    ns_aarch_emit_const_u64(&c, NS_AARCH_X0, (u64)id);
+                    ns_aarch_emit_u32(&c, 0x910003E1u); // x1 = snapshot sp
+                    ns_aarch_emit_u32(&c, 0x910003E2u | (800u << 10)); // x2 = program sp
+                    ns_aarch_emit_const_u64(&c, 3, (u64)frame + 16);
+                    ns_aarch_emit_rt_call(&c, "ns_rt_debug_location");
+                    u32 restore = (u32)ns_array_length(c.text);
+                    ns_aarch_emit_u32(&c, 0xF9400000u | (96u << 10) | (31u << 5) | 9u);
+                    ns_aarch_emit_u32(&c, 0xD51B4209u); // msr nzcv, x9
+                    for (u32 reg = 0; reg < 32; reg += 2)
+                        ns_aarch_emit_u32(&c, 0xAD400000u | ((16u + reg) << 15) | ((reg + 1) << 10) | (31u << 5) | reg);
+                    for (u32 reg = 0; reg < 30; reg += 2)
+                        ns_aarch_emit_u32(&c, 0xA9400000u | (reg << 15) | ((reg + 1) << 10) | (31u << 5) | reg);
+                    ns_aarch_emit_u32(&c, 0xF9400000u | (30u << 10) | (31u << 5) | 30u);
+                    ns_aarch_emit_u32(&c, 0x910003FFu | (800u << 10));
+                    ns_aarch_patch_u32(c.text, resume_fix, ns_aarch_movz(9, (u32)ns_array_length(c.text) - restore, 0));
+                }
+            }
             ns_aarch_emit_inst(&c, inst);
             ends = inst->op == NS_SSA_OP_BR || inst->op == NS_SSA_OP_JMP ||
                    inst->op == NS_SSA_OP_RET || inst->op == NS_SSA_OP_TRAP;
@@ -1625,6 +1664,12 @@ ns_return_ptr ns_aarch_from_ssa(ns_ssa_module *ssa) {
         if (ns_str_equals_STR(ssa->fns[i].name, "main")) has_main = true;
         for (i32 ii = 0, il = (i32)ns_array_length(ssa->fns[i].insts); ii < il; ++ii) {
             ns_ssa_inst *inst = &ssa->fns[i].insts[ii];
+            inst->debug_location = -1;
+            if (getenv("NS_DEBUG_SESSION")) {
+                ns_str loc = ns_ssa_assert_loc(ssa, inst);
+                if (loc.len > 0) inst->debug_location = ns_aarch_intern(m, loc);
+                ns_str_free(loc);
+            }
             if (inst->op == NS_SSA_OP_ASSERT) {
                 /* A failing assert reports its file:line from the string table. */
                 ns_str loc = ns_ssa_assert_loc(ssa, inst);

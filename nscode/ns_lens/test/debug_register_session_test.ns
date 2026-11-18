@@ -1,0 +1,49 @@
+use std
+use os
+use task
+
+fn register_wait_pause() bool {
+    let deadline = os_time() + 15.0
+    loop g_debug_running && os_time() < deadline {
+        lens_debug_poll()
+        if g_debug_paused { return true }
+        sleep(20)
+    }
+    return false
+}
+fn main() {
+    let root = "/tmp/ns_lens_register_step_" + itos((os_time_us() % 2000000000) as i32)
+    assert os_make_dirs(root + "/src") != 0
+    assert os_write_file_atomic(root + "/ns.mod", "schema = \"ns.mod/v2\"\nname = \"register_step\"\ntype = \"cli\"\ntarget = \"emu\"\nsource = \"src\"\nentry = \"main.ns\"\n") != 0
+    assert os_write_file_atomic(root + "/src/main.ns", "use os\nfn main() {\n    let value = os_cpu_count()\n    value = value + 1\n    assert value > 1\n}\n") != 0
+    g_workspace_root = root
+    g_lens_view_w = 1000.0
+    g_lens_body_h = 800.0
+    lens_debug_panels_init()
+    lens_debug_start()
+    if g_debug_pid <= 0 {
+        print("register step: skipped (no local debug backend)\n")
+        return
+    }
+    assert register_wait_pause()
+    assert !lens_debug_register_changed("pc = 3")
+    let steps = 0
+    loop g_debug_line != 5 && steps < 10 {
+        lens_debug_command("step")
+        assert register_wait_pause()
+        steps = steps + 1
+    }
+    assert g_debug_line == 5
+    let changed_data = false
+    for name in g_debug_register_values {
+        if name != "pc" && has(g_debug_changed_registers, name) { changed_data = true }
+    }
+    assert changed_data
+    assert has(g_debug_changed_registers, "pc")
+    lens_debug_shutdown()
+    lens_debug_start()
+    assert register_wait_pause()
+    for name in g_debug_register_values { assert !has(g_debug_changed_registers, name) }
+    lens_debug_shutdown()
+    print("register step: passed\n")
+}

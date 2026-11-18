@@ -1665,6 +1665,52 @@ static void ns_amd64_fn_info_free(ns_amd64_fn_info *info) {
     ns_array_free(info->const_bits);
 }
 
+static void ns_amd64_debug_rsp(ns_amd64_ctx *c, i32 reg, i32 disp, u8 opcode) {
+    ns_amd64_emit_u8(c, ns_amd64_rex(reg, NS_AMD64_RSP));
+    ns_amd64_emit_u8(c, opcode);
+    ns_amd64_emit_u8(c, ns_amd64_modrm(2, reg, NS_AMD64_RSP));
+    ns_amd64_emit_u8(c, 0x24);
+    ns_amd64_emit_u32(c, (u32)disp);
+}
+
+static void ns_amd64_debug_xmm(ns_amd64_ctx *c, i32 reg, ns_bool load) {
+    ns_amd64_emit_u8(c, 0xF3); // movdqu xmm, [rsp+disp32] or inverse
+    if (reg >= 8) ns_amd64_emit_u8(c, 0x44);
+    ns_amd64_emit_u8(c, 0x0F);
+    ns_amd64_emit_u8(c, load ? 0x6F : 0x7F);
+    ns_amd64_emit_u8(c, ns_amd64_modrm(2, reg, NS_AMD64_RSP));
+    ns_amd64_emit_u8(c, 0x24);
+    ns_amd64_emit_u32(c, (u32)(160 + reg * 16));
+}
+
+static void ns_amd64_debug_point(ns_amd64_ctx *c, i32 id, i32 frame) {
+    ns_amd64_debug_rsp(c, NS_AMD64_RSP, -448, 0x8D);
+    for (i32 reg = 0; reg < 16; ++reg) ns_amd64_emit_store_rsp(c, 32 + reg * 8, reg);
+    ns_amd64_debug_rsp(c, NS_AMD64_RAX, 448, 0x8D);
+    ns_amd64_emit_store_rsp(c, 64, NS_AMD64_RAX); // original rsp
+    for (i32 reg = 0; reg < 16; ++reg) ns_amd64_debug_xmm(c, reg, false);
+    ns_amd64_emit_u8(c, 0x9C); // pushfq
+    ns_amd64_emit_u8(c, 0x58); // pop rax
+    ns_amd64_emit_store_rsp(c, 416, NS_AMD64_RAX);
+    ns_amd64_emit_mov_ri32(c, NS_AMD64_RAX, 0x1234);
+    u32 resume_fix = (u32)ns_array_length(c->text) - 4;
+    ns_amd64_emit_store_rsp(c, 424, NS_AMD64_RAX);
+    ns_amd64_emit_const_u64(c, c->int_regs[0], (u64)id);
+    ns_amd64_debug_rsp(c, c->int_regs[1], 32, 0x8D);
+    ns_amd64_debug_rsp(c, c->int_regs[2], 448, 0x8D);
+    ns_amd64_emit_const_u64(c, c->int_regs[3], (u64)frame + 16);
+    ns_amd64_emit_rt_call(c, "ns_rt_debug_location");
+    u32 restore = (u32)ns_array_length(c->text);
+    ns_amd64_emit_u8(c, 0xFF); ns_amd64_emit_u8(c, 0xB4); ns_amd64_emit_u8(c, 0x24);
+    ns_amd64_emit_u32(c, 416); // push qword [rsp+416]
+    ns_amd64_emit_u8(c, 0x9D); // popfq
+    for (i32 reg = 0; reg < 16; ++reg) ns_amd64_debug_xmm(c, reg, true);
+    for (i32 reg = 0; reg < 16; ++reg)
+        if (reg != NS_AMD64_RSP) ns_amd64_debug_rsp(c, reg, 32 + reg * 8, 0x8B);
+    ns_amd64_debug_rsp(c, NS_AMD64_RSP, 448, 0x8D);
+    ns_amd64_patch_u32(c->text, resume_fix, (u32)ns_array_length(c->text) - restore);
+}
+
 /* `saved` names the pool registers the prologue saves; *used gets the ones the
  * body writes, which the caller passes back as `saved` to emit it again. */
 static ns_amd64_fn_bin ns_amd64_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn,
@@ -1716,6 +1762,18 @@ static ns_amd64_fn_bin ns_amd64_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn,
             ns_ssa_inst *inst = &fn->insts[bb->insts[ii]];
             c.inst_idx = ii;
             c.pinned = 0;
+            if (getenv("NS_DEBUG_SESSION") && !(inst->op == NS_SSA_OP_BR && c.fused >= 0 && c.fused == inst->a) &&
+                inst->op != NS_SSA_OP_PARAM &&
+                (inst->op != NS_SSA_OP_ARG || c.arg_seq == 0) &&
+                (inst->op != NS_SSA_OP_CALL || c.arg_seq == 0) &&
+                inst->op != NS_SSA_OP_CONST && inst->op != NS_SSA_OP_PHI &&
+                inst->op != NS_SSA_OP_UNDEF &&
+                !(ns_str_equals_STR(fn->name, "__module_init") && inst->op == NS_SSA_OP_RET)) {
+                if (inst->debug_location >= 0) {
+                    i32 id = inst->debug_location;
+                    ns_amd64_debug_point(&c, id, frame);
+                }
+            }
             ns_amd64_emit_inst(&c, inst);
             ends = inst->op == NS_SSA_OP_BR || inst->op == NS_SSA_OP_JMP ||
                    inst->op == NS_SSA_OP_RET || inst->op == NS_SSA_OP_TRAP;
@@ -1794,6 +1852,12 @@ ns_return_ptr ns_amd64_from_ssa(ns_ssa_module *ssa) {
         if (ns_str_equals_STR(ssa->fns[i].name, "main")) has_main = true;
         for (i32 ii = 0, il = (i32)ns_array_length(ssa->fns[i].insts); ii < il; ++ii) {
             ns_ssa_inst *inst = &ssa->fns[i].insts[ii];
+            inst->debug_location = -1;
+            if (getenv("NS_DEBUG_SESSION")) {
+                ns_str loc = ns_ssa_assert_loc(ssa, inst);
+                if (loc.len > 0) inst->debug_location = ns_amd64_intern(m, loc);
+                ns_str_free(loc);
+            }
             if (inst->op == NS_SSA_OP_ASSERT) {
                 /* A failing assert reports its file:line from the string table. */
                 ns_str loc = ns_ssa_assert_loc(ssa, inst);

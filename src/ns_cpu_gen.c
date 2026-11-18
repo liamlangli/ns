@@ -600,6 +600,13 @@ static u32 ns_cpu_gen_loc(ns_cpu_gen *g, ns_ssa_inst *inst) {
 static void ns_cpu_gen_inst(ns_cpu_gen *g, i32 pos, i32 index) {
     ns_ssa_inst *inst = &g->fn->insts[index];
     if (g->fused[index]) return;
+    if (getenv("NS_DEBUG_SESSION") && inst->op != NS_SSA_OP_PHI &&
+        inst->op != NS_SSA_OP_CONST && inst->op != NS_SSA_OP_PARAM &&
+        inst->op != NS_SSA_OP_ARG && inst->op != NS_SSA_OP_UNDEF &&
+        !(ns_str_equals_STR(g->fn->name, "__module_init") && inst->op == NS_SSA_OP_RET)) {
+        ns_cpu_gen_op(g, NS_CPU_DEBUG);
+        ns_cpu_gen_u32(g, ns_cpu_gen_loc(g, inst));
+    }
     switch (inst->op) {
     case NS_SSA_OP_PHI:
     case NS_SSA_OP_UNDEF:
