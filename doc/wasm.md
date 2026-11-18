@@ -43,6 +43,13 @@ manifest name, and `{{favicon}}` is the copied favicon filename. The standard
 tree is still synchronized into the bundle. Omitting `shell` retains the
 generated full-page canvas shell.
 
+A custom shell can call `boot(wasmURL, { prepare, wasmCache })` from
+`ns-wasm.js`. The optional `prepare` callback can load host resources while
+the module and its browser backends initialize. A promise returned by
+`prepare` must resolve before `__ns_init` and `main` run. `wasmCache` is the
+Fetch request cache mode for the module and defaults to `"no-store"`. A shell
+with versioned URLs can pass `"default"` to use ordinary HTTP caching.
+
 The Wasm module carries the standard `sourceMappingURL` custom section pointing
 to its sibling Source Map v3 file. Generated columns are absolute byte offsets
 in the Wasm binary, as required by the WebAssembly debugging convention. The

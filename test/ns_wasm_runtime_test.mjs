@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('../lib/ns-wasm.js', import.meta.url), 'utf8');
-const { NSBrowserRuntime } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { boot, NSBrowserRuntime } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 globalThis.GPUBufferUsage = { COPY_SRC: 1, COPY_DST: 2, STORAGE: 4, VERTEX: 8, INDEX: 16, INDIRECT: 32, UNIFORM: 64 };
 globalThis.GPUTextureUsage = { COPY_DST: 1, COPY_SRC: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 };
@@ -397,5 +397,43 @@ Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gp
 const fallback = new NSBrowserRuntime(canvas);
 assert.equal(await fallback.initializeGPU(), false);
 assert.equal(fallback.gpu('gpu_request_device', [0]), 0);
+
+const bootEvents = [];
+let finishPreparation, signalInstantiation;
+const preparation = new Promise(resolve => { finishPreparation = resolve; });
+const instantiated = new Promise(resolve => { signalInstantiation = resolve; });
+const originalFetch = globalThis.fetch;
+const originalInstantiate = WebAssembly.instantiate;
+document.getElementById = id => id === 'ns-canvas' ? canvas : null;
+globalThis.location = { hostname: 'example.test' };
+try {
+  globalThis.fetch = async (url, options) => {
+    bootEvents.push(`fetch:${url}:${options.cache}`);
+    return new Response(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0), {
+      headers: { 'Content-Type': 'application/wasm' },
+    });
+  };
+  WebAssembly.instantiate = async () => {
+    bootEvents.push('instantiate');
+    signalInstantiation();
+    return { exports: {
+      memory: new WebAssembly.Memory({ initial: 1 }),
+      __ns_init() { bootEvents.push('init'); },
+      main() { bootEvents.push('main'); },
+    } };
+  };
+  const startup = boot('app.wasm', { wasmCache: 'default', prepare() {
+    bootEvents.push('prepare');
+    return preparation;
+  } });
+  await instantiated;
+  assert.deepEqual(bootEvents, ['fetch:app.wasm:default', 'prepare', 'instantiate']);
+  finishPreparation();
+  await startup;
+  assert.deepEqual(bootEvents.slice(-2), ['init', 'main']);
+} finally {
+  globalThis.fetch = originalFetch;
+  WebAssembly.instantiate = originalInstantiate;
+}
 
 console.log('PASS: mocked browser middleware covers view/WebGPU, Canvas UI, browser files, shader metadata, and adapter fallback.');
