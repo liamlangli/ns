@@ -550,6 +550,13 @@ check the implementation/declaration for the target platform.
 
 ## Guidance for changes
 
+- For native and web games built with Nano Script, use the built-in `ui`
+  module by default for all game UI, including menus, HUDs, dialogs, and input
+  controls. Avoid platform-native toolkits and HTML/CSS/DOM interfaces for
+  game UI. A web shell may host the game canvas and start the runtime. If the
+  user explicitly confirms that the game should use platform-native UI, remove
+  this rule from that game's `AGENTS.md`.
+
 - Use reverse-Z throughout rendering: near depth 1, far/clear depth 0. Clear
   depth passes to `GPU_DEPTH_CLEAR` and test with `GPU_COMPARE_NEARER` /
   `GPU_COMPARE_NEARER_EQUAL` (`gpu`). Build clip positions and projections
