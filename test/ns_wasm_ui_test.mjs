@@ -92,6 +92,7 @@ fn draw_frame() {
     ui_fill_round_rect_per_corner(r, 8.0, 8.0, 40.0, 20.0, 4.0, 4.0, 0.0, 0.0, 0xff334455, 0.0)
     ui_fill_triangle(r, 0.0, 0.0, 10.0, 0.0, 0.0, 10.0, 0xff00ff00, 0.0)
     ui_fill_arc(r, 40.0, 40.0, 12.0, 3.0, 0.0, 1.5, 0xffff0000, 0.0)
+    ui_fill_ring_sector(r, 40.0, 40.0, 10.0, 14.0, 0.1, 1.5, 0xffff0000)
     ui_stroke_circle(r, 60.0, 60.0, 8.0, 2.0, 0xff0000ff, 0.0)
     ui_draw_text(r, 8.0, 9.0, "native UI", 14.0, 0xffffffff, UI_FONT_MONO)
     ui_draw_text_scaled(r, 8.0, 20.0, "scaled UI", 14.0, 0xffffffff, UI_FONT_MONO, 0.8, 0.4)
@@ -211,13 +212,15 @@ const source = fs.readFileSync(new URL('../lib/ns-wasm.js', import.meta.url), 'u
 const { NSBrowserRuntime } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 const painted = [];
+const arcs = [];
+const images = [];
 const context = {
   save() {}, restore() {}, setTransform() {}, translate() {}, beginPath() {}, clip() {},
-  rect() {}, roundRect() {}, arc() {}, moveTo() {}, lineTo() {}, closePath() {},
+  rect() {}, roundRect() {}, arc(...args) { arcs.push(args); }, moveTo() {}, lineTo() {}, closePath() {},
   fill() { painted.push('fill'); }, stroke() { painted.push('stroke'); },
   fillRect() { painted.push('fillRect'); }, strokeRect() { painted.push('strokeRect'); },
   clearRect() { painted.push('clearRect'); },
-  drawImage() {}, rotate() {},
+  drawImage(...args) { images.push({ args, smoothing: this.imageSmoothingEnabled }); }, rotate() {},
   transform(a, b, c, d, e, f) { painted.push(`transform:${[a, b, c, d, e, f].map(x => Math.round(x * 100) / 100).join(',')}`); },
   fillText(text) { painted.push(`text:${text}`); },
   // A fixed 8 px cell keeps the expected metrics arithmetic exact.
@@ -277,6 +280,20 @@ assert(painted.includes('transform:0.8,0,0,0.4,0,0'), 'text preserves independen
 assert(painted.filter(entry => entry.startsWith('text:天') || entry.startsWith('text:行')).length >= 2,
   'vertical text paints one glyph per cell');
 assert(painted.includes('stroke'), 'strokes are painted');
+assert(arcs.some(args => JSON.stringify(args) === '[40,40,14,0.1,1.5]'));
+assert(arcs.some(args => JSON.stringify(args) === '[40,40,10,1.5,0.1,true]'));
+
+const glyphAtlas = { width: 1024, height: 1024 };
+runtime.bitmapFont.atlases[0] = glyphAtlas;
+runtime.bitmapFont.glyphs.set(65, { atlas: 0, uv: [40, 50, 5, 7], advance: 6, x: 0, y: 0 });
+runtime.bitmapFont.loaded = true;
+runtime.paintUICommand(context, { kind: 'text', fontType: 3, text: 'AA',
+  x: 0.25, y: 0.5, px: 13, color: 0xffffffff });
+assert.deepEqual(images[0].args, [glyphAtlas, 40, 50, 5, 7, 0, 0, 5, 7], 'crop the glyph at 1:1');
+assert.equal(images.length, 3, 'reuse the isolated sprite for the second glyph');
+assert(images.slice(1).every(({ args, smoothing }) => args.length === 5 &&
+  args[0].width === 5 && args[0].height === 7 && smoothing === false));
+runtime.bitmapFont.loaded = false;
 
 // A 3D panel maps the canvas affinely onto its projected corners: with an
 // identity camera the panel spans the middle half of the 480 x 270 screen.

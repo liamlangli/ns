@@ -608,7 +608,13 @@ static const char *ns_amd64_map_std(ns_str module, ns_str name) {
     if (ns_str_equals(name, ns_str_cstr("sin"))) return "ns_rt_sin";
     if (ns_str_equals(name, ns_str_cstr("cos"))) return "ns_rt_cos";
     if (ns_str_equals(name, ns_str_cstr("tan"))) return "ns_rt_tan";
+    if (ns_str_equals(name, ns_str_cstr("asin"))) return "ns_rt_asin";
+    if (ns_str_equals(name, ns_str_cstr("acos"))) return "ns_rt_acos";
     if (ns_str_equals(name, ns_str_cstr("atan2"))) return "ns_rt_atan2";
+    if (ns_str_equals(name, ns_str_cstr("floor"))) return "ns_rt_math_floor";
+    if (ns_str_equals(name, ns_str_cstr("ceil"))) return "ns_rt_ceil";
+    if (ns_str_equals(name, ns_str_cstr("exp"))) return "ns_rt_exp";
+    if (ns_str_equals(name, ns_str_cstr("pow"))) return "ns_rt_pow";
     if (ns_str_equals(name, ns_str_cstr("ftos"))) return "ns_rt_ftos";
     if (ns_str_equals(name, ns_str_cstr("stof"))) return "ns_rt_stof";
     if (ns_str_equals(name, ns_str_cstr("substr"))) return "ns_rt_substr";

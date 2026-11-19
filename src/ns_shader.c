@@ -2089,6 +2089,11 @@ static ns_return_void ns_shader_emit_struct(ns_shader_emit *e, i32 st_index) {
                 ns_shader_cstr(&e->out, "@builtin(position) ");
             } else if (is_io) {
                 ns_shader_cstr(&e->out, "@location("); ns_shader_i32(&e->out, texcoord++); ns_shader_cstr(&e->out, ") ");
+                ns_type ft = ns_enum_underlying_type(e->vm, field->t);
+                if (ns_type_is(ft, NS_TYPE_I8) || ns_type_is(ft, NS_TYPE_I16) || ns_type_is(ft, NS_TYPE_I32) ||
+                    ns_type_is(ft, NS_TYPE_U8) || ns_type_is(ft, NS_TYPE_U16) || ns_type_is(ft, NS_TYPE_U32)) {
+                    ns_shader_cstr(&e->out, "@interpolate(flat) ");
+                }
             }
             ns_shader_str(&e->out, field->name);
             ns_shader_cstr(&e->out, ": ");
@@ -2331,6 +2336,7 @@ static ns_return_void ns_shader_emit_fn_body(ns_shader_emit *e, i32 fn_index, ns
     }
     ns_shader_cstr(&e->out, ")");
     if (e->target == NS_SHADER_HLSL && stage == NS_SHADER_STAGE_FRAGMENT &&
+        !ns_type_is(s->fn.ret, NS_TYPE_VOID) &&
         !(ns_type_is(s->fn.ret, NS_TYPE_STRUCT) && ns_shader_is_fragment_output(e->vm, (i32)ns_type_index(s->fn.ret)))) {
         ns_shader_cstr(&e->out, " : SV_Target");
     }
@@ -2414,7 +2420,8 @@ static ns_return_void ns_shader_emit_glsl_wrapper(ns_shader_emit *e, ns_shader_e
     } else {
         // Fragment varyings in; the stage-io position field (if any) is fed
         // from gl_FragCoord. A color0..color3 output struct maps to MRT slots.
-        ns_bool mrt = ns_type_is(s->fn.ret, NS_TYPE_STRUCT) && ns_shader_is_fragment_output(e->vm, (i32)ns_type_index(s->fn.ret));
+        ns_bool is_void_ret = ns_type_is(s->fn.ret, NS_TYPE_VOID);
+        ns_bool mrt = !is_void_ret && ns_type_is(s->fn.ret, NS_TYPE_STRUCT) && ns_shader_is_fragment_output(e->vm, (i32)ns_type_index(s->fn.ret));
         ns_symbol *out_st = mrt ? &e->vm->symbols[ns_type_index(s->fn.ret)] : ns_null;
         i32 in_loc = 0;
         for (i32 f = 0, l = (i32)ns_array_length(in_st->st.fields); f < l; ++f) {
@@ -2437,7 +2444,7 @@ static ns_return_void ns_shader_emit_glsl_wrapper(ns_shader_emit *e, ns_shader_e
                 ns_shader_i32(&e->out, target);
                 ns_shader_cstr(&e->out, ";\n");
             }
-        } else {
+        } else if (!is_void_ret) {
             ns_shader_cstr(&e->out, "layout(location = 0) out vec4 ns_frag_color;\n");
         }
         ns_shader_cstr(&e->out, "\nvoid main() {\n    ");
@@ -2455,7 +2462,10 @@ static ns_return_void ns_shader_emit_glsl_wrapper(ns_shader_emit *e, ns_shader_e
             }
         }
         ns_shader_cstr(&e->out, ");\n    ");
-        if (mrt) {
+        if (is_void_ret) {
+            ns_shader_str(&e->out, s->name);
+            ns_shader_cstr(&e->out, "(ns_in);\n}\n");
+        } else if (mrt) {
             ns_shader_str(&e->out, out_st->name);
             ns_shader_cstr(&e->out, " ns_ret = ");
             ns_shader_str(&e->out, s->name);
@@ -2563,12 +2573,13 @@ static ns_return_void ns_shader_classify_entry(ns_shader_emit *e, ns_shader_entr
         if (!ns_shader_index_in(e->vs_inputs, in_index)) ns_array_push(e->vs_inputs, in_index);
         if (!ns_shader_index_in(e->stage_ios, io_index)) ns_array_push(e->stage_ios, io_index);
     } else {
-        ns_bool ret_ok = ns_type_is(s->fn.ret, NS_TYPE_STRUCT) && ns_shader_is_simd(&e->vm->symbols[ns_type_index(s->fn.ret)]) &&
-                         ns_shader_simd_dim(e->vm->symbols[ns_type_index(s->fn.ret)].name) == 4;
+        ns_bool ret_ok = ns_type_is(s->fn.ret, NS_TYPE_VOID) ||
+                         (ns_type_is(s->fn.ret, NS_TYPE_STRUCT) && ns_shader_is_simd(&e->vm->symbols[ns_type_index(s->fn.ret)]) &&
+                          ns_shader_simd_dim(e->vm->symbols[ns_type_index(s->fn.ret)].name) == 4);
         if (!ret_ok && ns_type_is(s->fn.ret, NS_TYPE_STRUCT)) {
             ret_ok = ns_shader_is_fragment_output(e->vm, (i32)ns_type_index(s->fn.ret));
         }
-        if (!ret_ok) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: a fragment entry must return float4 or a color0..color3 float4 output struct with optional trailing `depth: f32`.");
+        if (!ret_ok) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: a fragment entry must return void, float4, or a color0..color3 float4 output struct with optional trailing `depth: f32`.");
         if (!ns_shader_index_in(e->stage_ios, in_index)) ns_array_push(e->stage_ios, in_index);
     }
     return ns_return_ok_void;
@@ -2834,8 +2845,10 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "@group(0) @binding(0) var ns_shadow_map: texture_depth_2d;\n"
             "@group(0) @binding(1) var ns_shadow_sampler: sampler_comparison;\n"
             "fn ns_shadow_compare(coord: vec3<f32>) -> f32 {\n"
-            "    if (coord.x <= 0.0 || coord.x >= 1.0 || coord.y <= 0.0 || coord.y >= 1.0 || coord.z <= 0.0 || coord.z >= 1.0) { return 1.0; }\n"
-            "    return textureSampleCompare(ns_shadow_map, ns_shadow_sampler, coord.xy, coord.z);\n"
+            "    let in_bounds = coord.x > 0.0 && coord.x < 1.0 && coord.y > 0.0 && coord.y < 1.0 && coord.z > 0.0 && coord.z < 1.0;\n"
+            "    let clamped = clamp(coord, vec3<f32>(0.0), vec3<f32>(1.0));\n"
+            "    let vis = textureSampleCompareLevel(ns_shadow_map, ns_shadow_sampler, clamped.xy, clamped.z);\n"
+            "    return select(1.0, vis, in_bounds);\n"
             "}\n\n");
     }
     if (e.uses_texture_map && target == NS_SHADER_MSL) {

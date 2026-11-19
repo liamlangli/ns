@@ -1198,12 +1198,27 @@ int64_t ns_rt_sqrt(int64_t bits) { return ns_rt_f64_unop(bits, sqrt); }
 int64_t ns_rt_sin(int64_t bits) { return ns_rt_f64_unop(bits, sin); }
 int64_t ns_rt_cos(int64_t bits) { return ns_rt_f64_unop(bits, cos); }
 int64_t ns_rt_tan(int64_t bits) { return ns_rt_f64_unop(bits, tan); }
+int64_t ns_rt_asin(int64_t bits) { return ns_rt_f64_unop(bits, asin); }
+int64_t ns_rt_acos(int64_t bits) { return ns_rt_f64_unop(bits, acos); }
+int64_t ns_rt_math_floor(int64_t bits) { return ns_rt_f64_unop(bits, floor); }
+int64_t ns_rt_ceil(int64_t bits) { return ns_rt_f64_unop(bits, ceil); }
+int64_t ns_rt_exp(int64_t bits) { return ns_rt_f64_unop(bits, exp); }
 
 int64_t ns_rt_atan2(int64_t y_bits, int64_t x_bits) {
     double y, x;
     memcpy(&y, &y_bits, 8);
     memcpy(&x, &x_bits, 8);
     double r = atan2(y, x);
+    int64_t out = 0;
+    memcpy(&out, &r, 8);
+    return out;
+}
+
+int64_t ns_rt_pow(int64_t x_bits, int64_t y_bits) {
+    double x, y;
+    memcpy(&x, &x_bits, 8);
+    memcpy(&y, &y_bits, 8);
+    double r = pow(x, y);
     int64_t out = 0;
     memcpy(&out, &r, 8);
     return out;

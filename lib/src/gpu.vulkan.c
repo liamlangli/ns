@@ -2375,8 +2375,9 @@ static VkDescriptorSet gpu_vk_build_set(gpu_vk_shader *shader, u32 texture0, u32
             .pBufferInfo = info,
         };
     }
+    u32 shadow_tex = ((shader->usage & GPU_VK_USE_TEXTURE_MAP) || texture2 > 0) ? texture2 : texture0;
     struct { u32 binding; u32 texture; VkSampler sampler; gpu_vk_texture *fallback; } images[] = {
-        {0, texture0, _vk.sampler_shadow, &_vk.dummy_depth},
+        {0, shadow_tex, _vk.sampler_shadow, &_vk.dummy_depth},
         {1, texture0, _vk.sampler_linear, &_vk.dummy_texture},
         {GPU_VK_MASK_BINDING, texture1, _vk.sampler_nearest, &_vk.dummy_texture},
     };
@@ -2482,8 +2483,9 @@ static ns_bool gpu_vk_prepare_graphics(void) {
 
     u32 texture0, texture1, texture2;
     gpu_vk_root_words(&texture0, &texture1, &texture2);
-    if ((shader->usage & GPU_VK_USE_SHADOW) && gpu_vk_texture_valid(texture0)) {
-        gpu_vk_texture_transition(_vk.commands, &_vk.textures[texture0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    u32 shadow_tex = ((shader->usage & GPU_VK_USE_TEXTURE_MAP) || texture2 > 0) ? texture2 : texture0;
+    if ((shader->usage & GPU_VK_USE_SHADOW) && gpu_vk_texture_valid(shadow_tex)) {
+        gpu_vk_texture_transition(_vk.commands, &_vk.textures[shadow_tex], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     if ((shader->usage & GPU_VK_USE_TEXTURE_MAP) && gpu_vk_texture_valid(texture0)) {
         gpu_vk_texture_transition(_vk.commands, &_vk.textures[texture0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);

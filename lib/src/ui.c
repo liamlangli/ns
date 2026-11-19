@@ -565,6 +565,7 @@ void ui_fill_gradient_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h,
                            u32 rgba_bottom_right, u32 rgba_bottom_left);
 void ui_fill_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, u32 rgba, f64 feather);
 void ui_fill_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness, f64 angle_start, f64 angle_end, u32 rgba, f64 feather);
+void ui_fill_ring_sector(ui_renderer *r, f64 cx, f64 cy, f64 inner, f64 outer, f64 angle_start, f64 angle_end, u32 rgba);
 void ui_stroke_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, f64 thickness, u32 rgba, f64 feather);
 void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type);
 void ui_draw_text_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 center_angle, const char *text, f64 font_px, u32 rgba, i32 font_type);
@@ -1556,6 +1557,27 @@ void ui_fill_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness,
         }
     }
     ui_emit_command(r, base, 6, UI_KIND_ARC_SDF);
+}
+
+void ui_fill_ring_sector(ui_renderer *r, f64 cx, f64 cy, f64 inner, f64 outer,
+                         f64 angle_start, f64 angle_end, u32 rgba) {
+    if (!r || inner < 0.0 || outer <= inner || angle_end <= angle_start) return;
+    const f64 sweep = fmin(angle_end - angle_start, M_PI * 2.0);
+    const i32 segments = (i32)fmin(256.0, ceil(sweep * fmax(3.0, sqrt(outer))));
+    f64 x0 = cos(angle_start), y0 = sin(angle_start);
+    r->current_texture_id = UI_WHITE_TEXTURE;
+    for (i32 i = 1; i <= segments; i++) {
+        const f64 angle = angle_start + sweep * i / segments;
+        const f64 x1 = cos(angle), y1 = sin(angle);
+        const f64 ax = cx + x0 * outer, ay = cy + y0 * outer;
+        const f64 bx = cx + x1 * outer, by = cy + y1 * outer;
+        const f64 dx = cx + x1 * inner, dy = cy + y1 * inner;
+        ui_push_tri_colors(r, ax, ay, rgba, bx, by, rgba, dx, dy, rgba);
+        if (inner > 0.0)
+            ui_push_tri_colors(r, ax, ay, rgba, dx, dy, rgba, cx + x0 * inner, cy + y0 * inner, rgba);
+        x0 = x1;
+        y0 = y1;
+    }
 }
 
 void ui_stroke_line(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 thickness, u32 rgba, f64 feather) {

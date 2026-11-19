@@ -274,6 +274,14 @@ const reverseShader = runtime.gpu('gpu_shader_graphics_create', [vertexSource, f
 const reverseState = runtime.gpu('gpu_state_create', [4, 0, 0, 5, true, 0, 15]);
 runtime.activeDepthFormat = 'depth16unorm';
 assert.equal(runtime.graphicsPipeline(reverseShader, reverseState).desc.depthStencil.depthCompare, 'greater');
+// Depth-only pass keeps targets empty instead of forcing the swapchain format.
+runtime.activeColorFormats = [];
+assert.deepEqual(runtime.graphicsPipeline(reverseShader, reverseState).desc.fragment.targets, []);
+// Alpha blend preset attaches a WebGPU blend configuration on color targets.
+runtime.activeColorFormats = ['rgba8unorm'];
+const alphaState = runtime.gpu('gpu_state_create', [4, 0, 0, 5, false, 1, 15]);
+assert.equal(runtime.graphicsPipeline(reverseShader, alphaState).desc.fragment.targets[0].blend.color.srcFactor, 'src-alpha');
+runtime.activeColorFormats = null;
 runtime.activeDepthFormat = null;
 const computeSource = runtime.writeString('@compute @workgroup_size(1) fn cs() {}');
 const computeEntry = runtime.writeString('cs');
@@ -393,6 +401,10 @@ for (const name of ['main.ns', 'editor.ns', 'render.ns', 'workspace.ns']) {
 }
 assert.equal(uiRuntime.os('os_dir_scan', [uiRuntime.writeString('scan-fixture')]), 4);
 
+const frameWriteArr = runtime.writeArray(new Float32Array([1, 2, 3, 4]), 'f32');
+const frameWriteAddr = runtime.gpu('gpu_frame_write', [frameWriteArr, 16]);
+assert(frameWriteAddr > 0n);
+
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu: { async requestAdapter() { return null; } } } });
 const fallback = new NSBrowserRuntime(canvas);
 assert.equal(await fallback.initializeGPU(), false);
@@ -402,6 +414,9 @@ const bootEvents = [];
 let finishPreparation, signalInstantiation;
 const preparation = new Promise(resolve => { finishPreparation = resolve; });
 const instantiated = new Promise(resolve => { signalInstantiation = resolve; });
+let finishAsset, signalFastAsset;
+const assetResponse = new Promise(resolve => { finishAsset = resolve; });
+const fastAssetLoaded = new Promise(resolve => { signalFastAsset = resolve; });
 const originalFetch = globalThis.fetch;
 const originalInstantiate = WebAssembly.instantiate;
 document.getElementById = id => id === 'ns-canvas' ? canvas : null;
@@ -409,6 +424,8 @@ globalThis.location = { hostname: 'example.test' };
 try {
   globalThis.fetch = async (url, options) => {
     bootEvents.push(`fetch:${url}:${options.cache}`);
+    if (url === 'slow.txt') return assetResponse;
+    if (url === 'fast.txt') return new Response('fast');
     return new Response(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0), {
       headers: { 'Content-Type': 'application/wasm' },
     });
@@ -422,15 +439,29 @@ try {
       main() { bootEvents.push('main'); },
     } };
   };
-  const startup = boot('app.wasm', { wasmCache: 'default', prepare() {
-    bootEvents.push('prepare');
-    return preparation;
-  } });
-  await instantiated;
-  assert.deepEqual(bootEvents, ['fetch:app.wasm:default', 'prepare', 'instantiate']);
+  const startup = boot('app.wasm', {
+    wasmCache: 'default',
+    assetCache: 'default',
+    assets: ['slow.txt', 'fast.txt'],
+    onAssetLoaded(path) {
+      bootEvents.push(`loaded:${path}`);
+      if (path === 'fast.txt') signalFastAsset();
+    },
+    prepare() {
+      bootEvents.push('prepare');
+      return preparation;
+    },
+  });
+  await Promise.all([instantiated, fastAssetLoaded]);
+  assert.deepEqual(bootEvents.slice(0, 4), [
+    'fetch:app.wasm:default', 'fetch:slow.txt:default', 'fetch:fast.txt:default', 'prepare',
+  ]);
   finishPreparation();
-  await startup;
-  assert.deepEqual(bootEvents.slice(-2), ['init', 'main']);
+  assert(!bootEvents.includes('main'));
+  finishAsset(new Response('slow'));
+  const { runtime: startedRuntime } = await startup;
+  assert.deepEqual(bootEvents.slice(-3), ['loaded:slow.txt', 'init', 'main']);
+  assert.equal(new TextDecoder().decode(startedRuntime.virtualFiles.get('slow.txt')), 'slow');
 } finally {
   globalThis.fetch = originalFetch;
   WebAssembly.instantiate = originalInstantiate;

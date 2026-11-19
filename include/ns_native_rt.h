@@ -86,7 +86,13 @@ int64_t ns_rt_sqrt(int64_t bits);
 int64_t ns_rt_sin(int64_t bits);
 int64_t ns_rt_cos(int64_t bits);
 int64_t ns_rt_tan(int64_t bits);
+int64_t ns_rt_asin(int64_t bits);
+int64_t ns_rt_acos(int64_t bits);
 int64_t ns_rt_atan2(int64_t y_bits, int64_t x_bits);
+int64_t ns_rt_math_floor(int64_t bits);
+int64_t ns_rt_ceil(int64_t bits);
+int64_t ns_rt_exp(int64_t bits);
+int64_t ns_rt_pow(int64_t x_bits, int64_t y_bits);
 
 int64_t ns_rt_map_new(int64_t cap, int64_t flags);
 int64_t ns_rt_map_get(int64_t map, int64_t key);

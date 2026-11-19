@@ -89,6 +89,25 @@ static void test_arc_coverage_mode(f64 feather) {
     free(r);
 }
 
+static void test_ring_sector(void) {
+    ui_renderer *r = calloc(1, sizeof(*r));
+    assert(r);
+    ui_vertex vertices[128];
+    r->rect = (ui_rect){0, 0, 100, 100};
+    r->vertices = vertices;
+    r->vertex_capacity = 128;
+    ui_fill_ring_sector(r, 50, 50, 8, 15, 0, M_PI / 2, 0x80ffffffu);
+    assert(r->vertex_count > 6);
+    for (i32 i = 0; i < r->vertex_count; ++i) {
+        const ui_vertex v = vertices[i];
+        const f64 radius = hypot(v.x - 50, v.y - 50);
+        assert(v.x >= 50 && v.y >= 50);
+        assert(fabs(radius - 8) < 0.00001 || fabs(radius - 15) < 0.00001);
+        assert(v.color == 0x80ffffffu);
+    }
+    free(r);
+}
+
 // A panel 0.4 x 0.6 units one unit in front of an identity camera: the
 // canvas corners land on the panel corners, and a fingertip hovers, presses
 // when it crosses the plane, holds through jitter and releases on the way out.
@@ -565,6 +584,7 @@ int main(void) {
     test_arc_coverage_mode(0);
     test_arc_coverage_mode(-1);
     test_arc_coverage_mode(1.5);
+    test_ring_sector();
     puts("ui triangle, line and arc coverage tests passed");
     return 0;
 }

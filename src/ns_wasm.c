@@ -1949,6 +1949,7 @@ static ns_return_bool ns_wasm_write_source_map(ns_ssa_module *ssa, ns_str map_pa
 
 static ns_bool ns_wasm_supported_module(ns_str module) {
     return ns_str_equals(module, ns_str_cstr("std")) ||
+           ns_str_equals(module, ns_str_cstr("audio")) ||
            ns_str_equals(module, ns_str_cstr("compress")) ||
            ns_str_equals(module, ns_str_cstr("gpu")) ||
            ns_str_equals(module, ns_str_cstr("io")) ||
@@ -1975,8 +1976,15 @@ static ns_bool ns_wasm_name_in(ns_str name, const char *names) {
 static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
     if (ns_str_equals(module, ns_str_cstr("std"))) {
         return ns_wasm_name_in(name,
-            "print|sqrt|sin|cos|tan|atan2|ftos|stof|itos|stoi|substr|unescape|utf8_len|"
+            "print|sqrt|sin|cos|tan|asin|acos|atan2|floor|ceil|exp|pow|ftos|stof|itos|stoi|substr|unescape|utf8_len|"
             "open|close|read|write");
+    }
+    if (ns_str_equals(module, ns_str_cstr("audio"))) {
+        return ns_wasm_name_in(name,
+            "audio_init|audio_shutdown|audio_load|audio_load_music|audio_load_sfx|audio_unload|"
+            "audio_play|audio_pause|audio_resume|audio_stop|audio_stop_all|"
+            "audio_set_volume|audio_set_master_volume|audio_is_playing|"
+            "audio_duration|audio_position|audio_seek|audio_last_error");
     }
     if (ns_str_equals(module, ns_str_cstr("wasm"))) {
         return ns_wasm_name_in(name, "strcat|ftos|itos|utos|btos");
@@ -2016,7 +2024,8 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
     if (ns_str_equals(module, ns_str_cstr("io"))) {
         return ns_wasm_name_in(name,
             "io_load_image|io_image_destroy|io_image_copy_data|io_save_image|io_glb_read|io_glb_valid|io_glb_json_size|io_glb_data_size|"
-            "io_glb_copy_json|io_glb_copy_data|io_glb_destroy|io_glb_mesh_read|io_glb_mesh_valid|"
+            "io_glb_copy_json|io_glb_copy_data|io_glb_image_count|io_glb_image_width|io_glb_image_height|io_glb_copy_image|"
+            "io_glb_destroy|io_glb_mesh_read|io_glb_mesh_valid|"
             "io_glb_mesh_vertex_count|io_glb_mesh_index_count|io_glb_mesh_image_width|"
             "io_glb_mesh_image_height|io_glb_mesh_copy_positions|io_glb_mesh_copy_normals|"
             "io_glb_mesh_copy_texcoords|io_glb_mesh_copy_joints|io_glb_mesh_copy_weights|"
@@ -2045,7 +2054,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "gpu_texture_new|gpu_texture_new_2d|"
             "gpu_texture_none|gpu_texture_valid|gpu_texture_bytes|gpu_texture_update|gpu_texture_update_all|"
             "gpu_texture_release|gpu_sampler_new|gpu_sampler_valid|gpu_sampler_release|gpu_render_state_new|"
-            "gpu_render_state_bind|gpu_memory_alloc|gpu_memory_valid|gpu_memory_at|gpu_memory_write|"
+            "gpu_render_state_bind|gpu_memory_alloc|gpu_memory_valid|gpu_memory_at|gpu_memory_write|gpu_frame_write|"
             "gpu_memory_read|gpu_memory_free|gpu_shader_graphics|gpu_shader_compute|gpu_shader_valid|"
             "gpu_shader_bind|gpu_shader_release|gpu_pass_begin_target|gpu_request_device|gpu_destroy_device|"
             "gpu_shader_target|gpu_set_viewport|gpu_set_scissor|gpu_commit|"
@@ -2053,7 +2062,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "gpu_texture_upload|gpu_texture_destroy|gpu_sampler_create|gpu_sampler_destroy|"
             "gpu_shader_graphics_create|gpu_shader_compute_create|gpu_shader_destroy|gpu_state_create|gpu_state_stencil|"
             "gpu_pass_begin|gpu_screen_pass_begin|gpu_screen_pass_begin_depth|gpu_pass_end|gpu_set_shader|gpu_set_state|gpu_set_stencil_ref|gpu_set_root|"
-            "gpu_set_root_data|gpu_set_storage_at|gpu_draw_vertices|gpu_draw_indexed|gpu_draw_indirect|gpu_dispatch|"
+            "gpu_set_root_data|gpu_set_storage|gpu_set_storage_at|gpu_set_texture_table|gpu_draw_vertices|gpu_draw_indexed|gpu_draw_indirect|gpu_dispatch|"
             "gpu_dispatch_indirect|gpu_signal_after|gpu_wait_before|gpu_pixel_format_size|"
             "gpu_pixel_format_row_pitch|gpu_pixel_format_surface_pitch");
     }
@@ -2081,7 +2090,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "ui_preview_load|ui_preview_release|ui_preview_width|ui_preview_height|ui_preview_draw|"
             // shapes
             "ui_fill_rect|ui_fill_gradient_rect|ui_fill_round_rect|ui_fill_round_rect_per_corner|ui_fill_surface|"
-            "ui_fill_triangle|ui_fill_triangle_colors|ui_fill_arc|ui_fill_circle|"
+            "ui_fill_triangle|ui_fill_triangle_colors|ui_fill_arc|ui_fill_ring_sector|ui_fill_circle|"
             "ui_stroke_rect|ui_stroke_round_rect|ui_stroke_round_rect_per_corner|"
             "ui_stroke_circle|ui_stroke_line|ui_stroke_polyline|"
             // clipping and retained rectangle batches
@@ -2282,20 +2291,90 @@ static ns_return_bool ns_wasm_emit_internal(ns_ssa_module *ssa, ns_str output_pa
     if (ns_str_is_empty(output_path)) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_SYNTAX, "empty output path");
     }
-    // Shader entry functions are compiled ahead of time into the ns.shaders
-    // custom section. They are function values on the CPU side (lowered to
-    // compiler-assigned integer IDs), not callable Wasm functions. Excluding
-    // their CPU SSA bodies also keeps shader-only structs and stage I/O out of
-    // the wasm32 host ABI without weakening diagnostics for ordinary code.
+    // Shader entry functions and shader-only helper functions (those that
+    // directly or transitively call GPU-only `shader.*` device intrinsics) are
+    // compiled ahead of time into the ns.shaders custom section. Excluding
+    // their CPU SSA bodies and device-only shader imports keeps stage I/O and
+    // device intrinsics out of the wasm32 host ABI without weakening
+    // diagnostics if an entry point like `main` or `frame` ever calls one.
     ns_ssa_module host = *ssa;
     host.fns = ns_null;
-    for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
-        if (!ns_wasm_is_shader_fn(ssa, ssa->fns[i].name)) ns_array_push(host.fns, ssa->fns[i]);
+    host.imports = ns_null;
+    i32 total_fns = (i32)ns_array_length(ssa->fns);
+    ns_bool *is_shader_only = total_fns > 0 ? (ns_bool *)ns_malloc((szt)total_fns * sizeof(ns_bool)) : ns_null;
+    for (i32 i = 0; i < total_fns; ++i) {
+        ns_ssa_fn *fn = &ssa->fns[i];
+        ns_bool entry_root = ns_str_equals(fn->name, ns_str_cstr("main")) ||
+                             ns_str_equals(fn->name, ns_str_cstr("frame")) ||
+                             ns_str_equals(fn->name, ns_str_cstr("__ns_init"));
+        is_shader_only[i] = ns_wasm_is_shader_fn(ssa, fn->name);
+        if (!is_shader_only[i] && !entry_root && ns_array_length(ssa->shaders) > 0) {
+            for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
+                ns_ssa_inst *inst = &fn->insts[ii];
+                if (inst->op == NS_SSA_OP_CALL &&
+                    ns_str_equals(inst->module, ns_str_cstr("shader")) &&
+                    !ns_wasm_supported_import(inst->module, inst->name)) {
+                    is_shader_only[i] = true;
+                    break;
+                }
+            }
+        }
+    }
+    ns_bool changed = true;
+    while (changed && ns_array_length(ssa->shaders) > 0) {
+        changed = false;
+        for (i32 i = 0; i < total_fns; ++i) {
+            if (is_shader_only[i]) continue;
+            ns_ssa_fn *fn = &ssa->fns[i];
+            if (ns_str_equals(fn->name, ns_str_cstr("main")) ||
+                ns_str_equals(fn->name, ns_str_cstr("frame")) ||
+                ns_str_equals(fn->name, ns_str_cstr("__ns_init"))) continue;
+            for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
+                ns_ssa_inst *inst = &fn->insts[ii];
+                if (inst->op != NS_SSA_OP_CALL || !ns_str_is_empty(inst->module)) continue;
+                for (i32 j = 0; j < total_fns; ++j) {
+                    if (is_shader_only[j] && ns_str_equals(ssa->fns[j].name, inst->name)) {
+                        is_shader_only[i] = true;
+                        changed = true;
+                        break;
+                    }
+                }
+                if (is_shader_only[i]) break;
+            }
+        }
+    }
+    for (i32 i = 0; i < total_fns; ++i) {
+        if (!is_shader_only[i]) ns_array_push(host.fns, ssa->fns[i]);
+    }
+    if (is_shader_only) ns_free(is_shader_only);
+
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->imports); i < l; ++i) {
+        ns_ssa_import imp = ssa->imports[i];
+        if (ns_str_equals(imp.module, ns_str_cstr("shader")) &&
+            !ns_wasm_supported_import(imp.module, imp.name) &&
+            ns_array_length(ssa->shaders) > 0) {
+            ns_bool used_by_host = false;
+            for (i32 fi = 0, fl = (i32)ns_array_length(host.fns); fi < fl && !used_by_host; ++fi) {
+                ns_ssa_fn *fn = &host.fns[fi];
+                for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
+                    ns_ssa_inst *inst = &fn->insts[ii];
+                    if (inst->op == NS_SSA_OP_CALL &&
+                        ns_str_equals(inst->module, imp.module) &&
+                        ns_str_equals(inst->name, imp.name)) {
+                        used_by_host = true;
+                        break;
+                    }
+                }
+            }
+            if (!used_by_host) continue;
+        }
+        ns_array_push(host.imports, imp);
     }
 
     ns_return_bool validation = ns_wasm_validate(&host);
     if (ns_return_is_error(validation)) {
         ns_array_free(host.fns);
+        ns_array_free(host.imports);
         return validation;
     }
 
@@ -2383,6 +2462,7 @@ static ns_return_bool ns_wasm_emit_internal(ns_ssa_module *ssa, ns_str output_pa
     ns_array_free(data);
     ns_array_free(source_mappings);
     ns_array_free(host.fns);
+    ns_array_free(host.imports);
     ns_str_free(temporary);
 
     return ret;

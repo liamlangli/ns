@@ -109,6 +109,9 @@ static const char *ns_shader_test_src =
     "    if data.uv.x < 0.0 { shader_discard() }\n"
     "    return data.color\n"
     "}\n"
+    "fn fs_shadow_alpha(data: FragmentInput) void {\n"
+    "    if shader_sample_texture_nearest(data.uv).w < 0.5 { shader_discard() }\n"
+    "}\n"
     "lit ROW_STRIDE = 3 * 4\n"
     "lit GRAVITY: f32 = -10.0\n"
     "lit ENABLED = true\n"
@@ -644,6 +647,20 @@ int main() {
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "SamplerComparisonState ns_shadow_sampler") &&
                       ns_shader_test_has(r.r, "SampleCmpLevelZero") && !ns_shader_test_has(r.r, "lit / 9.0"),
                   "hlsl shadow sampling uses one hardware-filtered comparison.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_shadow, NS_SHADER_WGSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "textureSampleCompareLevel(ns_shadow_map, ns_shadow_sampler") &&
+                      ns_shader_test_has(r.r, "select(1.0, vis, in_bounds)"),
+                  "wgsl shadow sampling avoids non-uniform control flow with textureSampleCompareLevel.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        i32 fs_shadow_alpha = ns_shader_test_fn(&vm, "fs_shadow_alpha");
+        ns_expect(fs_shadow_alpha >= 0, "void alpha-discard fragment entry exists.");
+        r = ns_shader_transpile(&vm, &ctx, fs_shadow_alpha, NS_SHADER_WGSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "@fragment fn fs_shadow_alpha") &&
+                      !ns_shader_test_has(r.r, "@location(0) void") && ns_shader_test_has(r.r, "discard;"),
+                  "wgsl void fragment entry transpiles for alpha-tested depth-only passes.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 

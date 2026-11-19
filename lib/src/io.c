@@ -290,6 +290,62 @@ i32 io_glb_copy_data(const io_glb *glb, u8 *values, i32 capacity) {
     return glb->data_size;
 }
 
+static ns_bool io_glb_image_bytes(const io_glb *glb, i32 image_index, const u8 **out_bytes, i32 *out_size) {
+    if (!glb || !glb->json || !glb->data || glb->json_size <= 0 || glb->data_size <= 0 || image_index < 0) return false;
+    io_json_span root = {(const char *)glb->json, (const char *)glb->json + glb->json_size};
+    io_json_span image = io_json_item(io_json_prop(root, "images"), image_index);
+    const i32 view_index = io_json_int(io_json_prop(image, "bufferView"), -1);
+    io_json_span view = io_json_item(io_json_prop(root, "bufferViews"), view_index);
+    const i32 offset = io_json_int(io_json_prop(view, "byteOffset"), 0);
+    const i32 size = io_json_int(io_json_prop(view, "byteLength"), -1);
+    if (!image.begin || !view.begin || offset < 0 || size <= 0 || (i64)offset + size > glb->data_size) return false;
+    *out_bytes = glb->data + offset;
+    *out_size = size;
+    return true;
+}
+
+i32 io_glb_image_count(const io_glb *glb) {
+    if (!glb || !glb->json || glb->json_size <= 0) return 0;
+    io_json_span root = {(const char *)glb->json, (const char *)glb->json + glb->json_size};
+    io_json_span images = io_json_prop(root, "images");
+    i32 count = 0;
+    while (io_json_item(images, count).begin) count++;
+    return count;
+}
+
+i32 io_glb_image_width(const io_glb *glb, i32 image_index) {
+    const u8 *bytes = NULL;
+    i32 size = 0;
+    int w = 0, h = 0, ch = 0;
+    if (!io_glb_image_bytes(glb, image_index, &bytes, &size)) return 0;
+    return stbi_info_from_memory(bytes, size, &w, &h, &ch) ? w : 0;
+}
+
+i32 io_glb_image_height(const io_glb *glb, i32 image_index) {
+    const u8 *bytes = NULL;
+    i32 size = 0;
+    int w = 0, h = 0, ch = 0;
+    if (!io_glb_image_bytes(glb, image_index, &bytes, &size)) return 0;
+    return stbi_info_from_memory(bytes, size, &w, &h, &ch) ? h : 0;
+}
+
+i32 io_glb_copy_image(const io_glb *glb, i32 image_index, u8 *values, i32 capacity) {
+    const u8 *bytes = NULL;
+    i32 size = 0;
+    if (!values || capacity <= 0 || !io_glb_image_bytes(glb, image_index, &bytes, &size)) return 0;
+    int w = 0, h = 0, ch = 0;
+    u8 *decoded = stbi_load_from_memory(bytes, size, &w, &h, &ch, 4);
+    if (!decoded) return 0;
+    const i64 count = (i64)w * h * 4;
+    i32 copied = 0;
+    if (count > 0 && count <= INT32_MAX && capacity >= (i32)count) {
+        memcpy(values, decoded, (size_t)count);
+        copied = (i32)count;
+    }
+    stbi_image_free(decoded);
+    return copied;
+}
+
 i32 io_glb_write(const char *path, const io_glb *glb) {
     if (!glb || !glb->json || glb->json_size <= 0 || glb->data_size < 0 ||
         (glb->data_size > 0 && !glb->data)) return 0;

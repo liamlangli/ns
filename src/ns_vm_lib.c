@@ -119,10 +119,24 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         call->ret = (ns_value){.t = ns_type_f64, .f64 = cos(ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val))};
     } else if (ns_str_equals_STR(call->callee->name, "tan")) {
         call->ret = (ns_value){.t = ns_type_f64, .f64 = tan(ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val))};
+    } else if (ns_str_equals_STR(call->callee->name, "asin")) {
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = asin(ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val))};
+    } else if (ns_str_equals_STR(call->callee->name, "acos")) {
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = acos(ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val))};
     } else if (ns_str_equals_STR(call->callee->name, "atan2")) {
         f64 y = ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val);
         f64 x = ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset + 1].val);
         call->ret = (ns_value){.t = ns_type_f64, .f64 = atan2(y, x)};
+    } else if (ns_str_equals_STR(call->callee->name, "floor")) {
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = floor(ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val))};
+    } else if (ns_str_equals_STR(call->callee->name, "ceil")) {
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = ceil(ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val))};
+    } else if (ns_str_equals_STR(call->callee->name, "exp")) {
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = exp(ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val))};
+    } else if (ns_str_equals_STR(call->callee->name, "pow")) {
+        f64 x = ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val);
+        f64 y = ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset + 1].val);
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = pow(x, y)};
     } else if (ns_str_equals_STR(call->callee->name, "ftos")) {
         static char number[64];
         f64 x = ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val);

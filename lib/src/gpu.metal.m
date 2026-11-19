@@ -1745,8 +1745,9 @@ static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encod
             [compute_encoder setTexture:_state.textures[texture2].texture atIndex:15];
     } else {
         id<MTLRenderCommandEncoder> render_encoder = (id<MTLRenderCommandEncoder>)encoder;
-        if (shader->uses_shadow_map && texture0 < _state.texture_count)
-            [render_encoder setFragmentTexture:_state.textures[texture0].texture atIndex:0];
+        u32 shadow_tex = (shader->uses_texture_map || texture2 > 0) ? texture2 : texture0;
+        if (shader->uses_shadow_map && shadow_tex < _state.texture_count)
+            [render_encoder setFragmentTexture:_state.textures[shadow_tex].texture atIndex:0];
         if (shader->uses_texture_map && texture0 < _state.texture_count)
             [render_encoder setFragmentTexture:_state.textures[texture0].texture atIndex:1];
         if (shader->uses_mask_map && texture1 < _state.texture_count)

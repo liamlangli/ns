@@ -407,7 +407,9 @@ static const char *ns_cpu_map_std(ns_str module, ns_str name) {
         {"print", "ns_rt_print"}, {"open", "ns_rt_open"}, {"read", "ns_rt_read"},
         {"write", "ns_rt_write"}, {"close", "ns_rt_close"}, {"sqrt", "ns_rt_sqrt"},
         {"sin", "ns_rt_sin"}, {"cos", "ns_rt_cos"}, {"tan", "ns_rt_tan"},
-        {"atan2", "ns_rt_atan2"}, {"ftos", "ns_rt_ftos"}, {"stof", "ns_rt_stof"},
+        {"asin", "ns_rt_asin"}, {"acos", "ns_rt_acos"}, {"atan2", "ns_rt_atan2"},
+        {"floor", "ns_rt_math_floor"}, {"ceil", "ns_rt_ceil"}, {"exp", "ns_rt_exp"},
+        {"pow", "ns_rt_pow"}, {"ftos", "ns_rt_ftos"}, {"stof", "ns_rt_stof"},
         {"substr", "ns_rt_substr"}, {"unescape", "ns_rt_unescape"}, {"utf8_len", "ns_rt_utf8_len"},
     };
     for (szt i = 0; i < sizeof(map) / sizeof(map[0]); ++i) {

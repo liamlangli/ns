@@ -12,7 +12,13 @@ ref fn sqrt(x: f64) f64
 ref fn sin(x: f64) f64
 ref fn cos(x: f64) f64
 ref fn tan(x: f64) f64
+ref fn asin(x: f64) f64
+ref fn acos(x: f64) f64
 ref fn atan2(y: f64, x: f64) f64
+ref fn floor(x: f64) f64
+ref fn ceil(x: f64) f64
+ref fn exp(x: f64) f64
+ref fn pow(x: f64, y: f64) f64
 ref fn ftos(x: f64) str
 ref fn stof(x: str) f64
 
