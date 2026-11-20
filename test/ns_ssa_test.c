@@ -203,5 +203,39 @@ int main(void) {
         ns_expect(ns_array_length(module->shaders) == 0, "native SSA contains no unused WGSL shader payload.");
         ns_ssa_module_free(module);
     }
+
+    const char *shadow_source =
+        "fn shadow_check() i32 {\n"
+        "    let total = 0\n"
+        "    for r in 0 to 4 { total += r }\n"
+        "    let x = 10\n"
+        "    for id in 0 to 4 {\n"
+        "        if id == 1 { continue }\n"
+        "        let r = 0.5\n"
+        "        let x = 1.5\n"
+        "        if r > 0.0 && x > 1.0 { total += id }\n"
+        "    }\n"
+        "    return total + x\n"
+        "}\n"
+        "fn main() i32 { return shadow_check() }\n";
+    ns_ast_ctx shadow_ctx = {0};
+    parsed = ns_ast_parse(&shadow_ctx, ns_str_cstr((i8 *)shadow_source), ns_str_cstr("<ns_ssa_shadow_test>"));
+    ns_expect(!ns_return_is_error(parsed) && parsed.r, "lexical shadow source parses.");
+    built = ns_ssa_build(&shadow_ctx);
+    ns_expect(!ns_return_is_error(built), "lexical shadow source lowers to SSA.");
+    if (!ns_return_is_error(built)) {
+        module = built.r;
+        ns_str shadow_out = ns_str_cstr("/tmp/ns_ssa_shadow_test.wasm");
+        ns_return_bool shadow_emitted = ns_wasm_emit(module, shadow_out);
+        ns_expect(!ns_return_is_error(shadow_emitted) && shadow_emitted.r, "lexical shadow SSA emits Wasm.");
+        int shadow_status = system(
+            "node -e \"const fs=require('fs');const b=fs.readFileSync('/tmp/ns_ssa_shadow_test.wasm');"
+            "if(!WebAssembly.validate(b))process.exit(1);const m=new WebAssembly.Module(b);"
+            "const i=new WebAssembly.Instance(m,{});i.exports.__ns_init();"
+            "if(i.exports.main()!==21)process.exit(2);\"");
+        ns_expect(shadow_status == 0, "lexical shadow Wasm validates and executes with outer bindings preserved.");
+        remove(shadow_out.data);
+        ns_ssa_module_free(module);
+    }
     return 0;
 }
