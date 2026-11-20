@@ -184,6 +184,49 @@ assert.equal(runtime.view().getInt32(canvasView + 52, true), 0);
 assert.equal(runtime.view().getInt32(canvasView + 60, true), 1);
 assert.equal(runtime.view().getInt32(runtime.viewImport('view_input_at', [canvasView, 0]) + 4, true), 4);
 runtime.viewImport('view_input_reset', [canvasView]);
+// WebKit touch contacts stay available even when it cancels the Pointer Events stream.
+globalThis.GestureEvent = class {};
+navigator.maxTouchPoints = 2;
+const webkitEvents = new Map();
+const webkitView = new NSBrowserRuntime({ ...canvas, addEventListener(name, handler) { webkitEvents.set(name, handler); } });
+webkitView.memory = runtime.memory;
+webkitView.instance = runtime.instance;
+const webkitPointer = webkitView.viewImport("view_create", [titlePointer, 320, 180]);
+webkitView.viewImport("view_run", [webkitPointer]);
+function sendWebkitTouches(name, changedTouches) {
+  let prevented = false;
+  webkitEvents.get(name)({ changedTouches, preventDefault() { prevented = true; } });
+  assert(prevented);
+}
+const leftContact = { identifier: -12, clientX: 100, clientY: 100 };
+const rightContact = { identifier: 50, clientX: 150, clientY: 100 };
+sendWebkitTouches("touchstart", [leftContact, rightContact]);
+webkitEvents.get("pointercancel")({ pointerType: "touch", pointerId: 1 });
+const movedRight = { ...rightContact, clientX: 200 };
+sendWebkitTouches("touchmove", [movedRight]);
+const webkitGesture = webkitView.viewImport("view_gesture", [webkitPointer]);
+assert.equal(webkitView.view().getFloat64(webkitGesture + 16, true), 2);
+sendWebkitTouches("touchend", [leftContact]);
+sendWebkitTouches("touchmove", [{ ...movedRight, clientX: 211 }]);
+const survivorMove = webkitView.viewImport("view_input_at", [webkitPointer, 4]);
+assert.equal(webkitView.view().getInt32(survivorMove + 4, true), 2);
+assert.equal(webkitView.view().getInt32(survivorMove + 8, true), 2);
+assert.equal(webkitView.view().getFloat64(survivorMove + 32, true), 11);
+sendWebkitTouches("touchcancel", [movedRight]);
+assert.equal(webkitView.view().getInt32(webkitPointer + 52, true), 0);
+webkitView.viewImport("view_input_reset", [webkitPointer]);
+
+const nativeGesture = { clientX: 112, clientY: 91, preventDefault() {} };
+webkitEvents.get("gesturestart")({ ...nativeGesture, scale: 1 });
+webkitEvents.get("wheel")({ ...nativeGesture, ctrlKey: true, deltaY: -40 });
+webkitEvents.get("gesturechange")({ ...nativeGesture, scale: 1.5 });
+webkitEvents.get("gesturechange")({ ...nativeGesture, scale: 2 });
+webkitEvents.get("gestureend")(nativeGesture);
+assert.equal(webkitView.view().getFloat64(webkitGesture + 16, true), 2);
+assert.equal(webkitView.view().getFloat64(webkitPointer + 20, true), 112);
+delete globalThis.GestureEvent;
+delete navigator.maxTouchPoints;
+
 // A browser reports how far the content should move and a native backend how
 // far the wheel turned, so the sign is flipped on the way in. The line and page
 // delta modes become pixels, the unit the pixel mode already uses.
