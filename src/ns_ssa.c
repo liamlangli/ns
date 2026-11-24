@@ -4029,7 +4029,8 @@ static ns_bool ns_ssa_scope_call_pins_itself(ns_ssa_module *m, ns_ssa_inst *inst
  * Wasm import reads linear memory directly, so it keeps its pins. */
 static ns_bool ns_ssa_scope_arg_copied(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_inst *call,
                                        i32 index, ns_type value_type) {
-    if (b->wasm_target || index < 0 || call->name.len == 0 || call->module.len == 0) return false;
+    (void)b;
+    if (index < 0 || call->name.len == 0 || call->module.len == 0) return false;
     if (ns_str_equals(call->module, ns_str_cstr("std")) || ns_str_equals(call->module, ns_str_cstr("task")) ||
         ns_str_equals(call->module, ns_str_cstr("simd")) || ns_str_equals(call->module, ns_str_cstr("shader"))) {
         return false;
@@ -4468,14 +4469,10 @@ ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str re
         return ns_return_change_type(ptr, b.fold_error);
     }
 
-    // Wasm keeps the bump heap it has: its allocator lives in the generated
-    // module rather than in this runtime, and a browser page is reloaded rather
-    // than run for hours.
-    if (!wasm_target) {
-        f64 scope_start = ns_ssa_profile_phase_begin("scope_reclaim");
-        ns_ssa_scope_pass(&b, m);
-        ns_ssa_profile_phase_end("scope_reclaim", scope_start);
-    }
+    (void)wasm_target;
+    f64 scope_start = ns_ssa_profile_phase_begin("scope_reclaim");
+    ns_ssa_scope_pass(&b, m);
+    ns_ssa_profile_phase_end("scope_reclaim", scope_start);
 
     ns_array_free(b.globals);
     ns_array_free(b.shader_cache);

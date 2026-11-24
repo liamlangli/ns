@@ -63,6 +63,7 @@ static const u8 ns_wasm_version[4] = {0x01, 0x00, 0x00, 0x00};
 #define NS_WASM_MEMORY_GROW  0x40
 #define NS_WASM_MISC_PREFIX  0xFC
 #define NS_WASM_MEMORY_COPY  0x0A
+#define NS_WASM_MEMORY_FILL  0x0B
 
 #define NS_WASM_I32_LOAD     0x28
 #define NS_WASM_I64_LOAD     0x29
@@ -163,7 +164,11 @@ static const u8 ns_wasm_version[4] = {0x01, 0x00, 0x00, 0x00};
 #define NS_WASM_F32_DIV      0x95
 
 // f64 arithmetic
+#define NS_WASM_F64_ABS      0x99
 #define NS_WASM_F64_NEG      0x9A
+#define NS_WASM_F64_CEIL     0x9B
+#define NS_WASM_F64_FLOOR    0x9C
+#define NS_WASM_F64_SQRT     0x9F
 #define NS_WASM_F64_ADD      0xA0
 #define NS_WASM_F64_SUB      0xA1
 #define NS_WASM_F64_MUL      0xA2
@@ -839,6 +844,82 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         }
         break;
 
+    case NS_SSA_OP_SCOPE_ENTER:
+        if (inst->dst >= 0) {
+            ns_wasm_u8(&ctx->code, NS_WASM_GLOBAL_GET);
+            ns_wasm_u32leb(&ctx->code, (u32)ctx->n_globals + 3u);
+            ns_wasm_u8(&ctx->code, NS_WASM_I64_EXTEND_I32_U);
+            ns_wasm_u8(&ctx->code, NS_WASM_I64_CONST); ns_wasm_i64leb(&ctx->code, 32);
+            ns_wasm_u8(&ctx->code, NS_WASM_I64_SHL);
+            ns_wasm_u8(&ctx->code, NS_WASM_GLOBAL_GET);
+            ns_wasm_u32leb(&ctx->code, 0u);
+            ns_wasm_u8(&ctx->code, NS_WASM_I64_EXTEND_I32_U);
+            ns_wasm_u8(&ctx->code, NS_WASM_I64_OR);
+            ns_wasm_local_set(ctx, inst->dst);
+            ns_wasm_u8(&ctx->code, NS_WASM_GLOBAL_GET);
+            ns_wasm_u32leb(&ctx->code, 0u);
+            ns_wasm_u8(&ctx->code, NS_WASM_GLOBAL_SET);
+            ns_wasm_u32leb(&ctx->code, (u32)ctx->n_globals + 3u);
+        }
+        break;
+
+    case NS_SSA_OP_SCOPE_LEAVE:
+        if (inst->a >= 0) {
+            ns_wasm_local_get(ctx, inst->a);
+            if (inst->b >= 0) {
+                u8 vt = inst->b < ctx->n_values ? ctx->vtypes[inst->b] : NS_WASM_I32;
+                if (vt == NS_WASM_I32) {
+                    ns_wasm_local_get(ctx, inst->b);
+                } else if (vt == NS_WASM_I64) {
+                    ns_wasm_local_get(ctx, inst->b);
+                    ns_wasm_u8(&ctx->code, NS_WASM_I32_WRAP_I64);
+                } else {
+                    ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, 0);
+                }
+            } else {
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, 0);
+            }
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, inst->c);
+            ns_wasm_u8(&ctx->code, NS_WASM_CALL);
+            ns_wasm_u32leb(&ctx->code, (u32)(ctx->n_imports + ctx->n_fns + 5));
+            if (inst->dst >= 0) ns_wasm_local_set(ctx, inst->dst);
+            else ns_wasm_u8(&ctx->code, NS_WASM_DROP);
+        }
+        break;
+
+    case NS_SSA_OP_PIN: {
+        if (inst->b >= 0) {
+            u8 cvt = inst->b < ctx->n_values ? ctx->vtypes[inst->b] : NS_WASM_I32;
+            if (cvt == NS_WASM_I32) {
+                ns_wasm_local_get(ctx, inst->b);
+            } else if (cvt == NS_WASM_I64) {
+                ns_wasm_local_get(ctx, inst->b);
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_WRAP_I64);
+            } else {
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, 0);
+            }
+        } else {
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, 0);
+        }
+        if (inst->a >= 0) {
+            u8 vvt = inst->a < ctx->n_values ? ctx->vtypes[inst->a] : NS_WASM_I32;
+            if (vvt == NS_WASM_I32) {
+                ns_wasm_local_get(ctx, inst->a);
+            } else if (vvt == NS_WASM_I64) {
+                ns_wasm_local_get(ctx, inst->a);
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_WRAP_I64);
+            } else {
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, 0);
+            }
+        } else {
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, 0);
+        }
+        ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, inst->target0);
+        ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, inst->c);
+        ns_wasm_u8(&ctx->code, NS_WASM_CALL);
+        ns_wasm_u32leb(&ctx->code, (u32)(ctx->n_imports + ctx->n_fns + 4));
+    } break;
+
     case NS_SSA_OP_LOAD:
         if (inst->dst >= 0 && inst->a >= 0 && inst->c >= 0) {
             ns_wasm_local_get(ctx, inst->a);
@@ -938,6 +1019,18 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         if (ns_str_is_empty(callee_name) && inst->a >= 0) {
             ns_ssa_inst *def = ns_wasm_find_param_def(ctx->fn, inst->a);
             if (def) callee_name = def->name;
+        }
+        if (ns_str_equals(inst->module, ns_str_cstr("std"))) {
+            u8 math_op = 0;
+            if (ns_str_equals(callee_name, ns_str_cstr("floor"))) math_op = NS_WASM_F64_FLOOR;
+            else if (ns_str_equals(callee_name, ns_str_cstr("ceil"))) math_op = NS_WASM_F64_CEIL;
+            else if (ns_str_equals(callee_name, ns_str_cstr("sqrt"))) math_op = NS_WASM_F64_SQRT;
+            if (math_op != 0) {
+                ns_wasm_u8(&ctx->code, math_op);
+                if (inst->dst >= 0) ns_wasm_local_set(ctx, inst->dst);
+                else ns_wasm_u8(&ctx->code, NS_WASM_DROP);
+                break;
+            }
         }
         i32 fi = ns_str_is_empty(inst->module)
             ? ns_wasm_fn_index(ctx, callee_name)
@@ -1284,7 +1377,7 @@ static void ns_wasm_build_type_section(u8 **out, ns_ssa_module *ssa,
     u8 *sec = ns_null;
     i32 n_fns = (i32)ns_array_length(ssa->fns);
     i32 n_imports = (i32)ns_array_length(ssa->imports);
-    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 3));
+    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 6));
 
     for (i32 ii = 0; ii < n_imports; ++ii) {
         ns_ssa_import *import = &ssa->imports[ii];
@@ -1354,6 +1447,28 @@ static void ns_wasm_build_type_section(u8 **out, ns_ssa_module *ssa,
     ns_wasm_u8(&sec, NS_WASM_I32);
     ns_wasm_u32leb(&sec, 1);
     ns_wasm_u8(&sec, NS_WASM_I32);
+    // __ns_alloc_pinned(i32) -> i32
+    ns_wasm_u8(&sec, 0x60);
+    ns_wasm_u32leb(&sec, 1);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    ns_wasm_u32leb(&sec, 1);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    // __ns_pin(i32, i32, i32, i32) -> void
+    ns_wasm_u8(&sec, 0x60);
+    ns_wasm_u32leb(&sec, 4);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    ns_wasm_u32leb(&sec, 0);
+    // __ns_scope_leave(i64, i32, i32) -> i32
+    ns_wasm_u8(&sec, 0x60);
+    ns_wasm_u32leb(&sec, 3);
+    ns_wasm_u8(&sec, NS_WASM_I64);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    ns_wasm_u32leb(&sec, 1);
+    ns_wasm_u8(&sec, NS_WASM_I32);
 
     ns_wasm_section(out, NS_WASM_SECT_TYPE, sec);
     ns_array_free(sec);
@@ -1380,13 +1495,16 @@ static void ns_wasm_build_import_section(u8 **out, ns_ssa_module *ssa) {
 
 static void ns_wasm_build_function_section(u8 **out, i32 n_imports, i32 n_fns) {
     u8 *sec = ns_null;
-    ns_wasm_u32leb(&sec, (u32)(n_fns + 3));
+    ns_wasm_u32leb(&sec, (u32)(n_fns + 6));
     for (i32 i = 0; i < n_fns; i++) {
         ns_wasm_u32leb(&sec, (u32)(n_imports + i));
     }
     ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns));
     ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 1));
     ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 2));
+    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 3));
+    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 4));
+    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 5));
     ns_wasm_section(out, NS_WASM_SECT_FUNCTION, sec);
     ns_array_free(sec);
 }
@@ -1405,7 +1523,7 @@ static void ns_wasm_build_memory_section(u8 **out, u32 heap_start) {
 
 static void ns_wasm_build_global_section(u8 **out, ns_ssa_module *ssa, u32 heap_start) {
     u8 *sec = ns_null;
-    ns_wasm_u32leb(&sec, (u32)ns_array_length(ssa->globals) + 2u);
+    ns_wasm_u32leb(&sec, (u32)ns_array_length(ssa->globals) + 5u);
     ns_wasm_u8(&sec, NS_WASM_I32);
     ns_wasm_u8(&sec, 0x01);
     ns_wasm_u8(&sec, NS_WASM_I32_CONST);
@@ -1431,6 +1549,13 @@ static void ns_wasm_build_global_section(u8 **out, ns_ssa_module *ssa, u32 heap_
     ns_wasm_u8(&sec, 0x01);
     ns_wasm_u8(&sec, NS_WASM_I32_CONST); ns_wasm_i64leb(&sec, 0);
     ns_wasm_u8(&sec, NS_WASM_END);
+    // Scope reclamation globals: floor_global, scope_mark_global, high_global.
+    for (i32 gi = 0; gi < 3; ++gi) {
+        ns_wasm_u8(&sec, NS_WASM_I32);
+        ns_wasm_u8(&sec, 0x01);
+        ns_wasm_u8(&sec, NS_WASM_I32_CONST); ns_wasm_i64leb(&sec, heap_start);
+        ns_wasm_u8(&sec, NS_WASM_END);
+    }
     ns_wasm_section(out, NS_WASM_SECT_GLOBAL, sec);
     ns_array_free(sec);
 }
@@ -1445,7 +1570,7 @@ static void ns_wasm_build_export_section(u8 **out, ns_ssa_module *ssa) {
     u8 *sec = ns_null;
     i32 n_fns = (i32)ns_array_length(ssa->fns);
     i32 n_imports = (i32)ns_array_length(ssa->imports);
-    ns_wasm_u32leb(&sec, (u32)(n_fns + 4));
+    ns_wasm_u32leb(&sec, (u32)(n_fns + 5));
     for (i32 fi = 0; fi < n_fns; fi++) {
         ns_ssa_fn *fn = &ssa->fns[fi];
         ns_wasm_u32leb(&sec, (u32)fn->name.len);
@@ -1465,6 +1590,9 @@ static void ns_wasm_build_export_section(u8 **out, ns_ssa_module *ssa) {
     ns_wasm_name(&sec, "__ns_str_compare");
     ns_wasm_u8(&sec, 0x00);
     ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 2));
+    ns_wasm_name(&sec, "__ns_alloc_pinned");
+    ns_wasm_u8(&sec, 0x00);
+    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 3));
     ns_wasm_section(out, NS_WASM_SECT_EXPORT, sec);
     ns_array_free(sec);
 }
@@ -1483,7 +1611,7 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
     u8 *sec = ns_null;
     i32 first_mapping = (i32)ns_array_length(*source_mappings);
     i32 n_fns = (i32)ns_array_length(ssa->fns);
-    ns_wasm_u32leb(&sec, (u32)(n_fns + 3));
+    ns_wasm_u32leb(&sec, (u32)(n_fns + 6));
 
     for (i32 fi = 0; fi < n_fns; fi++) {
         ns_ssa_fn *fn = &ssa->fns[fi];
@@ -1569,14 +1697,27 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
         ns_array_free(locals_sec);
     }
 
-    // __ns_alloc: aligned bump allocation with checked memory growth.
+    // __ns_alloc: aligned bump allocation with checked memory growth and high-water zeroing.
+    u32 n_user_globals = (u32)ns_array_length(ssa->globals);
+    u32 init_global = n_user_globals + 1u;
+    u32 floor_global = n_user_globals + 2u;
+    u32 scope_mark_global = n_user_globals + 3u;
+    u32 high_global = n_user_globals + 4u;
+    u32 builtin_base = (u32)(ns_array_length(ssa->imports) + (szt)n_fns);
+
     u8 *alloc = ns_null;
     ns_wasm_u32leb(&alloc, 1);
-    ns_wasm_u32leb(&alloc, 2);
+    ns_wasm_u32leb(&alloc, 3);
     ns_wasm_u8(&alloc, NS_WASM_I32);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_I32_LT_S);
+    ns_wasm_u8(&alloc, NS_WASM_IF); ns_wasm_u8(&alloc, NS_WASM_BTVOID);
+    ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_END);
     ns_wasm_u8(&alloc, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc, 0);
-    ns_wasm_u8(&alloc, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&alloc, 1);
-    ns_wasm_u8(&alloc, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_TEE); ns_wasm_u32leb(&alloc, 1);
     ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 0);
     ns_wasm_u8(&alloc, NS_WASM_I32_ADD);
     ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, 7);
@@ -1608,6 +1749,39 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
     ns_wasm_u8(&alloc, NS_WASM_END);
     ns_wasm_u8(&alloc, NS_WASM_END);
     ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 1);
+    ns_wasm_u8(&alloc, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc, high_global);
+    ns_wasm_u8(&alloc, NS_WASM_I32_LT_U);
+    ns_wasm_u8(&alloc, NS_WASM_IF); ns_wasm_u8(&alloc, NS_WASM_BTVOID);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 2);
+    ns_wasm_u8(&alloc, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc, high_global);
+    ns_wasm_u8(&alloc, NS_WASM_I32_LT_U);
+    ns_wasm_u8(&alloc, NS_WASM_IF); ns_wasm_u8(&alloc, NS_WASM_BTVOID);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 2);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&alloc, 3);
+    ns_wasm_u8(&alloc, NS_WASM_ELSE);
+    ns_wasm_u8(&alloc, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc, high_global);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&alloc, 3);
+    ns_wasm_u8(&alloc, NS_WASM_END);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 3);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 1);
+    ns_wasm_u8(&alloc, NS_WASM_I32_GT_U);
+    ns_wasm_u8(&alloc, NS_WASM_IF); ns_wasm_u8(&alloc, NS_WASM_BTVOID);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 1);
+    ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 3);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 1);
+    ns_wasm_u8(&alloc, NS_WASM_I32_SUB);
+    ns_wasm_u8(&alloc, NS_WASM_MISC_PREFIX); ns_wasm_u32leb(&alloc, NS_WASM_MEMORY_FILL); ns_wasm_u32leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_END);
+    ns_wasm_u8(&alloc, NS_WASM_END);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 2);
+    ns_wasm_u8(&alloc, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc, high_global);
+    ns_wasm_u8(&alloc, NS_WASM_I32_GT_U);
+    ns_wasm_u8(&alloc, NS_WASM_IF); ns_wasm_u8(&alloc, NS_WASM_BTVOID);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 2);
+    ns_wasm_u8(&alloc, NS_WASM_GLOBAL_SET); ns_wasm_u32leb(&alloc, high_global);
+    ns_wasm_u8(&alloc, NS_WASM_END);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 1);
     ns_wasm_u8(&alloc, NS_WASM_END);
     ns_wasm_u32leb(&sec, (u32)ns_array_length(alloc));
     for (u32 i = 0; i < (u32)ns_array_length(alloc); ++i) ns_array_push(sec, alloc[i]);
@@ -1616,7 +1790,6 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
     // __ns_init calls top-level module initialization exactly once per instance.
     u8 *init = ns_null;
     ns_wasm_u32leb(&init, 0);
-    u32 init_global = (u32)ns_array_length(ssa->globals) + 1u;
     ns_wasm_u8(&init, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&init, init_global);
     ns_wasm_u8(&init, NS_WASM_I32_EQZ);
     ns_wasm_u8(&init, NS_WASM_IF); ns_wasm_u8(&init, NS_WASM_BTVOID);
@@ -1692,6 +1865,359 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
     ns_wasm_u32leb(&sec, (u32)ns_array_length(compare));
     for (u32 i = 0; i < (u32)ns_array_length(compare); ++i) ns_array_push(sec, compare[i]);
     ns_array_free(compare);
+
+    // __ns_alloc_pinned(size): bump allocate and raise floor_global so host structs survive scopes.
+    u8 *alloc_pinned = ns_null;
+    ns_wasm_u32leb(&alloc_pinned, 1);
+    ns_wasm_u32leb(&alloc_pinned, 1);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_I32);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc_pinned, 0);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_CALL); ns_wasm_u32leb(&alloc_pinned, builtin_base);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&alloc_pinned, 1);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc_pinned, 0);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc_pinned, floor_global);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_I32_GT_U);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_IF); ns_wasm_u8(&alloc_pinned, NS_WASM_BTVOID);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc_pinned, 0);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_GLOBAL_SET); ns_wasm_u32leb(&alloc_pinned, floor_global);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_END);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc_pinned, 1);
+    ns_wasm_u8(&alloc_pinned, NS_WASM_END);
+    ns_wasm_u32leb(&sec, (u32)ns_array_length(alloc_pinned));
+    for (u32 i = 0; i < (u32)ns_array_length(alloc_pinned); ++i) ns_array_push(sec, alloc_pinned[i]);
+    ns_array_free(alloc_pinned);
+
+    // __ns_pin(container, value, kind, size): raise floor_global to retain escaped values.
+    u8 *pin = ns_null;
+    ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u32leb(&pin, 3);
+    ns_wasm_u8(&pin, NS_WASM_I32);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&pin, scope_mark_global);
+    ns_wasm_u8(&pin, NS_WASM_I32_GE_U);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&pin, floor_global);
+    ns_wasm_u8(&pin, NS_WASM_I32_GE_U);
+    ns_wasm_u8(&pin, NS_WASM_I32_AND);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_I32_LT_U);
+    ns_wasm_u8(&pin, NS_WASM_I32_AND);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_RETURN);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 2);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 3);
+    ns_wasm_u8(&pin, NS_WASM_I32_EQ);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_ELSE);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 2);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_I32_EQ);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_I32_EQZ);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_RETURN);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_ELSE);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_I32_EQZ);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_I32_GE_U);
+    ns_wasm_u8(&pin, NS_WASM_I32_OR);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_RETURN);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 2);
+    ns_wasm_u8(&pin, NS_WASM_I32_EQZ);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 3);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_I32_GT_S);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 3);
+    ns_wasm_u8(&pin, NS_WASM_I32_ADD);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_ELSE);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 2);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_I32_EQ);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 8);
+    ns_wasm_u8(&pin, NS_WASM_I32_ADD);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_I32_LOAD); ns_wasm_u32leb(&pin, 0); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 5);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_I32_LOAD); ns_wasm_u32leb(&pin, 0); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 6);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 5);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_I32_NE);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 6);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_I32_GT_S);
+    ns_wasm_u8(&pin, NS_WASM_I32_AND);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 5);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 6);
+    ns_wasm_u8(&pin, NS_WASM_I32_ADD);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_TEE); ns_wasm_u32leb(&pin, 6);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_I32_GT_U);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 6);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_ELSE);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 2);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 2);
+    ns_wasm_u8(&pin, NS_WASM_I32_EQ);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 16);
+    ns_wasm_u8(&pin, NS_WASM_I32_ADD);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_I32_LOAD); ns_wasm_u32leb(&pin, 0); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 5);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 1);
+    ns_wasm_u8(&pin, NS_WASM_I32_LOAD); ns_wasm_u32leb(&pin, 0); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 6);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 5);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_I32_NE);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 6);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_I32_GT_S);
+    ns_wasm_u8(&pin, NS_WASM_I32_AND);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 3);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_I32_GT_S);
+    ns_wasm_u8(&pin, NS_WASM_I32_AND);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 5);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 6);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 3);
+    ns_wasm_u8(&pin, NS_WASM_I32_MUL);
+    ns_wasm_u8(&pin, NS_WASM_I32_ADD);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_TEE); ns_wasm_u32leb(&pin, 6);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_I32_GT_U);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 6);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_ELSE);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, 7);
+    ns_wasm_u8(&pin, NS_WASM_I32_ADD);
+    ns_wasm_u8(&pin, NS_WASM_I32_CONST); ns_wasm_i64leb(&pin, -8);
+    ns_wasm_u8(&pin, NS_WASM_I32_AND);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_TEE); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_I32_GT_U);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&pin, 0);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&pin, floor_global);
+    ns_wasm_u8(&pin, NS_WASM_I32_GT_U);
+    ns_wasm_u8(&pin, NS_WASM_IF); ns_wasm_u8(&pin, NS_WASM_BTVOID);
+    ns_wasm_u8(&pin, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&pin, 4);
+    ns_wasm_u8(&pin, NS_WASM_GLOBAL_SET); ns_wasm_u32leb(&pin, floor_global);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u8(&pin, NS_WASM_END);
+    ns_wasm_u32leb(&sec, (u32)ns_array_length(pin));
+    for (u32 i = 0; i < (u32)ns_array_length(pin); ++i) ns_array_push(sec, pin[i]);
+    ns_array_free(pin);
+
+    // __ns_scope_leave(packed_mark, value, size): reclaim unpinned scope temporaries.
+    u8 *leave = ns_null;
+    ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u32leb(&leave, 5);
+    ns_wasm_u8(&leave, NS_WASM_I32);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I64_CONST); ns_wasm_i64leb(&leave, 32);
+    ns_wasm_u8(&leave, NS_WASM_I64_SHR_U);
+    ns_wasm_u8(&leave, NS_WASM_I32_WRAP_I64);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_SET); ns_wasm_u32leb(&leave, scope_mark_global);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_WRAP_I64);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_TEE); ns_wasm_u32leb(&leave, 3);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&leave, floor_global);
+    ns_wasm_u8(&leave, NS_WASM_I32_GE_U);
+    ns_wasm_u8(&leave, NS_WASM_IF); ns_wasm_u8(&leave, NS_WASM_BTVOID);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 3);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_ELSE);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&leave, floor_global);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_END);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_GE_U);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_I32_EQZ);
+    ns_wasm_u8(&leave, NS_WASM_I32_OR);
+    ns_wasm_u8(&leave, NS_WASM_IF); ns_wasm_u8(&leave, NS_WASM_BTVOID);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_RETURN);
+    ns_wasm_u8(&leave, NS_WASM_END);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 2);
+    ns_wasm_u8(&leave, NS_WASM_I32_EQZ);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_I32_LT_U);
+    ns_wasm_u8(&leave, NS_WASM_I32_OR);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_GE_U);
+    ns_wasm_u8(&leave, NS_WASM_I32_OR);
+    ns_wasm_u8(&leave, NS_WASM_IF); ns_wasm_u8(&leave, NS_WASM_BTVOID);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_SET); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_RETURN);
+    ns_wasm_u8(&leave, NS_WASM_END);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 2);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_GT_S);
+    ns_wasm_u8(&leave, NS_WASM_IF); ns_wasm_u8(&leave, NS_WASM_BTVOID);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 2);
+    ns_wasm_u8(&leave, NS_WASM_I32_ADD);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_LE_U);
+    ns_wasm_u8(&leave, NS_WASM_IF); ns_wasm_u8(&leave, NS_WASM_BTVOID);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 2);
+    ns_wasm_u8(&leave, NS_WASM_MISC_PREFIX); ns_wasm_u32leb(&leave, NS_WASM_MEMORY_COPY); ns_wasm_u32leb(&leave, 0); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 2);
+    ns_wasm_u8(&leave, NS_WASM_I32_ADD);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, 7);
+    ns_wasm_u8(&leave, NS_WASM_I32_ADD);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, -8);
+    ns_wasm_u8(&leave, NS_WASM_I32_AND);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_SET); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_RETURN);
+    ns_wasm_u8(&leave, NS_WASM_END);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_RETURN);
+    ns_wasm_u8(&leave, NS_WASM_END);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, 8);
+    ns_wasm_u8(&leave, NS_WASM_I32_ADD);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_LE_U);
+    ns_wasm_u8(&leave, NS_WASM_IF); ns_wasm_u8(&leave, NS_WASM_BTVOID);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_I32_LOAD); ns_wasm_u32leb(&leave, 0); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&leave, 5);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_I32_LOAD); ns_wasm_u32leb(&leave, 0); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_TEE); ns_wasm_u32leb(&leave, 6);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_LT_S);
+    ns_wasm_u8(&leave, NS_WASM_IF); ns_wasm_u8(&leave, NS_WASM_BTVOID);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&leave, 6);
+    ns_wasm_u8(&leave, NS_WASM_END);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, 8);
+    ns_wasm_u8(&leave, NS_WASM_I32_ADD);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&leave, 7);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 6);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_GT_S);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 5);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_I32_GE_U);
+    ns_wasm_u8(&leave, NS_WASM_I32_AND);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 5);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 6);
+    ns_wasm_u8(&leave, NS_WASM_I32_ADD);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_LE_U);
+    ns_wasm_u8(&leave, NS_WASM_I32_AND);
+    ns_wasm_u8(&leave, NS_WASM_IF); ns_wasm_u8(&leave, NS_WASM_BTVOID);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 7);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 5);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 6);
+    ns_wasm_u8(&leave, NS_WASM_MISC_PREFIX); ns_wasm_u32leb(&leave, NS_WASM_MEMORY_COPY); ns_wasm_u32leb(&leave, 0); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 7);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&leave, 5);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 7);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 6);
+    ns_wasm_u8(&leave, NS_WASM_I32_ADD);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&leave, 7);
+    ns_wasm_u8(&leave, NS_WASM_ELSE);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 6);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_GT_S);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 5);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_I32_NE);
+    ns_wasm_u8(&leave, NS_WASM_I32_AND);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 5);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 6);
+    ns_wasm_u8(&leave, NS_WASM_I32_ADD);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_I32_GT_U);
+    ns_wasm_u8(&leave, NS_WASM_I32_AND);
+    ns_wasm_u8(&leave, NS_WASM_IF); ns_wasm_u8(&leave, NS_WASM_BTVOID);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_RETURN);
+    ns_wasm_u8(&leave, NS_WASM_END);
+    ns_wasm_u8(&leave, NS_WASM_END);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 5);
+    ns_wasm_u8(&leave, NS_WASM_I32_STORE); ns_wasm_u32leb(&leave, 0); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 6);
+    ns_wasm_u8(&leave, NS_WASM_I32_STORE); ns_wasm_u32leb(&leave, 0); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 7);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, 7);
+    ns_wasm_u8(&leave, NS_WASM_I32_ADD);
+    ns_wasm_u8(&leave, NS_WASM_I32_CONST); ns_wasm_i64leb(&leave, -8);
+    ns_wasm_u8(&leave, NS_WASM_I32_AND);
+    ns_wasm_u8(&leave, NS_WASM_GLOBAL_SET); ns_wasm_u32leb(&leave, 0);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 4);
+    ns_wasm_u8(&leave, NS_WASM_RETURN);
+    ns_wasm_u8(&leave, NS_WASM_END);
+    ns_wasm_u8(&leave, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&leave, 1);
+    ns_wasm_u8(&leave, NS_WASM_END);
+    ns_wasm_u32leb(&sec, (u32)ns_array_length(leave));
+    for (u32 i = 0; i < (u32)ns_array_length(leave); ++i) ns_array_push(sec, leave[i]);
+    ns_array_free(leave);
 
     u32 section_content_offset = (u32)ns_array_length(*out) + 1u +
                                  ns_wasm_u32leb_size((u32)ns_array_length(sec));
@@ -2145,6 +2671,7 @@ static ns_bool ns_wasm_emittable_op(ns_ssa_op op) {
     case NS_SSA_OP_CALL: case NS_SSA_OP_ARG: case NS_SSA_OP_GLOBAL_GET:
     case NS_SSA_OP_GLOBAL_SET: case NS_SSA_OP_ALLOC: case NS_SSA_OP_CLONE: case NS_SSA_OP_LOAD:
     case NS_SSA_OP_STORE: case NS_SSA_OP_ARRAY_NEW: case NS_SSA_OP_ARRAY_STORE:
+    case NS_SSA_OP_SCOPE_ENTER: case NS_SSA_OP_SCOPE_LEAVE: case NS_SSA_OP_PIN:
     case NS_SSA_OP_INDEX: case NS_SSA_OP_NEG: case NS_SSA_OP_NOT:
     case NS_SSA_OP_ADD: case NS_SSA_OP_SUB: case NS_SSA_OP_MUL:
     case NS_SSA_OP_DIV: case NS_SSA_OP_MOD: case NS_SSA_OP_SHL:
