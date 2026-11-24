@@ -38,7 +38,7 @@ const device = {
   lost: new Promise(() => {}),
   limits: { maxStorageBuffersPerShaderStage: 8, maxBindingsPerBindGroup: 1000 },
   queue: { writeBuffer(...args) { writes.push(args); }, submit() {} },
-  createBuffer(desc) { return { desc, destroy() {} }; },
+  createBuffer(desc) { return { desc, size: desc.size, destroy() {} }; },
   createTexture(desc) { return { desc, createView() { return {}; }, destroy() {} }; },
   createSampler(desc) { return { desc }; },
   createShaderModule(desc) { return { desc }; },
@@ -447,6 +447,44 @@ assert.equal(uiRuntime.os('os_dir_scan', [uiRuntime.writeString('scan-fixture')]
 const frameWriteArr = runtime.writeArray(new Float32Array([1, 2, 3, 4]), 'f32');
 const frameWriteAddr = runtime.gpu('gpu_frame_write', [frameWriteArr, 16]);
 assert(frameWriteAddr > 0n);
+
+// A busy frame must keep distinct uniforms and texture IDs past the old 32-draw limit.
+const rootRuntime = new NSBrowserRuntime(canvas);
+rootRuntime.device = device;
+rootRuntime.memory = runtime.memory;
+const rootData = runtime.allocStruct(8);
+const rootDataPointer = runtime.allocStruct(16);
+runtime.view().setUint32(rootData, rootDataPointer, true);
+runtime.view().setUint32(rootData + 4, 4, true);
+const rootAddresses = [];
+const rootBindings = [];
+for (let draw = 0; draw < 70; draw++) {
+  runtime.view().setFloat32(rootDataPointer, draw + 1, true);
+  rootRuntime.gpu('gpu_set_root_data', [rootData, 16]);
+  assert.equal(rootRuntime.currentRootWords[0], draw + 1);
+  rootAddresses.push(rootRuntime.currentRoot);
+  rootBindings.push(rootRuntime.rootBinding());
+}
+assert.equal(new Set(rootAddresses).size, rootAddresses.length);
+const firstRootWrite = writes.length;
+rootRuntime.gpu('gpu_commit', []);
+const rootUploads = writes.slice(firstRootWrite);
+for (const [draw, { buffer, offset, size }] of rootBindings.entries()) {
+  assert.equal(size, 4096);
+  const upload = rootUploads.find(([target]) => target === buffer);
+  assert(upload && upload[4] >= offset + 16);
+  const bytes = upload[2];
+  assert.equal(new DataView(bytes.buffer, bytes.byteOffset).getFloat32(offset, true), draw + 1);
+}
+for (let frame = 1; frame <= 3; frame++) {
+  rootRuntime.gpu('gpu_set_root_data', [rootData, 16]);
+  if (frame < 3) {
+    assert(!rootAddresses.includes(rootRuntime.currentRoot));
+    rootRuntime.gpu('gpu_commit', []);
+  } else {
+    assert.equal(rootRuntime.currentRoot, rootAddresses[0]);
+  }
+}
 
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu: { async requestAdapter() { return null; } } } });
 const fallback = new NSBrowserRuntime(canvas);
