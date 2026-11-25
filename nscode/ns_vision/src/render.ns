@@ -8,6 +8,8 @@ let g_floor_texture: u32 = 0u
 // Warehouse wall normal/roughness mip atlas; 0 when the asset is missing.
 let g_wall_texture: u32 = 0u
 let g_background_shader: u32 = 0
+let g_storm_grass_shader: u32 = 0
+let g_storm_grass_state: u32 = 0
 let g_lens_shader: u32 = 0
 let g_dot_shader: u32 = 0
 let g_scene_state: u32 = 0
@@ -64,16 +66,18 @@ fn render_init() bool {
     let target = gpu_shader_target()
     g_quad_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_vision, target, "vertex"), shader_transpile_stage(fs_vision, target, "fragment"), shader_entry(vs_vision, target), shader_entry(fs_vision, target))
     g_background_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_background, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_background, target))
+    g_storm_grass_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_storm_grass, target, "vertex"), shader_transpile_stage(fs_storm_grass, target, "fragment"), shader_entry(vs_storm_grass, target), shader_entry(fs_storm_grass, target))
     g_dot_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_dots, target, "vertex"), shader_transpile_stage(fs_dots, target, "fragment"), shader_entry(vs_dots, target), shader_entry(fs_dots, target))
     g_lens_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_lens, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_lens, target))
     g_scene_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_NEARER_EQUAL, true, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
+    g_storm_grass_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_NEARER_EQUAL, true, GPU_BLEND_OFF, GPU_COLOR_MASK_ALL)
     // Soft shadows are depth tested but never occlude: a shadow that wrote
     // depth would cut into the panels it falls across.
     g_shadow_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_NEARER_EQUAL, false, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
     g_floor_texture = load_texture("assets/warehouse_floor.png")
     g_wall_texture = load_texture("assets/warehouse_wall.png")
     g_flat_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_ALWAYS, false, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
-    return g_quad_shader != 0u && g_background_shader != 0u && g_dot_shader != 0u && g_lens_shader != 0u
+    return g_quad_shader != 0u && g_background_shader != 0u && g_storm_grass_shader != 0u && g_dot_shader != 0u && g_lens_shader != 0u && storm_grass_init()
 }
 
 fn root_camera() {
@@ -240,6 +244,16 @@ fn render_begin() {
     gpu_set_state(g_flat_state)
     gpu_set_root_data(g_root, ROOT_BYTES)
     gpu_draw_vertices(0, 3, 1)
+    let grass: f32 = 0.0
+    if g_environment == ENVIRONMENT_STORM_MEADOW {
+        grass = blend
+    }
+    if g_environment_previous == ENVIRONMENT_STORM_MEADOW {
+        grass = grass + 1.0 - blend
+    }
+    if grass > 0.0 {
+        draw_storm_grass(grass)
+    }
     if g_root[3] > 0.01 {
         gpu_set_shader(g_dot_shader)
         gpu_set_state(g_scene_state)

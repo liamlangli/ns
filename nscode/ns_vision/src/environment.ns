@@ -1,7 +1,8 @@
 // Environments behind the window dome, shared by the background pass and the
 // launcher's hex previews. Void and Light are gradients under the dot field;
 // Warehouse is an open-roofed concrete room traced per pixel.
-lit ENVIRONMENT_COUNT = 3
+lit ENVIRONMENT_STORM_MEADOW = 3
+lit ENVIRONMENT_COUNT = 4
 
 fn environment_name(index: i32) str {
     if index == 1 {
@@ -9,6 +10,9 @@ fn environment_name(index: i32) str {
     }
     if index == 2 {
         return "Warehouse"
+    }
+    if index == ENVIRONMENT_STORM_MEADOW {
+        return "Storm Meadow"
     }
     return "Void"
 }
@@ -79,7 +83,7 @@ fn shade(alpha: f32) float4 {
 
 // Opacity of the dot field over each environment.
 fn environment_dot_alpha(index: i32) f32 {
-    if index == 2 {
+    if index == 2 || index == ENVIRONMENT_STORM_MEADOW {
         return 0.0
     }
     return 1.0
@@ -93,12 +97,15 @@ fn environment_dot(index: i32) f32 {
     return 0.52
 }
 
-// Both environments grade gently with the world up axis (view direction
+// Void and Light grade gently with the world up axis (view direction
 // `d`), so looking up reads brighter than looking down, under a soft
 // screen-space vignette. Void: dark grey. Light: soft grey.
 fn environment_sample(index: i32, d: float3, uv: float2) float3 {
     if index == 2 {
         return env_warehouse(d, uv)
+    }
+    if index == ENVIRONMENT_STORM_MEADOW {
+        return storm_meadow(d, shader_root_f32(35))
     }
     let up = ease(d.y * 0.5 + 0.5)
     let dx = uv.x - 0.5

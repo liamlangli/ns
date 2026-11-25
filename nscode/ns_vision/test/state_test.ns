@@ -10,7 +10,10 @@ fn main() {
     g_hud_clock = false
     g_target_yaw = 0.7
     g_target_pitch = -0.2
-    save_settings()
+    g_environment = 2
+    set_environment(ENVIRONMENT_STORM_MEADOW)
+    assert g_environment_previous == 2 && g_environment_blend == 0.0
+    g_environment = 0
     g_target_yaw = 0.0
     g_target_pitch = 0.0
     g_scale = 1.0
@@ -18,6 +21,9 @@ fn main() {
     g_curve = 0.0
     g_hud_clock = true
     load_settings()
+    assert g_environment == ENVIRONMENT_STORM_MEADOW
+    assert environment_name(g_environment) == "Storm Meadow"
+    assert environment_dot_alpha(g_environment) == 0.0
     assert g_scale == 2.0 && absf(g_target_fov - 1.1) < 0.001
     assert absf(g_curve - 23.0 * DEG) < 0.001 && !g_hud_clock
     assert absf(g_yaw - 0.7) < 0.001 && absf(g_pitch + 0.2) < 0.001 && g_target_yaw == g_yaw

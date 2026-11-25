@@ -1,0 +1,133 @@
+use std
+
+fn main() {
+    // Guard the buffer ranges used by the four instanced draw calls.
+    let words = storm_collect_tiles(0.0, -0.22, 0.45, 1.78)
+    assert words > 0 && words <= g_storm_tiles.len
+    let total = 0
+    for lod in 0 to STORM_BANDS {
+        assert STORM_GRID_SIDE % storm_grass_band(lod).step == 0
+        assert g_storm_tile_starts[lod] == total
+        assert g_storm_tile_spans[lod] > 0
+        total = total + g_storm_tile_spans[lod] * 2
+        if lod > 0 {
+            let close = storm_grass_band(lod - 1)
+            let far = storm_grass_band(lod)
+            assert far.inner <= close.outer - 1.8
+            assert far.rows < close.rows && far.step == close.step * 2
+        }
+    }
+    assert total == words
+    assert storm_collect_tiles(0.0, 1.20, 0.30, 1.78) < words
+    assert storm_tile_visible(float3 { 0.0, 0.0, 8.0 }, 0.8, 0.45)
+    assert !storm_tile_visible(float3 { 0.0, 0.0, -8.0 }, 0.8, 0.45)
+    assert !storm_tile_visible(float3 { 22.0, 0.0, 8.0 }, 0.8, 0.45)
+
+    // Terrain starts at 0 at the eye and stays smooth with unit upward normals.
+    assert storm_terrain_height(0.0, 0.0) == 0.0
+    let h_near = storm_terrain_height(12.0, 28.0)
+    let h_adj = storm_terrain_height(12.1, 28.0)
+    assert h_near == h_near && absf(h_near - h_adj) < 0.1
+    let tn = storm_terrain_normal(12.0, 28.0)
+    assert tn.y > 0.5 && absf(length(tn) - 1.0) < 0.00001
+
+    // Back-left to front-right wind basis and crosswind sweep bounds.
+    let heading = storm_wind_heading(0.0)
+    let wind_space = storm_wind_space(heading.x, heading.y)
+    assert absf(wind_space.x - 1.0) < 0.00001 && absf(wind_space.y) < 0.00001
+    assert absf(heading.x - 0.50) < 0.0001 && heading.y > heading.x * 1.7
+    for sample in 0 to 11 {
+        let turned = storm_wind_heading((sample as f32 - 5.0) * 0.044)
+        assert turned.x > 0.25 && turned.y > turned.x
+    }
+    let wind = storm_wind(4.0, 8.0, 6.0)
+    let neighbor = storm_wind(4.06, 8.0, 6.0)
+    let later = storm_wind(4.0, 8.0, 6.8)
+    assert wind.x >= 0.34 && wind.x <= 1.0
+    assert absf(wind.x - neighbor.x) < 0.03
+    assert absf(wind.x - later.x) + absf(wind.y - later.y) > 0.02
+    let shadow = storm_cloud_shadow(15.0, 24.0, 4.0)
+    assert shadow >= 0.38 && shadow <= 1.0
+
+    // Voronoi clump continuity and archetype parameters.
+    let clump = storm_clump_at(4.0, 8.0)
+    let clump_neighbor = storm_clump_at(4.004, 8.004)
+    let other_clump = storm_clump_at(7.0, 8.0)
+    assert clump.seed == clump_neighbor.seed && clump.seed != other_clump.seed
+    assert clump.kind == clump_neighbor.kind && clump.kind >= 0 && clump.kind <= 2
+    assert absf(clump.core - clump_neighbor.core) < 0.04
+    let arch0 = storm_clump_params(0)
+    let arch2 = storm_clump_params(2)
+    assert arch0.height_base > arch2.height_base && arch0.pull > arch2.pull
+
+    // Blade traits and motion hashes remain deterministic and varied.
+    let seed = storm_blade_seed(-12, 83)
+    let adjacent_seed = storm_blade_seed(-11, 83)
+    let traits = storm_blade_traits(seed)
+    let repeated = storm_blade_traits(storm_blade_seed(-12, 83))
+    let adjacent_traits = storm_blade_traits(adjacent_seed)
+    assert traits.x == repeated.x && traits.y == repeated.y && traits.z == repeated.z && traits.w == repeated.w
+    assert traits.x != adjacent_traits.x && traits.y != adjacent_traits.y
+    assert traits.z != adjacent_traits.z && traits.w != adjacent_traits.w
+
+    // Cubic Bezier spline endpoints, unit tangents, and downwind gusts.
+    let p0 = float3 { 0.0, 0.0, 0.0 }
+    let facing = normalize(float2 { 0.3, 0.95 })
+    let slope = storm_terrain_normal(6.0, 12.0)
+    let base_rand = storm_blade_random { 0.84, 0.0, 2.8 }
+    let calm_ctrl = storm_blade_control_points(0.92, 0.28, facing, slope, float2 { 0.15, 0.0 }, 2.0, 0.25, 0.85, 10.0, base_rand)
+    let gust_ctrl = storm_blade_control_points(0.92, 0.28, facing, slope, float2 { 0.95, 0.15 }, 2.0, 0.25, 0.85, 10.0, base_rand)
+    let alt_facing = normalize(float2 { -0.95, -0.3 })
+    let alt_rand = storm_blade_random { 0.60, -0.25, 2.2 }
+    let alt_ctrl = storm_blade_control_points(0.92, 0.28, alt_facing, slope, float2 { 0.45, 0.0 }, 2.0, 0.25, 0.85, 10.0, alt_rand)
+    let same_ctrl = storm_blade_control_points(0.92, 0.28, facing, slope, float2 { 0.45, 0.0 }, 2.0, 0.25, 0.85, 10.0, base_rand)
+    assert length(alt_ctrl.p3 - same_ctrl.p3) > 0.25
+    let min_h: f32 = 10.0
+    let max_h: f32 = 0.0
+    for idx in 0 to 16 {
+        let t_item = storm_blade_traits(storm_blade_seed(idx, 12))
+        let h_item = (arch0.height_base + (clump.seed - 0.5) * arch0.height_span) * mixf(0.56, 1.38, t_item.x * (0.65 + 0.35 * t_item.x)) * (0.92 + clump.core * 0.16)
+        min_h = minf(min_h, h_item)
+        max_h = maxf(max_h, h_item)
+    }
+    assert max_h / min_h > 1.7
+    let b0 = storm_bezier(p0, calm_ctrl.p1, calm_ctrl.p2, calm_ctrl.p3, 0.0)
+    let b1 = storm_bezier(p0, calm_ctrl.p1, calm_ctrl.p2, calm_ctrl.p3, 1.0)
+    assert length(b0) == 0.0 && length(b1 - calm_ctrl.p3) < 0.00001
+    assert gust_ctrl.p3.y < calm_ctrl.p3.y && gust_ctrl.p3.z > calm_ctrl.p3.z
+    for step in 0 to 9 {
+        let t = step as f32 / 8.0
+        let pt = storm_bezier(p0, gust_ctrl.p1, gust_ctrl.p2, gust_ctrl.p3, t)
+        let tg = storm_bezier_tangent(p0, gust_ctrl.p1, gust_ctrl.p2, gust_ctrl.p3, t)
+        assert pt.x == pt.x && pt.y == pt.y && pt.z == pt.z
+        assert pt.y >= 0.0 && absf(length(tg) - 1.0) < 0.00001
+    }
+
+    // Distant meadow raymarch keeps sky rays above terrain and hits ground cleanly ahead.
+    let sky_ray = normalize(float3 { 0.0, 0.25, 0.968 })
+    let ground_ray = normalize(float3 { 0.0, -0.25, 0.968 })
+    assert storm_ground_ray(sky_ray) < 0.0
+    assert storm_ground_ray(ground_ray) > 3.0
+    let sky = storm_meadow(sky_ray, 3.0)
+    let ground = storm_meadow(ground_ray, 3.0)
+    assert sky.x == sky.x && ground.x == ground.x
+    assert sky.x >= 0.0 && ground.y >= 0.0
+    assert storm_fog_amount(18.0) == 0.0 && storm_fog_amount(480.0) >= 0.99
+    let root_c = storm_grass_root_color()
+    assert root_c.y > root_c.x && root_c.y > root_c.z
+    let horizon = normalize(float3 { 0.0, 0.0, 1.0 })
+    let horizon_sky = storm_sky(horizon, 3.0)
+    let horizon_mist = storm_fog_color(horizon)
+    assert length(horizon_sky - horizon_mist) < 0.001
+    let min_lum: f32 = 10.0
+    let max_lum: f32 = 0.0
+    for s in 0 to 6 {
+        let probe = storm_sky(normalize(float3 { (s as f32 - 2.5) * 0.035, 0.25, 0.96 }), 3.0)
+        assert probe.x == probe.x && probe.x >= 0.0 && probe.y >= 0.0 && probe.z >= 0.0
+        let lum = probe.x * 0.299 + probe.y * 0.587 + probe.z * 0.114
+        min_lum = minf(min_lum, lum)
+        max_lum = maxf(max_lum, lum)
+    }
+    assert max_lum - min_lum > 0.01
+    print("vision: endless storm meadow, Bezier clumps, jittered spawn and root match passed\n")
+}

@@ -399,6 +399,7 @@ fn vision_terminate(v: ref view) {
         }
     }
     if g_ready {
+        gpu_free(g_storm_indices)
         gpu_texture_destroy(g_font_main.texture)
         gpu_texture_destroy(g_font_alternate.texture)
         gpu_texture_destroy(g_font_cjk.texture)
