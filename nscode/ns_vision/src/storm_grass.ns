@@ -1,9 +1,9 @@
 use gpu
 use shader
 
-lit STORM_TILE_WIDTH: f32 = 2.2
+lit STORM_TILE_WIDTH: f32 = 2.31
 lit STORM_TILE_MARGIN: f32 = 4.5
-lit STORM_GRID_SIDE = 40
+lit STORM_GRID_SIDE = 48
 lit STORM_BANDS = 4
 lit STORM_GRASS_NEAR: f32 = 0.000015
 
@@ -423,7 +423,7 @@ fn vs_storm_grass() storm_vertex {
     }
     let taper = (1.0 - t * t * t) * (1.0 + 0.12 * (1.0 - t)) + seed_head * (1.0 - env_smooth(0.88, 1.0, t)) * 0.22
     let far_width = 1.0 + (band.step - 1) as f32 * 0.38
-    let width = (0.0092 + traits.w * 0.0078 + clump.core * 0.0028) * taper * far_width * last_fade
+    let width = (0.0064 + traits.w * 0.0055 + clump.core * 0.0020) * taper * far_width * last_fade
 
     let world = float3 {
         bx + spine.x + width_axis.x * side * width,
