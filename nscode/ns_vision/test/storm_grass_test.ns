@@ -129,5 +129,30 @@ fn main() {
         max_lum = maxf(max_lum, lum)
     }
     assert max_lum - min_lum > 0.01
+
+    // Growth-direction normal tilt & spatially/per-blade varying roughness.
+    let gt0 = storm_grass_growth_tilt(0.0, 0.2, 0.25, 1.0)
+    let gt1 = storm_grass_growth_tilt(0.22, 0.2, 0.25, 1.0)
+    let gt2 = storm_grass_growth_tilt(0.54, 0.2, 0.25, 1.0)
+    let gt3 = storm_grass_growth_tilt(0.84, 0.2, 0.25, 1.0)
+    let gt_other = storm_grass_growth_tilt(0.54, 0.2, 0.73, 1.0)
+    assert absf(gt0) < 0.0001
+    assert absf(gt1 - gt2) > 0.02 || absf(gt2 - gt3) > 0.02
+    assert absf(gt2 - gt_other) > 0.02
+
+    let r_root = storm_grass_roughness(0.35, 0.04, 0.3, 0.2, 0.0, 1.0)
+    let r_mid = storm_grass_roughness(0.35, 0.45, 0.3, 0.2, 0.0, 1.0)
+    let r_tip = storm_grass_roughness(0.35, 0.96, 0.3, 0.2, 0.0, 1.0)
+    assert r_root >= 0.18 && r_root <= 0.95
+    assert r_mid >= 0.18 && r_mid <= 0.95
+    assert r_tip >= 0.18 && r_tip <= 0.95
+    assert r_root > r_mid && r_tip > r_mid
+
+    let r_crest = storm_grass_roughness(0.40, 0.50, 0.4, 0.3, 1.0, 1.0)
+    let r_groove = storm_grass_roughness(0.40, 0.50, 0.4, 0.3, -1.0, 1.0)
+    assert r_groove > r_crest
+    let r_dry = storm_grass_roughness(0.75, 0.50, 0.4, 0.3, 0.0, 1.0)
+    assert r_dry > r_mid
+
     print("vision: endless storm meadow, Bezier clumps, jittered spawn and root match passed\n")
 }

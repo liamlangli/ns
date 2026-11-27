@@ -142,14 +142,17 @@ struct storm_vertex {
     pigment: float3,
     normal: float3,
     width_axis: float3,
+    tangent_axis: float3,
+    view_dir: float3,
     fog_color: float3,
-    info: float4
+    info: float4,
+    surface: float4
 }
 
 fn storm_hidden_blade() storm_vertex {
     let zero = float3 { 0.0, 0.0, 0.0 }
     let z4 = float4 { 0.0, 0.0, 0.0, 0.0 }
-    return storm_vertex { float4 { 2.0, 2.0, 0.0, 1.0 }, zero, zero, zero, zero, z4 }
+    return storm_vertex { float4 { 2.0, 2.0, 0.0, 1.0 }, zero, zero, zero, zero, zero, zero, z4, z4 }
 }
 
 struct storm_clump {
@@ -313,6 +316,27 @@ fn storm_blade_control_points(height: f32, bend: f32, facing: float2, slope: flo
     return storm_bezier_points { p1, p2, p3 }
 }
 
+fn storm_grass_growth_tilt(t: f32, edge: f32, phase: f32, detail_fade: f32) f32 {
+    let root_env = env_smooth(0.0, 0.14, t)
+    let wave1 = sin(t * (5.2 + phase * 4.8) + phase * 17.3) as f32 * 0.26
+    let wave2 = sin(t * (15.0 + env_fract(phase * 7.137) * 11.0) - phase * 29.1 + absf(edge) * 1.4) as f32 * 0.15 * detail_fade
+    let kink_pos = 0.34 + env_fract(phase * 3.713) * 0.44
+    let kink_x = (t - kink_pos) * 10.5
+    let kink = (kink_x / (1.0 + kink_x * kink_x)) * (0.36 * (env_fract(phase * 11.91) * 2.0 - 1.0))
+    return (wave1 * (0.50 + 0.50 * detail_fade) + wave2 + kink * (0.55 + 0.45 * detail_fade)) * root_env
+}
+
+fn storm_grass_roughness(base_rough: f32, t: f32, edge: f32, phase: f32, vein_ridge: f32, detail_fade: f32) f32 {
+    let root_rough = (1.0 - env_smooth(0.0, 0.24, t)) * 0.22
+    let mid_wax = -env_smooth(0.14, 0.44, t) * (1.0 - env_smooth(0.62, 0.90, t)) * 0.08
+    let tip_rough = env_smooth(0.70, 1.0, t) * 0.20
+    let patch_f = 4.0 + env_fract(phase * 5.37) * 5.0
+    let growth_patch = sin(t * patch_f + phase * 13.7) as f32 * 0.085 + sin(t * (patch_f * 2.35) - phase * 21.4) as f32 * 0.045 * detail_fade
+    let midrib_rough = (1.0 - env_smooth(0.0, 0.18, absf(edge))) * 0.065
+    let vein_rough = (-vein_ridge * 0.055 + midrib_rough) * detail_fade
+    return clampf(base_rough + root_rough + mid_wax + tip_rough + growth_patch + vein_rough, 0.18, 0.95)
+}
+
 fn vs_storm_grass() storm_vertex {
     let lod = shader_root_f32(4) as i32
     let band = storm_grass_band(lod)
@@ -451,6 +475,7 @@ fn vs_storm_grass() storm_vertex {
     let clump_blend = env_smooth(6.0, 24.0, radius) * (1.0 - t * 0.55)
     let out_normal = normalize(env_mix(base_normal, distant_n, clump_blend))
     let out_width = env_scale3(width_axis, 0.65 * (1.0 - clump_blend * 0.85))
+    let out_tangent = env_scale3(tangent, 1.0 - clump_blend * 0.85)
 
     // Overcast storm three-point blade palette, pre-multiplied by tint and root AO.
     let root_col = storm_grass_root_color()
@@ -469,6 +494,13 @@ fn vs_storm_grass() storm_vertex {
     let ao = mixf(STORM_GRASS_ROOT_AO, 1.0, t * t * (1.4 - 0.4 * t))
     pigment = env_scale3(pigment, tint * ao)
 
+    let dry_factor = clampf(dry_mask * archetype.dry * 1.15 + seed_head * 0.65, 0.0, 1.0)
+    let blade_var = traits2.w * 0.65 + pos_traits.w * 0.35
+    let dist_aa = env_smooth(5.0, 26.0, radius) * 0.28
+    let base_rough = clampf(mixf(mixf(0.24, 0.46, blade_var), mixf(0.58, 0.86, blade_var), dry_factor) + dist_aa, 0.20, 0.94)
+    let blade_phase = env_fract(traits.w * 0.618034 + traits2.y * 0.381966 + pos_traits.x * 0.27)
+    let detail_fade = 1.0 - env_smooth(4.5, 20.0, radius)
+
     let shadow = mixf(storm_cloud_shadow(bx, bz, time), 1.0, 0.25 * (1.0 - t))
     let fog_factor = storm_fog_amount(radius)
     let fog_color = storm_fog_color(world)
@@ -477,8 +509,11 @@ fn vs_storm_grass() storm_vertex {
         pigment,
         out_normal,
         out_width,
+        out_tangent,
+        observer,
         fog_color,
-        float4 { side, shadow, fog_factor, 0.0 }
+        float4 { side, shadow, fog_factor, t },
+        float4 { base_rough, blade_phase, detail_fade, dry_factor }
     }
 }
 
@@ -490,12 +525,69 @@ fn fs_storm_grass(input: storm_vertex) float4 {
     let edge = input.info.x
     let shadow = input.info.y
     let fog = input.info.z
-    let n = normalize(env_add(input.normal, env_scale3(input.width_axis, edge)))
+    let t = clampf(input.info.w, 0.0, 1.0)
+    let base_rough = input.surface.x
+    let phase = input.surface.y
+    let detail_fade = input.surface.z
+    let dry_factor = input.surface.w
+
+    let vein_phase = absf(edge) * 15.70796 + t * 1.15 + phase * 6.28318
+    let vein_ridge = sin(vein_phase) as f32
+    let vein_sign = 1.0
+    if edge < 0.0 {
+        vein_sign = -1.0
+    }
+    let vein_tilt = cos(vein_phase) as f32 * vein_sign * 0.16 * detail_fade
+    let midrib_v = (edge / (absf(edge) + 0.18)) * 0.15 * detail_fade
+    let across_tilt = edge + vein_tilt + midrib_v
+    let growth_tilt = storm_grass_growth_tilt(t, edge, phase, detail_fade)
+
+    let n = normalize(env_add(env_add(input.normal, env_scale3(input.width_axis, across_tilt)), env_scale3(input.tangent_axis, growth_tilt)))
+    let v = normalize(input.view_dir)
+    if dot3(n, v) < 0.0 {
+        n = env_scale3(n, -1.0)
+    }
+    let roughness = storm_grass_roughness(base_rough, t, edge, phase, vein_ridge, detail_fade)
+
     let light_dir = storm_light_dir()
+    let raw_ndotl = dot3(n, light_dir)
+    let ndotl = maxf(raw_ndotl, 0.0)
+    let back_lit = maxf(-raw_ndotl, 0.0)
+    let ndotv = maxf(dot3(n, v), 0.02)
+
     let sky_lit = mixf(0.18, 0.46, clampf(n.y * 0.5 + 0.5, 0.0, 1.0))
-    let direct = (absf(dot3(n, light_dir)) * 0.55 + 0.25) * 0.42 * shadow
-    let midrib = mixf(0.90, 1.04, 1.0 - absf(edge))
-    let shaded = env_scale3(input.pigment, (sky_lit + direct) * midrib)
+    let direct = (ndotl * 0.66 + back_lit * 0.24 + 0.18) * 0.42 * shadow
+    let midrib = mixf(0.90, 1.04, 1.0 - absf(edge)) * mixf(0.95, 1.04, 0.5 + 0.5 * vein_ridge * detail_fade)
+
+    let h = normalize(env_add(light_dir, v))
+    let ndoth = maxf(dot3(n, h), 0.0)
+    let vdoth = maxf(dot3(v, h), 0.0)
+    let alpha = roughness * roughness
+    let alpha2 = alpha * alpha
+    let denom_h = ndoth * ndoth * (alpha2 - 1.0) + 1.0
+    let d_ggx = alpha2 / maxf(PI * denom_h * denom_h, 0.0001)
+    let k = (roughness + 1.0) * (roughness + 1.0) * 0.125
+    let vis = 0.25 / maxf((ndotv * (1.0 - k) + k) * (ndotl * (1.0 - k) + k), 0.01)
+    let f0 = mixf(0.045, 0.024, dry_factor)
+    let fresnel_h = pow(clampf(1.0 - vdoth, 0.0, 1.0), 5.0) as f32
+    let f_key = f0 + (1.0 - f0) * fresnel_h
+    let ao_spec = env_smooth(0.04, 0.34, t)
+    let spec_brdf = minf(d_ggx * vis * f_key, 1.4)
+    let spec_key = env_scale3(env_rgb(0.68, 0.72, 0.66), spec_brdf * ndotl * shadow * ao_spec * 0.58)
+
+    let refl = env_add(env_scale3(n, 2.0 * ndotv), env_scale3(v, -1.0))
+    let sky_refl_col = env_mix(env_rgb(0.14, 0.17, 0.19), env_rgb(0.36, 0.40, 0.41), clampf(refl.y * 0.5 + 0.5, 0.0, 1.0))
+    let fresnel_v = pow(clampf(1.0 - ndotv, 0.0, 1.0), 5.0) as f32
+    let f_env = f0 + (maxf(1.0 - roughness, f0) - f0) * fresnel_v
+    let sky_sheen = (1.0 - roughness * 0.72) * f_env * ao_spec * mixf(0.45, 1.0, shadow) * 0.72
+    let spec_sky = env_scale3(sky_refl_col, sky_sheen)
+
+    let back_view = maxf(-dot3(v, light_dir), 0.0)
+    let sss = back_view * back_view * back_view * (0.25 + 0.75 * t) * (1.0 - dry_factor * 0.65) * shadow * 0.26
+    let spec_sss = env_scale3(env_rgb(0.24, 0.32, 0.10), sss)
+
+    let diffuse_col = env_scale3(input.pigment, (sky_lit + direct) * midrib * (1.0 - f_env * 0.30))
+    let shaded = env_add(diffuse_col, env_add(env_add(spec_key, spec_sky), spec_sss))
     let final_col = env_mix(shaded, input.fog_color, fog)
     return float4 { final_col.x, final_col.y, final_col.z, 1.0 }
 }
