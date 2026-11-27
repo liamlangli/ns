@@ -141,20 +141,20 @@ fn draw_hud() {
     let margin_x = 72.0 * ui
     let margin_y = 40.0 * ui
     if g_hud_guide && g_launcher_mode == 0 {
-        let width = 300.0 * ui
-        let height = 176.0 * ui
+        let width = 320.0 * ui
+        let height = 226.0 * ui
         let x = margin_x + width * 0.5
         let y = g_frame_h - margin_y - height * 0.5
         let heat = hud_heat(x, y, width, height, ui)
         let alpha = 0.5 + 0.5 * heat
         lean_space(x, y, width, height, 0.86 + 0.34 * heat, -0.5, -0.5)
         hud_text("Shortcuts", 18.0 * ui, 24.0 * ui, 12.0 * ui, 0.62, 0.90 * alpha, ui)
-        let keys = split_lines("Alt+E\nAlt+B\nEsc\nAlt+W\nAlt+Q")
-        let names = split_lines("Programs\nBackground\nSettings\nHide / restore\nQuit")
-        for i in 0 to 5 {
+        let keys = split_lines("Alt+E\nAlt+B\nEsc\nAlt+W\nAlt+Q\nLeft drag\nRight drag")
+        let names = split_lines("Programs\nBackground\nSettings\nHide / restore\nQuit\nMove on dome\nMove forward / back")
+        for i in 0 to keys.len {
             let row = (50.0 + 25.0 * i as f32) * ui
             hud_text(keys[i], 18.0 * ui, row, 15.0 * ui, 0.96, 0.98 * alpha, ui)
-            hud_text(names[i], 104.0 * ui, row, 14.0 * ui, 0.66, 0.95 * alpha, ui)
+            hud_text(names[i], 120.0 * ui, row, 14.0 * ui, 0.66, 0.95 * alpha, ui)
         }
     }
     if g_hud_clock && g_launcher_mode == 0 {
