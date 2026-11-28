@@ -1,6 +1,7 @@
 #include "desktop.h"
 #include "gpu.h"
 #import <Cocoa/Cocoa.h>
+#import <QuartzCore/QuartzCore.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <Carbon/Carbon.h>
@@ -77,6 +78,243 @@ static void desktop_init(void) {
 }
 - (void)dealloc { if (_pixel) CVPixelBufferRelease(_pixel); }
 @end
+@interface NSDesktopDragCard : NSView <NSDraggingSource>
+@property(nonatomic, strong) NSURL *appURL;
+@property(nonatomic) NSPoint dragOrigin;
+@property(nonatomic) BOOL dragging;
+@end
+
+@implementation NSDesktopDragCard
+- (BOOL)acceptsFirstMouse:(NSEvent *)event {
+    (void)event;
+    return YES;
+}
+- (NSView *)hitTest:(NSPoint)point {
+    return [super hitTest:point] ? self : nil;
+}
+- (void)resetCursorRects {
+    [self addCursorRect:self.bounds cursor:[NSCursor openHandCursor]];
+}
+- (void)mouseDown:(NSEvent *)event {
+    self.dragOrigin = [self convertPoint:event.locationInWindow fromView:nil];
+    self.dragging = NO;
+}
+- (void)mouseDragged:(NSEvent *)event {
+    if (self.dragging || !self.appURL) return;
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    CGFloat dx = point.x - self.dragOrigin.x;
+    CGFloat dy = point.y - self.dragOrigin.y;
+    if (dx * dx + dy * dy < 9.0) return;
+    self.dragging = YES;
+    NSDraggingItem *item = [[NSDraggingItem alloc] initWithPasteboardWriter:self.appURL];
+    NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:self.appURL.path];
+    icon.size = NSMakeSize(64, 64);
+    [item setDraggingFrame:NSMakeRect(point.x - 32.0, point.y - 32.0, 64.0, 64.0) contents:icon];
+    [self beginDraggingSessionWithItems:@[item] event:event source:self];
+}
+- (void)mouseUp:(NSEvent *)event {
+    (void)event;
+    self.dragging = NO;
+}
+- (NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+    (void)session;
+    return context == NSDraggingContextOutsideApplication ? NSDragOperationEvery : NSDragOperationNone;
+}
+- (void)draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation {
+    (void)session;
+    (void)screenPoint;
+    (void)operation;
+    self.dragging = NO;
+}
+@end
+
+@interface NSDesktopPermissionHelper : NSObject <NSWindowDelegate>
+@property(nonatomic, strong) NSPanel *panel;
+@property(nonatomic, strong) NSTimer *timer;
+@property(nonatomic, strong) NSURL *appURL;
+@property(nonatomic, strong) NSURL *settingsURL;
+@property(nonatomic) BOOL accessibility;
+- (void)copyPath:(id)sender;
+- (void)revealInFinder:(id)sender;
+- (void)openSettings:(id)sender;
+- (void)pollPermission:(NSTimer *)timer;
+@end
+
+static NSDesktopPermissionHelper *permission_helper;
+
+@implementation NSDesktopPermissionHelper
+- (void)copyPath:(id)sender {
+    (void)sender;
+    if (self.appURL.path.length) {
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        [pb clearContents];
+        [pb setString:self.appURL.path forType:NSPasteboardTypeString];
+    }
+}
+- (void)revealInFinder:(id)sender {
+    (void)sender;
+    if (self.appURL) {
+        [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[self.appURL]];
+    }
+}
+- (void)openSettings:(id)sender {
+    (void)sender;
+    if (self.settingsURL) {
+        [[NSWorkspace sharedWorkspace] openURL:self.settingsURL];
+    }
+}
+- (void)pollPermission:(NSTimer *)timer {
+    (void)timer;
+    BOOL granted = self.accessibility ? AXIsProcessTrusted() : CGPreflightScreenCaptureAccess();
+    if (granted) {
+        [self.panel close];
+    }
+}
+- (void)windowWillClose:(NSNotification *)note {
+    (void)note;
+    [self.timer invalidate];
+    self.timer = nil;
+    if (permission_helper == self) {
+        permission_helper = nil;
+    }
+}
+@end
+
+static NSURL *desktop_app_bundle_url(void) {
+    NSURL *bundle = NSBundle.mainBundle.bundleURL;
+    if ([bundle.pathExtension.lowercaseString isEqualToString:@"app"]) {
+        return bundle;
+    }
+    NSString *exe = NSBundle.mainBundle.executablePath;
+    if (exe.length) {
+        NSURL *cur = [NSURL fileURLWithPath:exe];
+        for (int i = 0; i < 4; ++i) {
+            cur = [cur URLByDeletingLastPathComponent];
+            if ([cur.pathExtension.lowercaseString isEqualToString:@"app"]) {
+                return cur;
+            }
+        }
+        return [NSURL fileURLWithPath:exe];
+    }
+    return bundle;
+}
+
+static void desktop_close_permission_helper(void) {
+    NSDesktopPermissionHelper *helper = permission_helper;
+    if (!helper) return;
+    permission_helper = nil;
+    [helper.timer invalidate];
+    helper.timer = nil;
+    [helper.panel close];
+}
+
+static void desktop_show_permission_helper(BOOL accessibility) {
+    desktop_close_permission_helper();
+    NSURL *appURL = desktop_app_bundle_url();
+    if (!appURL) return;
+    NSString *paneString = accessibility
+        ? @"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        : @"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+    NSURL *settingsURL = [NSURL URLWithString:paneString];
+
+    NSDesktopPermissionHelper *helper = [NSDesktopPermissionHelper new];
+    helper.appURL = appURL;
+    helper.settingsURL = settingsURL;
+    helper.accessibility = accessibility;
+
+    const CGFloat width = 360.0;
+    const CGFloat height = 256.0;
+    NSPanel *panel = [[NSPanel alloc]
+        initWithContentRect:NSMakeRect(0, 0, width, height)
+        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskUtilityWindow | NSWindowStyleMaskNonactivatingPanel
+        backing:NSBackingStoreBuffered
+        defer:NO];
+    panel.title = accessibility ? @"NS Vision — Accessibility" : @"NS Vision — Screen Recording";
+    panel.floatingPanel = YES;
+    panel.hidesOnDeactivate = NO;
+    panel.level = NSModalPanelWindowLevel + 1;
+    panel.becomesKeyOnlyIfNeeded = YES;
+    panel.releasedWhenClosed = NO;
+    panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+    panel.delegate = helper;
+
+    NSView *content = panel.contentView;
+    NSString *appName = appURL.lastPathComponent ?: @"ns_vision.app";
+    NSTextField *hint = [NSTextField wrappingLabelWithString:
+        [NSString stringWithFormat:@"In System Settings, click '+' then drag %@ below into the file picker and click Open.", appName]];
+    hint.frame = NSMakeRect(20, 200, 320, 40);
+    hint.font = [NSFont systemFontOfSize:13.0];
+    [content addSubview:hint];
+
+    NSDesktopDragCard *card = [[NSDesktopDragCard alloc] initWithFrame:NSMakeRect(20, 100, 320, 88)];
+    card.appURL = appURL;
+    card.wantsLayer = YES;
+    card.layer.cornerRadius = 10.0;
+    card.layer.borderWidth = 1.0;
+    card.layer.borderColor = [NSColor separatorColor].CGColor;
+    card.layer.backgroundColor = [NSColor controlBackgroundColor].CGColor;
+
+    NSImageView *iconView = [[NSImageView alloc] initWithFrame:NSMakeRect(14, 12, 64, 64)];
+    iconView.image = [[NSWorkspace sharedWorkspace] iconForFile:appURL.path];
+    iconView.imageScaling = NSImageScaleProportionallyUpOrDown;
+    [card addSubview:iconView];
+
+    NSTextField *nameLabel = [NSTextField labelWithString:appName];
+    nameLabel.frame = NSMakeRect(90, 46, 214, 22);
+    nameLabel.font = [NSFont boldSystemFontOfSize:14.0];
+    nameLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    [card addSubview:nameLabel];
+
+    NSTextField *subLabel = [NSTextField labelWithString:@"Drag into the '+' file picker \u2192"];
+    subLabel.frame = NSMakeRect(90, 22, 214, 18);
+    subLabel.font = [NSFont systemFontOfSize:12.0];
+    subLabel.textColor = [NSColor secondaryLabelColor];
+    [card addSubview:subLabel];
+    [content addSubview:card];
+
+    NSTextField *pathLabel = [NSTextField labelWithString:appURL.path ?: @""];
+    pathLabel.frame = NSMakeRect(20, 64, 320, 24);
+    pathLabel.selectable = YES;
+    pathLabel.font = [NSFont monospacedSystemFontOfSize:10.5 weight:NSFontWeightRegular];
+    pathLabel.textColor = [NSColor secondaryLabelColor];
+    pathLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    [content addSubview:pathLabel];
+
+    NSButton *copy = [NSButton buttonWithTitle:@"Copy Path" target:helper action:@selector(copyPath:)];
+    copy.frame = NSMakeRect(20, 16, 84, 32);
+    copy.font = [NSFont systemFontOfSize:12.0];
+    [content addSubview:copy];
+
+    NSButton *reveal = [NSButton buttonWithTitle:@"Reveal in Finder" target:helper action:@selector(revealInFinder:)];
+    reveal.frame = NSMakeRect(108, 16, 120, 32);
+    reveal.font = [NSFont systemFontOfSize:12.0];
+    [content addSubview:reveal];
+
+    NSButton *open = [NSButton buttonWithTitle:@"Open Settings" target:helper action:@selector(openSettings:)];
+    open.frame = NSMakeRect(232, 16, 108, 32);
+    open.font = [NSFont systemFontOfSize:12.0];
+    [content addSubview:open];
+
+    NSScreen *screen = NSScreen.mainScreen;
+    if (screen) {
+        NSRect visible = screen.visibleFrame;
+        CGFloat x = visible.origin.x + 80.0;
+        CGFloat y = visible.origin.y + (visible.size.height - height) * 0.5;
+        [panel setFrameOrigin:NSMakePoint(x, y)];
+    }
+
+    helper.panel = panel;
+    helper.timer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:helper selector:@selector(pollPermission:) userInfo:nil repeats:YES];
+    permission_helper = helper;
+
+    [panel orderFrontRegardless];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (permission_helper == helper) {
+            [helper.panel orderFrontRegardless];
+        }
+    });
+}
+
 ns_bool desktop_supported(void) { if (@available(macOS 13.0, *)) return true; return false; }
 ns_bool desktop_permission(void) { return CGPreflightScreenCaptureAccess(); }
 // Registers the app with Screen Recording, then opens that Privacy pane so the
@@ -85,6 +323,7 @@ ns_bool desktop_request_permission(void) {
     if (CGRequestScreenCaptureAccess()) return true;
     NSURL *pane = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"];
     [[NSWorkspace sharedWorkspace] openURL:pane];
+    desktop_show_permission_helper(NO);
     return false;
 }
 ns_bool desktop_accessibility(ns_bool request) {
@@ -92,14 +331,44 @@ ns_bool desktop_accessibility(ns_bool request) {
     if (request) {
         NSURL *pane = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
         [[NSWorkspace sharedWorkspace] openURL:pane];
+        desktop_show_permission_helper(YES);
     }
     return false;
 }
-// System UI that presents as a regular application but is not one of the
-// user's windows: System Settings (where NS Vision itself sends the user for
-// permissions) never belongs on the dome or in the background list.
+// System UI that presents as an application or overlay but is not one of the
+// user's windows: System Settings (where NS Vision sends the user for
+// permissions) and macOS system chrome never belong on the dome or in the
+// background list.
 static bool desktop_system_app(NSString *bundle) {
-    return [bundle isEqualToString:@"com.apple.systempreferences"];
+    if (!bundle) return false;
+    static NSSet<NSString *> *system_bundles;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        system_bundles = [NSSet setWithObjects:
+            @"com.apple.systempreferences",
+            @"com.apple.dock",
+            @"com.apple.WindowManager",
+            @"com.apple.controlcenter",
+            @"com.apple.notificationcenterui",
+            @"com.apple.SystemUIServer",
+            @"com.apple.Spotlight",
+            @"com.apple.WallpaperAgent",
+            @"com.apple.loginwindow",
+            @"com.apple.campo",
+            @"com.apple.Siri",
+            @"com.apple.TextInputMenuAgent",
+            @"com.apple.TextInputSwitcher",
+            @"com.apple.UserNotificationCenter",
+            @"com.apple.screencaptureui",
+            @"com.apple.universalcontrol",
+            @"com.apple.CoreLocationAgent",
+            nil];
+    });
+    return [system_bundles containsObject:bundle];
+}
+static bool desktop_capture_policy(NSApplicationActivationPolicy policy) {
+    return policy == NSApplicationActivationPolicyRegular ||
+           policy == NSApplicationActivationPolicyAccessory;
 }
 void desktop_refresh(void) {
     desktop_init();
@@ -115,14 +384,16 @@ void desktop_refresh(void) {
             NSMutableSet *visible_pids = [NSMutableSet set];
             for (SCWindow *win in content.windows) {
                 SCRunningApplication *owner = win.owningApplication;
-                if (!owner || owner.processID == getpid() || win.windowLayer != 0 || win.frame.size.width < 160 || win.frame.size.height < 90) continue;
+                if (!owner || owner.processID == getpid() || win.windowLayer < 0 || win.windowLayer >= kCGDockWindowLevel || win.frame.size.width < 160 || win.frame.size.height < 44) continue;
                 NSRunningApplication *running = [NSRunningApplication runningApplicationWithProcessIdentifier:owner.processID];
-                if (!running || running.activationPolicy != NSApplicationActivationPolicyRegular || desktop_system_app(owner.bundleIdentifier)) continue;
+                if (!running || !desktop_capture_policy(running.activationPolicy) || desktop_system_app(owner.bundleIdentifier)) continue;
+                BOOL on_screen = win.isOnScreen;
+                BOOL has_title = win.title.length > 0;
+                if (!on_screen && !has_title) continue;
                 NSString *path = running.bundleURL.path ?: @"";
-                NSString *title = win.title.length ? win.title : owner.applicationName;
-                BOOL visible = win.isOnScreen && !running.hidden;
-                if (visible) [visible_pids addObject:@(owner.processID)];
-                [result addObject:@{@"id": @(win.windowID), @"pid": @(owner.processID), @"width": @((int)win.frame.size.width), @"height": @((int)win.frame.size.height), @"flags": @(visible ? 1 : 2), @"title": title ?: @"Window", @"path": path, @"key": [NSString stringWithFormat:@"%@\t%@", owner.bundleIdentifier ?: path, title ?: @""], @"window": win}];
+                NSString *title = has_title ? win.title : owner.applicationName;
+                [visible_pids addObject:@(owner.processID)];
+                [result addObject:@{@"id": @(win.windowID), @"pid": @(owner.processID), @"width": @((int)win.frame.size.width), @"height": @((int)win.frame.size.height), @"flags": @1, @"title": title ?: @"Window", @"path": path, @"key": [NSString stringWithFormat:@"%@\t%@", owner.bundleIdentifier ?: path, title ?: @""], @"window": win}];
             }
             // Apps with no remaining window can still be activated without
             // launching a second instance (the macOS equivalent of tray apps).
@@ -242,7 +513,14 @@ ns_bool desktop_window_activate(u64 window, i32 pid) {
     AXUIElementRef win = find_ax_window(window, pid);
     if (win) { AXUIElementSetAttributeValue(win, kAXMinimizedAttribute, kCFBooleanFalse); AXUIElementPerformAction(win, kAXRaiseAction); CFRelease(win); }
     [app unhide];
-    return [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    BOOL activated = [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    if (!win && app.bundleURL) {
+        NSWorkspaceOpenConfiguration *config = [NSWorkspaceOpenConfiguration configuration];
+        config.activates = YES;
+        [NSWorkspace.sharedWorkspace openApplicationAtURL:app.bundleURL configuration:config completionHandler:nil];
+        activated = YES;
+    }
+    return activated;
 }
 ns_bool desktop_window_close(u64 window, i32 pid) {
     AXUIElementRef win = find_ax_window(window, pid);
@@ -317,8 +595,13 @@ static OSStatus hotkey_event(EventHandlerCallRef next, EventRef event, void *use
     if (shortcut_view) { desktop_overlay_visible(shortcut_view, true); view_request_frame(shortcut_view, 1); }
     return noErr;
 }
+static void desktop_shortcuts_clear(void) {
+    for (int i = 0; i < 5; ++i) if (hotkeys[i]) { UnregisterEventHotKey(hotkeys[i]); hotkeys[i] = NULL; }
+    if (hotkey_handler) { RemoveEventHandler(hotkey_handler); hotkey_handler = NULL; }
+    shortcut_view = NULL; pending_action = 0;
+}
 ns_bool desktop_shortcuts_start(view *v) {
-    desktop_shortcuts_stop(); shortcut_view = v;
+    desktop_shortcuts_clear(); shortcut_view = v;
     EventTypeSpec type = {kEventClassKeyboard, kEventHotKeyPressed};
     if (InstallApplicationEventHandler(hotkey_event, 1, &type, NULL, &hotkey_handler) != noErr) return false;
     UInt32 keys[5] = {kVK_ANSI_W, kVK_ANSI_E, kVK_ANSI_B, kVK_ANSI_Q, kVK_F1};
@@ -330,9 +613,8 @@ ns_bool desktop_shortcuts_start(view *v) {
     return ok;
 }
 void desktop_shortcuts_stop(void) {
-    for (int i = 0; i < 5; ++i) if (hotkeys[i]) { UnregisterEventHotKey(hotkeys[i]); hotkeys[i] = NULL; }
-    if (hotkey_handler) { RemoveEventHandler(hotkey_handler); hotkey_handler = NULL; }
-    shortcut_view = NULL; pending_action = 0;
+    desktop_close_permission_helper();
+    desktop_shortcuts_clear();
 }
 i32 desktop_take_action(void) { i32 result = pending_action; pending_action = 0; return result; }
 static bool overlay_fullscreen = false;
@@ -341,12 +623,13 @@ static bool overlay_fullscreen = false;
 // window below the menu bar. Hiding the overlay gives them back.
 static void overlay_cover(NSWindow *window) {
     NSApp.presentationOptions = NSApplicationPresentationHideDock | NSApplicationPresentationHideMenuBar;
-    [window setFrame:(window.screen ?: NSScreen.mainScreen).frame display:YES];
+    [window setFrame:(window.screen ?: NSScreen.mainScreen).frame display:window.isVisible];
 }
 void desktop_overlay_visible(view *v, ns_bool visible) {
     if (!v || !v->native_window) return;
     NSWindow *window = (__bridge NSWindow *)v->native_window;
     if (visible) {
+        desktop_close_permission_helper();
         [NSApp unhide:nil]; [NSApp activateIgnoringOtherApps:YES]; [window makeKeyAndOrderFront:nil];
         if (overlay_fullscreen) overlay_cover(window);
     } else {
@@ -363,6 +646,7 @@ void desktop_overlay_fullscreen(view *v, ns_bool fullscreen) {
         // class keeps keyboard focus without a title bar.
         window.styleMask = NSWindowStyleMaskBorderless;
         window.hasShadow = NO;
+        window.backgroundColor = [NSColor colorWithSRGBRed:0.012 green:0.012 blue:0.012 alpha:1.0];
         window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
         window.level = NSMainMenuWindowLevel + 1;
         overlay_fullscreen = true;

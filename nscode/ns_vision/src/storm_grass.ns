@@ -6,6 +6,8 @@ lit STORM_TILE_MARGIN: f32 = 4.5
 lit STORM_GRID_SIDE = 48
 lit STORM_BANDS = 4
 lit STORM_GRASS_NEAR: f32 = 0.000015
+lit STORM_MAX_BLADES = 262144
+lit STORM_BLADE_STRIDE = 32
 
 struct storm_band {
     step: i32,
@@ -16,10 +18,10 @@ struct storm_band {
 
 fn storm_grass_band(lod: i32) storm_band {
     if lod == 0 {
-        return storm_band { 1, 17, 0.0, 7.0 }
+        return storm_band { 1, 9, 0.0, 7.0 }
     }
     if lod == 1 {
-        return storm_band { 2, 9, 5.0, 14.5 }
+        return storm_band { 2, 6, 5.0, 14.5 }
     }
     if lod == 2 {
         return storm_band { 4, 4, 12.2, 27.0 }
@@ -28,10 +30,13 @@ fn storm_grass_band(lod: i32) storm_band {
 }
 
 let g_storm_indices: u64 = 0
+let g_storm_blades: u64 = 0
 let g_storm_index_starts = [i32](STORM_BANDS)
 let g_storm_index_counts = [i32](STORM_BANDS)
 let g_storm_tile_spans = [i32](STORM_BANDS)
 let g_storm_tile_starts = [i32](STORM_BANDS)
+let g_storm_blade_starts = [i32](STORM_BANDS)
+let g_storm_blade_counts = [i32](STORM_BANDS)
 let g_storm_tiles = [f32](2 * 4096)
 
 fn storm_grass_init() bool {
@@ -67,7 +72,9 @@ fn storm_grass_init() bool {
         return false
     }
     gpu_write(g_storm_indices, indices, bytes)
-    return true
+    let blade_bytes = (STORM_MAX_BLADES * STORM_BLADE_STRIDE * 4) as u64
+    g_storm_blades = gpu_malloc(blade_bytes, GPU_MEM_DEVICE, "storm meadow grass blade buffer")
+    return g_storm_blades != 0
 }
 
 fn storm_tile_visible(camera: float3, tan_x: f32, tan_y: f32) bool {
@@ -112,7 +119,11 @@ fn storm_collect_tiles(yaw: f32, pitch: f32, tangent: f32, aspect: f32) i32 {
     return words
 }
 
-fn draw_storm_grass(weight: f32) {
+fn storm_grass_prepare() {
+    for lod in 0 to STORM_BANDS {
+        g_storm_blade_starts[lod] = 0
+        g_storm_blade_counts[lod] = 0
+    }
     let words = storm_collect_tiles(g_yaw, g_pitch, g_root[18], g_root[19])
     if words == 0 {
         return
@@ -121,16 +132,50 @@ fn draw_storm_grass(weight: f32) {
     if tiles == 0 {
         return
     }
-    gpu_set_shader(g_storm_grass_shader)
-    gpu_set_state(g_storm_grass_state)
+    let total_blades = 0
+    gpu_set_shader(g_storm_grass_cs)
     gpu_set_storage_at(0, tiles)
-    g_root[5] = weight
+    gpu_set_storage_at(1, g_storm_blades)
     for lod in 0 to STORM_BANDS {
         let side = STORM_GRID_SIDE / storm_grass_band(lod).step
-        let count = g_storm_tile_spans[lod] * side * side
+        let raw_count = g_storm_tile_spans[lod] * side * side
+        let avail = STORM_MAX_BLADES - total_blades
+        let count = raw_count
+        if count > avail {
+            count = avail
+        }
+        if count < 0 {
+            count = 0
+        }
+        g_storm_blade_starts[lod] = total_blades
+        g_storm_blade_counts[lod] = count
+        total_blades = total_blades + count
         if count > 0 {
             g_root[4] = lod as f32
             g_root[6] = g_storm_tile_starts[lod] as f32
+            g_root[7] = count as f32
+            g_root[8] = g_storm_blade_starts[lod] as f32
+            gpu_set_root_data(g_root, ROOT_BYTES)
+            let groups = ((count + 63) / 64) * 64
+            gpu_dispatch("storm grass prepare", groups, 1, 1)
+        }
+    }
+}
+
+fn draw_storm_grass(weight: f32) {
+    if weight >= 0.999 {
+        gpu_set_shader(g_storm_grass_shader)
+    } else {
+        gpu_set_shader(g_storm_grass_fade_shader)
+    }
+    gpu_set_state(g_storm_grass_state)
+    gpu_set_storage_at(0, g_storm_blades)
+    g_root[5] = weight
+    for lod in 0 to STORM_BANDS {
+        let count = g_storm_blade_counts[lod]
+        if count > 0 {
+            g_root[4] = lod as f32
+            g_root[8] = g_storm_blade_starts[lod] as f32
             gpu_set_root_data(g_root, ROOT_BYTES)
             gpu_draw_indexed(g_storm_indices + (g_storm_index_starts[lod] * 4) as u64, GPU_INDEX_UINT32, g_storm_index_counts[lod], count, 0)
         }
@@ -337,11 +382,16 @@ fn storm_grass_roughness(base_rough: f32, t: f32, edge: f32, phase: f32, vein_ri
     return clampf(base_rough + root_rough + mid_wax + tip_rough + growth_patch + vein_rough, 0.18, 0.95)
 }
 
-fn vs_storm_grass() storm_vertex {
+fn cs_storm_grass() void {
+    let instance = shader_global_id_x()
+    let max_count = shader_root_f32(7) as i32
+    if instance >= max_count {
+        return
+    }
+    let out_base = (shader_root_f32(8) as i32 + instance) * STORM_BLADE_STRIDE
     let lod = shader_root_f32(4) as i32
     let band = storm_grass_band(lod)
     let side_count = STORM_GRID_SIDE / band.step
-    let instance = shader_instance_id()
     let per_tile = side_count * side_count
     let cell = instance % per_tile
     let tile = shader_root_f32(6) as i32 + instance / per_tile * 2
@@ -358,24 +408,28 @@ fn vs_storm_grass() storm_vertex {
     let z = (iz_i as f32 + (pos_traits.y - 0.5) * 1.35 * step_f) * cell_unit
     let radius = sqrt(x * x + z * z) as f32
     if radius < band.inner || radius > band.outer {
-        return storm_hidden_blade()
+        shader_buffer_store_f32(1, out_base, 0.0)
+        return
     }
     let seed = pos_traits.z
     let switch_out = mixf(band.outer - 1.8, band.outer, seed)
     if lod < STORM_BANDS - 1 && radius > switch_out {
-        return storm_hidden_blade()
+        shader_buffer_store_f32(1, out_base, 0.0)
+        return
     }
     if lod > 0 {
         let previous = storm_grass_band(lod - 1)
         let switch_in = mixf(previous.outer - 1.8, previous.outer, seed)
         if radius <= switch_in {
-            return storm_hidden_blade()
+            shader_buffer_store_f32(1, out_base, 0.0)
+            return
         }
     }
     let edge_warp = (storm_noise(x * 0.11 + 3.1, z * 0.11 - 5.4) - 0.5) * 11.0 + (pos_traits.w - 0.5) * 6.0
     let last_fade = 1.0 - env_smooth(38.0, 56.0, radius + edge_warp)
     if last_fade <= 0.02 {
-        return storm_hidden_blade()
+        shader_buffer_store_f32(1, out_base, 0.0)
+        return
     }
 
     let clump = storm_clump_at(x, z)
@@ -383,21 +437,26 @@ fn vs_storm_grass() storm_vertex {
     let bx = x + clump.offset.x * archetype.pull
     let bz = z + clump.offset.y * archetype.pull
     let ground_y = -STORM_EYE_HEIGHT + storm_terrain_height(bx, bz)
-    let terrain_n = storm_terrain_normal(bx, bz)
 
     let yaw = shader_root_f32(16)
     let pitch = shader_root_f32(17)
+    let tangent_fov = shader_root_f32(18)
+    let aspect = shader_root_f32(19)
+    let tan_x = tangent_fov * aspect
+    let margin_x = 1.6 * sqrt(1.0 + tan_x * tan_x) as f32
+    let margin_y = 1.6 * sqrt(1.0 + tangent_fov * tangent_fov) as f32
     let root_cam = camera_space(float3 { bx, ground_y, bz }, yaw, pitch)
-    if root_cam.z < -2.0 {
-        return storm_hidden_blade()
+    if root_cam.z < -1.5 || absf(root_cam.x) > root_cam.z * tan_x + margin_x || absf(root_cam.y) > root_cam.z * tangent_fov + margin_y {
+        shader_buffer_store_f32(1, out_base, 0.0)
+        return
     }
 
+    let terrain_n = storm_terrain_normal(bx, bz)
     let traits = storm_blade_traits(blade_seed)
     let traits2 = storm_blade_traits(blade_seed ^ 1640531527u)
     let time = shader_root_f32(35)
     let wind = storm_wind(bx, bz, time)
 
-    // Independent 360-degree blade facing gently nudged by clump alignment and outward splay.
     let blade_angle = traits.y * 6.2831853
     let clump_angle = clump.seed * 6.2831853
     let blade_dir = float2 { cos(blade_angle) as f32, sin(blade_angle) as f32 }
@@ -417,12 +476,99 @@ fn vs_storm_grass() storm_vertex {
     let rand = storm_blade_random { mixf(0.66, 0.92, traits2.y), (traits2.x - 0.5) * 0.38, mixf(2.6, 3.2, traits2.w) }
     let ctrl = storm_blade_control_points(height, bend, facing, terrain_n, wind, time, traits.w, stiffness, world_along, rand)
 
+    let twist_wave = sin(time * (rand.freq * 1.25) - world_along * 0.38 + traits.w * 1.4) as f32
+    let twist_lin = wind.y * 1.25 + (traits2.x - 0.5) * 0.80
+    let twist_quad = wind.x * (traits.z - 0.35) * 1.95 + twist_wave * (0.34 + wind.x * 0.78)
+    let seed_head_base: f32 = 0.0
+    if clump.kind == 0 {
+        seed_head_base = env_smooth(0.68, 0.90, seed)
+    }
+    let far_width = 1.0 + (band.step - 1) as f32 * 0.38
+    let width_base = (0.0064 + traits.w * 0.0055 + clump.core * 0.0020) * far_width * last_fade
+
+    let clump_normal = normalize(float3 { -clump.offset.x * 1.4, 0.78, -clump.offset.y * 1.4 })
+    let distant_n = normalize(env_mix(clump_normal, terrain_n, env_smooth(20.0, 44.0, radius)))
+    let clump_blend_base = env_smooth(6.0, 24.0, radius)
+
+    let dry_mask = clampf((traits.z * 0.60 + clump.seed * 0.40 - 0.35) * 1.4 + archetype.dry * 0.55, 0.0, 1.0)
+    let dry_mix = dry_mask * archetype.dry
+    let tint = mixf(0.78, 1.16, traits.z * 0.50 + clump.seed * 0.35 + clump.core * 0.15)
+    let dry_factor = clampf(dry_mask * archetype.dry * 1.15 + seed_head_base * 0.65, 0.0, 1.0)
+    let blade_var = traits2.w * 0.65 + pos_traits.w * 0.35
+    let dist_aa = env_smooth(5.0, 26.0, radius) * 0.28
+    let base_rough = clampf(mixf(mixf(0.24, 0.46, blade_var), mixf(0.58, 0.86, blade_var), dry_factor) + dist_aa, 0.20, 0.94)
+    let blade_phase = env_fract(traits.w * 0.618034 + traits2.y * 0.381966 + pos_traits.x * 0.27)
+    let detail_fade = 1.0 - env_smooth(4.5, 20.0, radius)
+    let cloud_shadow = storm_cloud_shadow(bx, bz, time)
+    let fog_factor = storm_fog_amount(radius)
+
+    shader_buffer_store_f32(1, out_base, width_base)
+    shader_buffer_store_f32(1, out_base + 1, bx)
+    shader_buffer_store_f32(1, out_base + 2, ground_y)
+    shader_buffer_store_f32(1, out_base + 3, bz)
+    shader_buffer_store_f32(1, out_base + 4, ctrl.p1.x)
+    shader_buffer_store_f32(1, out_base + 5, ctrl.p1.y)
+    shader_buffer_store_f32(1, out_base + 6, ctrl.p1.z)
+    shader_buffer_store_f32(1, out_base + 7, ctrl.p2.x)
+    shader_buffer_store_f32(1, out_base + 8, ctrl.p2.y)
+    shader_buffer_store_f32(1, out_base + 9, ctrl.p2.z)
+    shader_buffer_store_f32(1, out_base + 10, ctrl.p3.x)
+    shader_buffer_store_f32(1, out_base + 11, ctrl.p3.y)
+    shader_buffer_store_f32(1, out_base + 12, ctrl.p3.z)
+    shader_buffer_store_f32(1, out_base + 13, facing.x)
+    shader_buffer_store_f32(1, out_base + 14, facing.y)
+    shader_buffer_store_f32(1, out_base + 15, twist_lin)
+    shader_buffer_store_f32(1, out_base + 16, twist_quad)
+    shader_buffer_store_f32(1, out_base + 17, seed_head_base)
+    shader_buffer_store_f32(1, out_base + 18, distant_n.x)
+    shader_buffer_store_f32(1, out_base + 19, distant_n.y)
+    shader_buffer_store_f32(1, out_base + 20, distant_n.z)
+    shader_buffer_store_f32(1, out_base + 21, clump_blend_base)
+    shader_buffer_store_f32(1, out_base + 22, dry_mix)
+    shader_buffer_store_f32(1, out_base + 23, tint)
+    shader_buffer_store_f32(1, out_base + 24, cloud_shadow)
+    shader_buffer_store_f32(1, out_base + 25, fog_factor)
+    shader_buffer_store_f32(1, out_base + 26, base_rough)
+    shader_buffer_store_f32(1, out_base + 27, blade_phase)
+    shader_buffer_store_f32(1, out_base + 28, detail_fade)
+    shader_buffer_store_f32(1, out_base + 29, dry_factor)
+}
+
+fn vs_storm_grass() storm_vertex {
+    let base = (shader_root_f32(8) as i32 + shader_instance_id()) * STORM_BLADE_STRIDE
+    let width_base = shader_buffer_f32(0, base)
+    if width_base <= 0.0 {
+        return storm_hidden_blade()
+    }
+    let lod = shader_root_f32(4) as i32
+    let band = storm_grass_band(lod)
+    let bx = shader_buffer_f32(0, base + 1)
+    let ground_y = shader_buffer_f32(0, base + 2)
+    let bz = shader_buffer_f32(0, base + 3)
+    let p1 = float3 { shader_buffer_f32(0, base + 4), shader_buffer_f32(0, base + 5), shader_buffer_f32(0, base + 6) }
+    let p2 = float3 { shader_buffer_f32(0, base + 7), shader_buffer_f32(0, base + 8), shader_buffer_f32(0, base + 9) }
+    let p3 = float3 { shader_buffer_f32(0, base + 10), shader_buffer_f32(0, base + 11), shader_buffer_f32(0, base + 12) }
+    let facing = float2 { shader_buffer_f32(0, base + 13), shader_buffer_f32(0, base + 14) }
+    let twist_lin = shader_buffer_f32(0, base + 15)
+    let twist_quad = shader_buffer_f32(0, base + 16)
+    let seed_head_base = shader_buffer_f32(0, base + 17)
+    let distant_n = float3 { shader_buffer_f32(0, base + 18), shader_buffer_f32(0, base + 19), shader_buffer_f32(0, base + 20) }
+    let clump_blend_base = shader_buffer_f32(0, base + 21)
+    let dry_mix = shader_buffer_f32(0, base + 22)
+    let tint = shader_buffer_f32(0, base + 23)
+    let cloud_shadow = shader_buffer_f32(0, base + 24)
+    let fog_factor = shader_buffer_f32(0, base + 25)
+    let base_rough = shader_buffer_f32(0, base + 26)
+    let blade_phase = shader_buffer_f32(0, base + 27)
+    let detail_fade = shader_buffer_f32(0, base + 28)
+    let dry_factor = shader_buffer_f32(0, base + 29)
+
     let point = shader_vertex_id()
     let row = point / 2
     let side = (point % 2) as f32 * 2.0 - 1.0
     let t = row as f32 / (band.rows - 1) as f32
-    let spine = storm_bezier(float3 { 0.0, 0.0, 0.0 }, ctrl.p1, ctrl.p2, ctrl.p3, t)
-    let tangent = storm_bezier_tangent(float3 { 0.0, 0.0, 0.0 }, ctrl.p1, ctrl.p2, ctrl.p3, t)
+    let spine = storm_bezier(float3 { 0.0, 0.0, 0.0 }, p1, p2, p3, t)
+    let tangent = storm_bezier_tangent(float3 { 0.0, 0.0, 0.0 }, p1, p2, p3, t)
 
     let up_ref = float3 { 0.0, 1.0, 0.0 }
     let raw_side = cross(up_ref, tangent)
@@ -432,8 +578,7 @@ fn vs_storm_grass() storm_vertex {
         width_axis = env_scale3(raw_side, 1.0 / side_len)
     }
     let base_normal = normalize(cross(tangent, width_axis))
-    let twist_wave = sin(time * (rand.freq * 1.25) - world_along * 0.38 + traits.w * 1.4) as f32
-    let twist = t * (wind.y * 1.25 + (traits2.x - 0.5) * 0.80) + t * t * (wind.x * (traits.z - 0.35) * 1.95 + twist_wave * (0.34 + wind.x * 0.78))
+    let twist = t * twist_lin + t * t * twist_quad
     let ct = cos(twist) as f32
     let st = sin(twist) as f32
     let twisted_width = env_add(env_scale3(width_axis, ct), env_scale3(base_normal, st))
@@ -441,13 +586,9 @@ fn vs_storm_grass() storm_vertex {
     width_axis = twisted_width
     base_normal = twisted_normal
 
-    let seed_head = 0.0
-    if clump.kind == 0 {
-        seed_head = env_smooth(0.68, 0.90, seed) * env_smooth(0.66, 0.86, t)
-    }
+    let seed_head = seed_head_base * env_smooth(0.66, 0.86, t)
     let taper = (1.0 - t * t * t) * (1.0 + 0.12 * (1.0 - t)) + seed_head * (1.0 - env_smooth(0.88, 1.0, t)) * 0.22
-    let far_width = 1.0 + (band.step - 1) as f32 * 0.38
-    let width = (0.0064 + traits.w * 0.0055 + clump.core * 0.0020) * taper * far_width * last_fade
+    let width = width_base * taper
 
     let world = float3 {
         bx + spine.x + width_axis.x * side * width,
@@ -455,6 +596,8 @@ fn vs_storm_grass() storm_vertex {
         bz + spine.z + width_axis.z * side * width
     }
     let observer = normalize(env_scale3(world, -1.0))
+    let yaw = shader_root_f32(16)
+    let pitch = shader_root_f32(17)
     let camera = camera_space(world, yaw, pitch)
     // GDC 2021 View-Space Thickening: widen edge-on blades in camera space.
     let view_dot = clampf(absf(dot3(base_normal, observer)), 0.0, 1.0)
@@ -470,14 +613,11 @@ fn vs_storm_grass() storm_vertex {
     if dot3(base_normal, observer) < 0.0 {
         base_normal = env_scale3(base_normal, -1.0)
     }
-    let clump_normal = normalize(float3 { -clump.offset.x * 1.4, 0.78, -clump.offset.y * 1.4 })
-    let distant_n = normalize(env_mix(clump_normal, terrain_n, env_smooth(20.0, 44.0, radius)))
-    let clump_blend = env_smooth(6.0, 24.0, radius) * (1.0 - t * 0.55)
+    let clump_blend = clump_blend_base * (1.0 - t * 0.55)
     let out_normal = normalize(env_mix(base_normal, distant_n, clump_blend))
     let out_width = env_scale3(width_axis, 0.65 * (1.0 - clump_blend * 0.85))
     let out_tangent = env_scale3(tangent, 1.0 - clump_blend * 0.85)
 
-    // Overcast storm three-point blade palette, pre-multiplied by tint and root AO.
     let root_col = storm_grass_root_color()
     let mid_col = env_rgb(0.068, 0.122, 0.044)
     let tip_col = env_rgb(0.22, 0.26, 0.12)
@@ -487,22 +627,12 @@ fn vs_storm_grass() storm_vertex {
     } else {
         healthy = env_mix(mid_col, tip_col, (t - 0.5) * 2.0)
     }
-    let dry_mask = clampf((traits.z * 0.60 + clump.seed * 0.40 - 0.35) * 1.4 + archetype.dry * 0.55, 0.0, 1.0)
-    let pigment = env_mix(healthy, env_rgb(0.30, 0.27, 0.16), dry_mask * (0.20 + 0.55 * t) * archetype.dry)
+    let pigment = env_mix(healthy, env_rgb(0.30, 0.27, 0.16), dry_mix * (0.20 + 0.55 * t))
     pigment = env_mix(pigment, env_rgb(0.38, 0.37, 0.28), seed_head * 0.78)
-    let tint = mixf(0.78, 1.16, traits.z * 0.50 + clump.seed * 0.35 + clump.core * 0.15)
     let ao = mixf(STORM_GRASS_ROOT_AO, 1.0, t * t * (1.4 - 0.4 * t))
     pigment = env_scale3(pigment, tint * ao)
 
-    let dry_factor = clampf(dry_mask * archetype.dry * 1.15 + seed_head * 0.65, 0.0, 1.0)
-    let blade_var = traits2.w * 0.65 + pos_traits.w * 0.35
-    let dist_aa = env_smooth(5.0, 26.0, radius) * 0.28
-    let base_rough = clampf(mixf(mixf(0.24, 0.46, blade_var), mixf(0.58, 0.86, blade_var), dry_factor) + dist_aa, 0.20, 0.94)
-    let blade_phase = env_fract(traits.w * 0.618034 + traits2.y * 0.381966 + pos_traits.x * 0.27)
-    let detail_fade = 1.0 - env_smooth(4.5, 20.0, radius)
-
-    let shadow = mixf(storm_cloud_shadow(bx, bz, time), 1.0, 0.25 * (1.0 - t))
-    let fog_factor = storm_fog_amount(radius)
+    let shadow = mixf(cloud_shadow, 1.0, 0.25 * (1.0 - t))
     let fog_color = storm_fog_color(world)
     return storm_vertex {
         clip,
@@ -517,11 +647,7 @@ fn vs_storm_grass() storm_vertex {
     }
 }
 
-fn fs_storm_grass(input: storm_vertex) float4 {
-    let weight = shader_root_f32(5)
-    if weight < 0.999 && environment_dither(input.position.x, input.position.y) + 0.5 >= weight {
-        shader_discard()
-    }
+fn storm_grass_shade(input: storm_vertex) float4 {
     let edge = input.info.x
     let shadow = input.info.y
     let fog = input.info.z
@@ -531,23 +657,42 @@ fn fs_storm_grass(input: storm_vertex) float4 {
     let detail_fade = input.surface.z
     let dry_factor = input.surface.w
 
-    let vein_phase = absf(edge) * 15.70796 + t * 1.15 + phase * 6.28318
-    let vein_ridge = sin(vein_phase) as f32
-    let vein_sign = 1.0
-    if edge < 0.0 {
-        vein_sign = -1.0
+    let vein_ridge: f32 = 0.0
+    let across_tilt = edge
+    let growth_tilt: f32 = 0.0
+    let roughness = base_rough
+    if detail_fade > 0.001 {
+        let vein_phase = absf(edge) * 15.70796 + t * 1.15 + phase * 6.28318
+        vein_ridge = sin(vein_phase) as f32
+        let vein_sign: f32 = 1.0
+        if edge < 0.0 {
+            vein_sign = -1.0
+        }
+        let vein_tilt = cos(vein_phase) as f32 * vein_sign * 0.16 * detail_fade
+        let midrib_v = (edge / (absf(edge) + 0.18)) * 0.15 * detail_fade
+        across_tilt = edge + vein_tilt + midrib_v
+        growth_tilt = storm_grass_growth_tilt(t, edge, phase, detail_fade)
+        roughness = storm_grass_roughness(base_rough, t, edge, phase, vein_ridge, detail_fade)
+    } else {
+        let root_rough = (1.0 - env_smooth(0.0, 0.24, t)) * 0.22
+        let mid_wax = -env_smooth(0.14, 0.44, t) * (1.0 - env_smooth(0.62, 0.90, t)) * 0.08
+        let tip_rough = env_smooth(0.70, 1.0, t) * 0.20
+        let root_env = env_smooth(0.0, 0.14, t)
+        let wave1 = sin(t * (5.2 + phase * 4.8) + phase * 17.3) as f32 * 0.26
+        let kink_pos = 0.34 + env_fract(phase * 3.713) * 0.44
+        let kink_x = (t - kink_pos) * 10.5
+        let kink = (kink_x / (1.0 + kink_x * kink_x)) * (0.36 * (env_fract(phase * 11.91) * 2.0 - 1.0))
+        growth_tilt = (wave1 * 0.50 + kink * 0.55) * root_env
+        let patch_f = 4.0 + env_fract(phase * 5.37) * 5.0
+        let growth_patch = sin(t * patch_f + phase * 13.7) as f32 * 0.085
+        roughness = clampf(base_rough + root_rough + mid_wax + tip_rough + growth_patch, 0.18, 0.95)
     }
-    let vein_tilt = cos(vein_phase) as f32 * vein_sign * 0.16 * detail_fade
-    let midrib_v = (edge / (absf(edge) + 0.18)) * 0.15 * detail_fade
-    let across_tilt = edge + vein_tilt + midrib_v
-    let growth_tilt = storm_grass_growth_tilt(t, edge, phase, detail_fade)
 
     let n = normalize(env_add(env_add(input.normal, env_scale3(input.width_axis, across_tilt)), env_scale3(input.tangent_axis, growth_tilt)))
     let v = normalize(input.view_dir)
     if dot3(n, v) < 0.0 {
         n = env_scale3(n, -1.0)
     }
-    let roughness = storm_grass_roughness(base_rough, t, edge, phase, vein_ridge, detail_fade)
 
     let light_dir = storm_light_dir()
     let raw_ndotl = dot3(n, light_dir)
@@ -569,7 +714,9 @@ fn fs_storm_grass(input: storm_vertex) float4 {
     let k = (roughness + 1.0) * (roughness + 1.0) * 0.125
     let vis = 0.25 / maxf((ndotv * (1.0 - k) + k) * (ndotl * (1.0 - k) + k), 0.01)
     let f0 = mixf(0.045, 0.024, dry_factor)
-    let fresnel_h = pow(clampf(1.0 - vdoth, 0.0, 1.0), 5.0) as f32
+    let oh = clampf(1.0 - vdoth, 0.0, 1.0)
+    let oh2 = oh * oh
+    let fresnel_h = oh2 * oh2 * oh
     let f_key = f0 + (1.0 - f0) * fresnel_h
     let ao_spec = env_smooth(0.04, 0.34, t)
     let spec_brdf = minf(d_ggx * vis * f_key, 1.4)
@@ -577,7 +724,9 @@ fn fs_storm_grass(input: storm_vertex) float4 {
 
     let refl = env_add(env_scale3(n, 2.0 * ndotv), env_scale3(v, -1.0))
     let sky_refl_col = env_mix(env_rgb(0.14, 0.17, 0.19), env_rgb(0.36, 0.40, 0.41), clampf(refl.y * 0.5 + 0.5, 0.0, 1.0))
-    let fresnel_v = pow(clampf(1.0 - ndotv, 0.0, 1.0), 5.0) as f32
+    let ov = clampf(1.0 - ndotv, 0.0, 1.0)
+    let ov2 = ov * ov
+    let fresnel_v = ov2 * ov2 * ov
     let f_env = f0 + (maxf(1.0 - roughness, f0) - f0) * fresnel_v
     let sky_sheen = (1.0 - roughness * 0.72) * f_env * ao_spec * mixf(0.45, 1.0, shadow) * 0.72
     let spec_sky = env_scale3(sky_refl_col, sky_sheen)
@@ -590,4 +739,18 @@ fn fs_storm_grass(input: storm_vertex) float4 {
     let shaded = env_add(diffuse_col, env_add(env_add(spec_key, spec_sky), spec_sss))
     let final_col = env_mix(shaded, input.fog_color, fog)
     return float4 { final_col.x, final_col.y, final_col.z, 1.0 }
+}
+
+// Opaque fast path (no shader_discard) so Apple M3 TBDR Hidden Surface Removal runs cleanly.
+fn fs_storm_grass(input: storm_vertex) float4 {
+    return storm_grass_shade(input)
+}
+
+// Dithered crossfade path used only while blending in/out of Storm Meadow.
+fn fs_storm_grass_fade(input: storm_vertex) float4 {
+    let weight = shader_root_f32(5)
+    if environment_dither(input.position.x, input.position.y) + 0.5 >= weight {
+        shader_discard()
+    }
+    return storm_grass_shade(input)
 }

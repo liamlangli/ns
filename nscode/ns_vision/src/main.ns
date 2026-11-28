@@ -28,16 +28,10 @@ fn main() {
         demo_init()
     } else {
         launcher_load()
-        // One System Settings pane at a time: Screen Recording first, since
-        // it needs a relaunch anyway; Accessibility on the next launch.
+        // Only Screen Recording is needed to display windows in the dome.
         if desktop_supported() && !desktop_permission() {
             desktop_request_permission()
             g_permission_hide = true
-        } else {
-            if desktop_supported() && !desktop_accessibility(false) {
-                desktop_accessibility(true)
-                g_permission_hide = true
-            }
         }
         desktop_refresh()
         g_shortcuts = desktop_shortcuts_start(v)
@@ -63,6 +57,11 @@ fn main() {
     view_set_frame_per_second(v, 60)
     if !g_windowed {
         desktop_overlay_fullscreen(v, true)
+    }
+    if g_permission_hide {
+        g_permission_hide = false
+        set_hidden(v, true)
+        notify("Grant the permission in System Settings, then press Alt+W")
     }
     view_run(v)
 }

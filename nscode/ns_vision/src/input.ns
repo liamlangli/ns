@@ -11,8 +11,6 @@ let g_drag_r: f32 = 0.0
 let g_drag_ray_a: f32 = 0.0
 let g_drag_ray_e: f32 = 0.0
 let g_drag_distance: f32 = 0.0
-let g_last_click: f32 = -10.0
-let g_last_clicked_panel = -1
 let g_hover_hit = float4 {
     0, 0, 0, 0
 }
@@ -276,17 +274,13 @@ fn pointer_input(v: ref view, ray: float3, dt: f32) {
             save_layout()
             if g_drag_distance <= 4.0 && !g_drag_right {
                 g_selected = g_drag_index
-                if g_last_clicked_panel == g_selected && g_elapsed - g_last_click < 0.35 {
+                if !g_demo {
                     let p = g_panels[g_selected]
                     if desktop_window_activate(p.id, p.pid) {
                         set_hidden(v, true)
                     } else {
                         notify(desktop_last_error())
                     }
-                    g_last_clicked_panel = -1
-                } else {
-                    g_last_clicked_panel = g_selected
-                    g_last_click = g_elapsed
                 }
             }
         }

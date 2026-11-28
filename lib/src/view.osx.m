@@ -30,11 +30,16 @@ void gpu_mtl_end_frame(MTKView *view);
 // fullscreen overlay); a plain borderless NSWindow can never become key. Main
 // status still needs a visible window: AppKit throws for a hidden one.
 @interface ViewWindow : NSWindow
+@property (nonatomic) BOOL suppressedInitialShow;
 @end
 
 @implementation ViewWindow
 - (BOOL)canBecomeKeyWindow { return YES; }
 - (BOOL)canBecomeMainWindow { return self.isVisible; }
+- (void)orderOut:(id)sender {
+    self.suppressedInitialShow = YES;
+    [super orderOut:sender];
+}
 @end
 
 typedef void(*view_on_launch)(view*);
@@ -311,10 +316,8 @@ i32 view_osx_key_map(i32 k) {
 @implementation ViewAppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification*)aNotification {
     (void)aNotification;
-    // A script launched by `ns run` is hosted by the interpreter executable.
-    // Claim foreground activation only after AppKit has finished launching,
-    // then make the target view the key input responder.
-    view_osx_activate_window();
+    // Defer showing the window until view_run() draws the first frame so an
+    // un-drawn window surface does not flash while initialization runs.
     view_on_launch launch = (view_on_launch)_view.on_launch;
     if (launch) {
         launch(&_view);
@@ -722,6 +725,7 @@ void view_osx_create(i32 w, i32 h, const char* title) {
             defer: NO];
     }
     [view_window setTitle:[NSString stringWithUTF8String: view_title]];
+    [view_window setBackgroundColor:[NSColor colorWithSRGBRed:0.012 green:0.012 blue:0.012 alpha:1.0]];
     [view_window setAcceptsMouseMovedEvents: YES];
     view_osx_size_window(view_window, view_width, view_height);
     [view_window setRestorable: YES];
@@ -732,6 +736,7 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     [view_mtk_view setDevice: view_mtl_device];
     [view_mtk_view setColorPixelFormat: MTLPixelFormatBGRA8Unorm];
     [view_mtk_view setDepthStencilPixelFormat: MTLPixelFormatInvalid];
+    [view_mtk_view setClearColor:MTLClearColorMake(0.012, 0.012, 0.012, 1.0)];
     // On demand by default: the view sleeps until view_request_frame()
     // invalidates it. NS_VIEW_CONTINUOUS or view_set_frame_per_second switches
     // to vsync-paced drawing so a GPU frame capture has a boundary to arm on.
@@ -746,8 +751,6 @@ void view_osx_create(i32 w, i32 h, const char* title) {
         // Hosted applications are already running and do not receive this
         // backend's applicationDidFinishLaunching callback.
         view_osx_activate_window();
-    } else {
-        [view_window orderFront:nil];
     }
     const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
     view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
@@ -808,8 +811,16 @@ void view_run(view *v) {
     // the next main-loop turn because terminal-launched processes otherwise
     // commonly leave Terminal as the active application.
     [NSApp finishLaunching];
-    view_osx_activate_window();
-    view_request_frame(v, 1);
+    ViewWindow *vw = [view_window isKindOfClass:[ViewWindow class]] ? (ViewWindow *)view_window : nil;
+    if (!view_osx_finished && !(vw && vw.suppressedInitialShow)) {
+        view_request_frame(v, 1);
+        if (view_mtk_view && _view.on_frame) {
+            [view_mtk_view draw];
+        }
+        if (!view_osx_finished && !(vw && vw.suppressedInitialShow)) {
+            view_osx_activate_window();
+        }
+    }
     // The first frames may already have hidden the window on purpose (an
     // overlay stepping aside for System Settings); do not bring it back.
     dispatch_async(dispatch_get_main_queue(), ^{

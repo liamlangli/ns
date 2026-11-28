@@ -7231,6 +7231,7 @@ static const char *ns_command_words[] = {
 // `exe`, or an executable file) or, without one, an app's source project.
 typedef struct ns_app_hit {
     char exe[NS_APP_PATH_MAX];
+    char bundle_path[NS_APP_PATH_MAX];
     ns_bool bundle;
     ns_bool source;
 } ns_app_hit;
@@ -7280,6 +7281,7 @@ static ns_bool ns_app_find(const char *word, ns_app_hit *hit) {
 #if defined(NS_DARWIN)
         snprintf(path, sizeof(path), "%.*s/%s.app", bin.len, bin.data, names[i]);
         if (ns_is_dir(ns_str_cstr(path)) && ns_app_bundle_executable(path, names[i], hit->exe)) {
+            snprintf(hit->bundle_path, sizeof(hit->bundle_path), "%s", path);
             hit->bundle = true;
             found = true;
             break;
@@ -7352,6 +7354,63 @@ static i32 ns_exec_installed_app(i32 argc, i8 **argv) {
     } else if (hit.bundle) {
         // A windowed app detaches so `ns` returns at once.
         ns_info("app", "opening %s\n", hit.exe);
+#if defined(NS_DARWIN)
+        char plist_path[NS_APP_PATH_MAX + 32];
+        snprintf(plist_path, sizeof(plist_path), "%s/Contents/Info.plist", hit.bundle_path);
+        if (hit.bundle_path[0] && ns_file_exists(ns_str_cstr(plist_path))) {
+            // Launch real macOS .app bundles through LaunchServices so macOS
+            // TCC attributes Accessibility / Screen Recording permissions to the
+            // bundle itself rather than the caller's terminal.
+            i32 env_count = 1 + count;
+            size_t open_cap = (size_t)(3 + env_count * 2 + (count > 0 ? 1 + count : 0) + 1);
+            i8 **open_argv = (i8 **)calloc(open_cap, sizeof(i8 *));
+            i8 **env_strs = (i8 **)calloc((size_t)env_count, sizeof(i8 *));
+            if (!open_argv || !env_strs) {
+                free(open_argv);
+                free(env_strs);
+                code = 1;
+            } else {
+                i32 idx = 0;
+                open_argv[idx++] = (i8 *)"/usr/bin/open";
+                open_argv[idx++] = (i8 *)"-n";
+                open_argv[idx++] = hit.bundle_path;
+
+                char argc_buf[64];
+                snprintf(argc_buf, sizeof(argc_buf), "NS_ARGC=%d", count);
+                env_strs[0] = strdup(argc_buf);
+                open_argv[idx++] = (i8 *)"--env";
+                open_argv[idx++] = env_strs[0];
+                for (i32 i = 0; i < count; i++) {
+                    size_t len = strlen(args[i + 1]) + 32;
+                    env_strs[1 + i] = (i8 *)malloc(len);
+                    snprintf(env_strs[1 + i], len, "NS_ARG%d=%s", i, args[i + 1]);
+                    open_argv[idx++] = (i8 *)"--env";
+                    open_argv[idx++] = env_strs[1 + i];
+                }
+                if (count > 0) {
+                    open_argv[idx++] = (i8 *)"--args";
+                    for (i32 i = 0; i < count; i++) {
+                        open_argv[idx++] = args[i + 1];
+                    }
+                }
+                open_argv[idx] = ns_null;
+
+                pid_t pid = fork();
+                if (pid == 0) {
+                    execv("/usr/bin/open", (char *const *)open_argv);
+                    _exit(127);
+                }
+                int status = 0;
+                if (pid < 0 || waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+                    ns_warn("app", "failed to launch %s\n", hit.bundle_path);
+                    code = 1;
+                }
+                for (i32 i = 0; i < env_count; i++) free(env_strs[i]);
+                free(env_strs);
+                free(open_argv);
+            }
+        } else {
+#endif
         pid_t pid = fork();
         if (pid == 0) {
             if (fork() > 0) _exit(0);
@@ -7364,6 +7423,9 @@ static i32 ns_exec_installed_app(i32 argc, i8 **argv) {
             ns_warn("app", "failed to launch %s\n", hit.exe);
             code = 1;
         }
+#if defined(NS_DARWIN)
+        }
+#endif
     } else {
         // A command-line app takes this process, its terminal and exit code.
         fflush(stdout);

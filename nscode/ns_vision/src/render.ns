@@ -8,17 +8,34 @@ let g_floor_texture: u32 = 0u
 // Warehouse wall normal/roughness mip atlas; 0 when the asset is missing.
 let g_wall_texture: u32 = 0u
 let g_background_shader: u32 = 0
+let g_storm_noise_shader: u32 = 0
+let g_storm_bg_shader: u32 = 0
+let g_storm_blit_shader: u32 = 0
+let g_storm_blit_blend_shader: u32 = 0
+let g_storm_grass_cs: u32 = 0
 let g_storm_grass_shader: u32 = 0
+let g_storm_grass_fade_shader: u32 = 0
 let g_storm_grass_state: u32 = 0
-let g_lens_shader: u32 = 0
+let g_lens_blur_shader: u32 = 0
+let g_lens_sharp_shader: u32 = 0
+let g_lens_dof_shader: u32 = 0
 let g_dot_shader: u32 = 0
 let g_scene_state: u32 = 0
 let g_shadow_state: u32 = 0
 let g_flat_state: u32 = 0
+let g_opaque_flat_state: u32 = 0
+let g_bg_depth_state: u32 = 0
+let g_lens_write_state: u32 = 0
 let g_scene_color: u32 = 0
 let g_scene_depth: u32 = 0
+let g_storm_noise_tex: u32 = 0
+let g_storm_noise_ready = false
+let g_storm_bg: u32 = 0
+let g_scene_blur: u32 = 0
 let g_target_w = 0
 let g_target_h = 0
+let g_half_w = 0
+let g_half_h = 0
 let g_frame_w: f32 = 1600.0
 let g_frame_h: f32 = 900.0
 let g_author_w: f32 = 0.0
@@ -66,9 +83,17 @@ fn render_init() bool {
     let target = gpu_shader_target()
     g_quad_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_vision, target, "vertex"), shader_transpile_stage(fs_vision, target, "fragment"), shader_entry(vs_vision, target), shader_entry(fs_vision, target))
     g_background_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_background, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_background, target))
+    g_storm_noise_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_storm_noise_bake, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_storm_noise_bake, target))
+    g_storm_bg_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_storm_bg, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_storm_bg, target))
+    g_storm_blit_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen_far, target, "vertex"), shader_transpile_stage(fs_storm_blit, target, "fragment"), shader_entry(vs_fullscreen_far, target), shader_entry(fs_storm_blit, target))
+    g_storm_blit_blend_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_storm_blit, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_storm_blit, target))
+    g_storm_grass_cs = gpu_shader_compute_create(shader_transpile_stage(cs_storm_grass, target, "compute"), shader_entry(cs_storm_grass, target))
     g_storm_grass_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_storm_grass, target, "vertex"), shader_transpile_stage(fs_storm_grass, target, "fragment"), shader_entry(vs_storm_grass, target), shader_entry(fs_storm_grass, target))
+    g_storm_grass_fade_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_storm_grass, target, "vertex"), shader_transpile_stage(fs_storm_grass_fade, target, "fragment"), shader_entry(vs_storm_grass, target), shader_entry(fs_storm_grass_fade, target))
     g_dot_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_dots, target, "vertex"), shader_transpile_stage(fs_dots, target, "fragment"), shader_entry(vs_dots, target), shader_entry(fs_dots, target))
-    g_lens_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_lens, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_lens, target))
+    g_lens_blur_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_lens_blur, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_lens_blur, target))
+    g_lens_sharp_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_lens_sharp, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_lens_sharp, target))
+    g_lens_dof_shader = gpu_shader_graphics_create(shader_transpile_stage(vs_fullscreen, target, "vertex"), shader_transpile_stage(fs_lens_dof, target, "fragment"), shader_entry(vs_fullscreen, target), shader_entry(fs_lens_dof, target))
     g_scene_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_NEARER_EQUAL, true, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
     g_storm_grass_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_NEARER_EQUAL, true, GPU_BLEND_OFF, GPU_COLOR_MASK_ALL)
     // Soft shadows are depth tested but never occlude: a shadow that wrote
@@ -77,7 +102,11 @@ fn render_init() bool {
     g_floor_texture = load_texture("assets/warehouse_floor.png")
     g_wall_texture = load_texture("assets/warehouse_wall.png")
     g_flat_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_ALWAYS, false, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
-    return g_quad_shader != 0u && g_background_shader != 0u && g_storm_grass_shader != 0u && g_dot_shader != 0u && g_lens_shader != 0u && storm_grass_init()
+    g_opaque_flat_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_ALWAYS, false, GPU_BLEND_OFF, GPU_COLOR_MASK_ALL)
+    g_bg_depth_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_EQUAL, false, GPU_BLEND_OFF, GPU_COLOR_MASK_ALL)
+    g_lens_write_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_ALWAYS, true, GPU_BLEND_OFF, GPU_COLOR_MASK_ALL)
+    g_storm_noise_tex = gpu_texture_create(513, 513, 1, GPU_PIXELFORMAT_RGBA8, GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_RENDER_TARGET, 1, GPU_TEXTURE_2D, "storm meadow tileable noise")
+    return g_quad_shader != 0u && g_background_shader != 0u && g_storm_noise_shader != 0u && g_storm_bg_shader != 0u && g_storm_blit_shader != 0u && g_storm_blit_blend_shader != 0u && g_storm_grass_cs != 0u && g_storm_grass_shader != 0u && g_storm_grass_fade_shader != 0u && g_dot_shader != 0u && g_lens_blur_shader != 0u && g_lens_sharp_shader != 0u && g_lens_dof_shader != 0u && g_storm_noise_tex != 0u && storm_grass_init()
 }
 
 fn root_camera() {
@@ -210,40 +239,34 @@ fn texture_quad(texture: u32, x: f32, y: f32, width: f32, height: f32, radius: f
 }
 
 fn render_targets(width: i32, height: i32) {
-    if width == g_target_w && height == g_target_h {
-        return
+    if width != g_target_w || height != g_target_h {
+        if g_scene_color != 0u {
+            gpu_texture_destroy(g_scene_color)
+            gpu_texture_destroy(g_scene_depth)
+        }
+        g_target_w = width
+        g_target_h = height
+        g_scene_color = gpu_texture_create(width, height, 1, GPU_PIXELFORMAT_RGBA8, GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_RENDER_TARGET, 1, GPU_TEXTURE_2D, "vision supersampled dome color")
+        g_scene_depth = gpu_texture_create(width, height, 1, GPU_PIXELFORMAT_DEPTH, GPU_TEXTURE_USAGE_RENDER_TARGET, 1, GPU_TEXTURE_2D, "vision reverse-z dome depth")
     }
-    if g_scene_color != 0u {
-        gpu_texture_destroy(g_scene_color)
-        gpu_texture_destroy(g_scene_depth)
+    let half_w = maxf(g_frame_w * 0.5, 1.0) as i32
+    let half_h = maxf(g_frame_h * 0.5, 1.0) as i32
+    if half_w != g_half_w || half_h != g_half_h {
+        if g_storm_bg != 0u {
+            gpu_texture_destroy(g_storm_bg)
+            gpu_texture_destroy(g_scene_blur)
+        }
+        g_half_w = half_w
+        g_half_h = half_h
+        g_storm_bg = gpu_texture_create(half_w, half_h, 1, GPU_PIXELFORMAT_RGBA8, GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_RENDER_TARGET, 1, GPU_TEXTURE_2D, "storm meadow half-res background")
+        g_scene_blur = gpu_texture_create(half_w, half_h, 1, GPU_PIXELFORMAT_RGBA8, GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_RENDER_TARGET, 1, GPU_TEXTURE_2D, "vision half-res lens blur")
     }
-    g_target_w = width
-    g_target_h = height
-    g_scene_color = gpu_texture_create(width, height, 1, GPU_PIXELFORMAT_RGBA8, GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_RENDER_TARGET, 1, GPU_TEXTURE_2D, "vision supersampled dome color")
-    g_scene_depth = gpu_texture_create(width, height, 1, GPU_PIXELFORMAT_DEPTH, GPU_TEXTURE_USAGE_RENDER_TARGET, 1, GPU_TEXTURE_2D, "vision reverse-z dome depth")
 }
 
 fn render_begin() {
     root_camera()
     render_targets((g_frame_w * g_scale) as i32, (g_frame_h * g_scale) as i32)
-    gpu_pass_begin("vision live window dome", g_scene_color, 0u, 0u, 0u, g_scene_depth, 0u, 0.012, 0.012, 0.012, 1.0, GPU_DEPTH_CLEAR)
     let blend = ease(g_environment_blend)
-    g_root[0] = g_floor_texture as f32
-    // Root words 0 and 1 bind the texture and mask maps: the warehouse floor
-    // and wall. No draw_quad call rewrites word 1, so the launcher's previews
-    // keep the wall too.
-    g_root[1] = g_wall_texture as f32
-    g_root[2] = g_target_h as f32
-    g_root[44] = g_environment as f32
-    g_root[45] = g_environment_previous as f32
-    g_root[46] = blend
-    // Dot grey, crossfading with the background.
-    g_root[47] = mixf(environment_dot(g_environment_previous), environment_dot(g_environment), blend)
-    g_root[3] = mixf(environment_dot_alpha(g_environment_previous), environment_dot_alpha(g_environment), blend)
-    gpu_set_shader(g_background_shader)
-    gpu_set_state(g_flat_state)
-    gpu_set_root_data(g_root, ROOT_BYTES)
-    gpu_draw_vertices(0, 3, 1)
     let grass: f32 = 0.0
     if g_environment == ENVIRONMENT_STORM_MEADOW {
         grass = blend
@@ -252,18 +275,83 @@ fn render_begin() {
         grass = grass + 1.0 - blend
     }
     if grass > 0.0 {
-        draw_storm_grass(grass)
+        if !g_storm_noise_ready {
+            g_storm_noise_ready = true
+            gpu_pass_begin("storm noise bake", g_storm_noise_tex, 0u, 0u, 0u, 0u, GPU_LOAD_DONTCARE, 0.0, 0.0, 0.0, 1.0, GPU_DEPTH_CLEAR)
+            gpu_set_viewport(0, 0, 513, 513)
+            gpu_set_shader(g_storm_noise_shader)
+            gpu_set_state(g_opaque_flat_state)
+            gpu_draw_vertices(0, 3, 1)
+            gpu_pass_end()
+        }
+        storm_grass_prepare()
+        gpu_pass_begin("storm meadow background", g_storm_bg, 0u, 0u, 0u, 0u, GPU_LOAD_DONTCARE, 0.0, 0.0, 0.0, 1.0, GPU_DEPTH_CLEAR)
+        gpu_set_viewport(0, 0, g_half_w, g_half_h)
+        g_root[0] = g_storm_noise_tex as f32
+        gpu_set_shader(g_storm_bg_shader)
+        gpu_set_state(g_opaque_flat_state)
+        gpu_set_root_data(g_root, ROOT_BYTES)
+        gpu_draw_vertices(0, 3, 1)
+        gpu_pass_end()
     }
-    if g_root[3] > 0.01 {
-        gpu_set_shader(g_dot_shader)
-        gpu_set_state(g_scene_state)
-        gpu_draw_vertices(0, DOT_COUNT as i32 * 6, 1)
+    gpu_pass_begin("vision live window dome", g_scene_color, 0u, 0u, 0u, g_scene_depth, 0u, 0.012, 0.012, 0.012, 1.0, GPU_DEPTH_CLEAR)
+    gpu_set_viewport(0, 0, g_target_w, g_target_h)
+    // Root words 0 and 1 bind the texture and mask maps: the warehouse floor
+    // and wall. No draw_quad call rewrites word 1, so the launcher's previews
+    // keep the wall too.
+    g_root[1] = g_wall_texture as f32
+    g_root[2] = g_target_h as f32
+    let dot_alpha = mixf(environment_dot_alpha(g_environment_previous), environment_dot_alpha(g_environment), blend)
+    if grass >= 0.999 {
+        draw_storm_grass(1.0)
+        g_root[0] = g_storm_bg as f32
+        g_root[3] = 1.0
+        gpu_set_shader(g_storm_blit_shader)
+        gpu_set_state(g_bg_depth_state)
+        gpu_set_root_data(g_root, ROOT_BYTES)
+        gpu_draw_vertices(0, 3, 1)
+    } else {
+        g_root[0] = g_floor_texture as f32
+        g_root[44] = g_environment as f32
+        g_root[45] = g_environment_previous as f32
+        g_root[46] = blend
+        if grass > 0.0 {
+            let other = g_environment
+            if other == ENVIRONMENT_STORM_MEADOW {
+                other = g_environment_previous
+            }
+            g_root[44] = other as f32
+            g_root[46] = 1.0
+        }
+        // Dot grey, crossfading with the background.
+        g_root[47] = mixf(environment_dot(g_environment_previous), environment_dot(g_environment), blend)
+        g_root[3] = dot_alpha
+        gpu_set_shader(g_background_shader)
+        gpu_set_state(g_flat_state)
+        gpu_set_root_data(g_root, ROOT_BYTES)
+        gpu_draw_vertices(0, 3, 1)
+        if grass > 0.0 {
+            g_root[0] = g_storm_bg as f32
+            g_root[3] = grass
+            gpu_set_shader(g_storm_blit_blend_shader)
+            gpu_set_state(g_flat_state)
+            gpu_set_root_data(g_root, ROOT_BYTES)
+            gpu_draw_vertices(0, 3, 1)
+            draw_storm_grass(grass)
+        }
+        if dot_alpha > 0.01 {
+            g_root[3] = dot_alpha
+            g_root[47] = mixf(environment_dot(g_environment_previous), environment_dot(g_environment), blend)
+            gpu_set_shader(g_dot_shader)
+            gpu_set_state(g_scene_state)
+            gpu_set_root_data(g_root, ROOT_BYTES)
+            gpu_draw_vertices(0, DOT_COUNT as i32 * 6, 1)
+        }
     }
 }
 
 fn render_resolve() {
     gpu_pass_end()
-    gpu_screen_pass_begin_depth("vision lens and sharp launcher", 0.012, 0.012, 0.012, 1.0, GPU_DEPTH_CLEAR)
     root_camera()
     g_root[0] = g_scene_color as f32
     g_root[4] = g_focus_u
@@ -282,10 +370,36 @@ fn render_resolve() {
     if g_ca {
         g_root[9] = 0.0004
     }
-    gpu_set_shader(g_lens_shader)
-    gpu_set_state(g_scene_state)
-    gpu_set_root_data(g_root, ROOT_BYTES)
-    gpu_draw_vertices(0, 3, 1)
+    let need_blur = g_dof > 0 || g_launcher_mode > 0
+    if need_blur {
+        gpu_pass_begin("vision lens blur", g_scene_blur, 0u, 0u, 0u, 0u, GPU_LOAD_DONTCARE, 0.0, 0.0, 0.0, 1.0, GPU_DEPTH_CLEAR)
+        gpu_set_viewport(0, 0, g_half_w, g_half_h)
+        gpu_set_shader(g_lens_blur_shader)
+        gpu_set_state(g_opaque_flat_state)
+        gpu_set_root_data(g_root, ROOT_BYTES)
+        gpu_draw_vertices(0, 3, 1)
+        gpu_pass_end()
+    }
+    gpu_screen_pass_begin_depth("vision lens and sharp launcher", 0.012, 0.012, 0.012, 1.0, GPU_DEPTH_CLEAR)
+    gpu_set_viewport(0, 0, g_frame_w as i32, g_frame_h as i32)
+    if g_launcher_mode == 0 {
+        g_root[0] = g_scene_color as f32
+        gpu_set_shader(g_lens_sharp_shader)
+        gpu_set_state(g_lens_write_state)
+        gpu_set_root_data(g_root, ROOT_BYTES)
+        gpu_draw_vertices(0, 3, 1)
+    }
+    if need_blur {
+        g_root[0] = g_scene_blur as f32
+        gpu_set_shader(g_lens_dof_shader)
+        if g_launcher_mode > 0 {
+            gpu_set_state(g_lens_write_state)
+        } else {
+            gpu_set_state(g_flat_state)
+        }
+        gpu_set_root_data(g_root, ROOT_BYTES)
+        gpu_draw_vertices(0, 3, 1)
+    }
 }
 
 fn render_end() {

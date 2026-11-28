@@ -400,6 +400,24 @@ fn vision_terminate(v: ref view) {
     }
     if g_ready {
         gpu_free(g_storm_indices)
+        if g_storm_blades != 0 {
+            gpu_free(g_storm_blades)
+        }
+        if g_storm_noise_tex != 0u {
+            gpu_texture_destroy(g_storm_noise_tex)
+        }
+        if g_storm_bg != 0u {
+            gpu_texture_destroy(g_storm_bg)
+        }
+        if g_scene_blur != 0u {
+            gpu_texture_destroy(g_scene_blur)
+        }
+        if g_scene_color != 0u {
+            gpu_texture_destroy(g_scene_color)
+        }
+        if g_scene_depth != 0u {
+            gpu_texture_destroy(g_scene_depth)
+        }
         gpu_texture_destroy(g_font_main.texture)
         gpu_texture_destroy(g_font_alternate.texture)
         gpu_texture_destroy(g_font_cjk.texture)

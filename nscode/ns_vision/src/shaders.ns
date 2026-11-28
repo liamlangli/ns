@@ -167,6 +167,9 @@ fn fract_dot(x: f32) f32 {
 fn intersect_fade(panel: i32, p: float3, bend: f32) f32 {
     let base = panel * SHAPE_STRIDE
     let count = shader_buffer_f32(0, base + 5) as i32
+    if count <= 0 {
+        return 1.0
+    }
     let near: f32 = 0.0
     for k in 0 to SHAPE_NEIGHBORS {
         if k < count {
@@ -297,6 +300,27 @@ fn vs_fullscreen() vision_vertex {
     }
 }
 
+fn vs_fullscreen_far() vision_vertex {
+    let id = shader_vertex_id()
+    let x: f32 = 0.0
+    let y: f32 = 0.0
+    if id == 1 {
+        x = 2.0
+    }
+    if id == 2 {
+        y = 2.0
+    }
+    return vision_vertex {
+        float4 {
+            x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0
+        }, float2 {
+            x, y
+        }, 1.0, float3 {
+            0, 0, 1
+        }
+    }
+}
+
 // The current environment (root 44), crossfading from the previous one
 // (root 45) while root 46 rises to 1.
 fn fs_background(input: vision_vertex) float4 {
@@ -405,51 +429,81 @@ fn lens_rgb(q: float2, ca: f32) float3 {
     }
 }
 
-fn fs_lens(input: vision_vertex) vision_pixel {
-    let uv = input.uv
+fn lens_blur_strength(uv: float2) f32 {
+    if shader_root_f32(8) > 0.5 {
+        return 12.0
+    }
     let dx = (uv.x - shader_root_f32(4)) * shader_root_f32(19)
     let dy = uv.y - shader_root_f32(5)
     let dist = sqrt(dx * dx + dy * dy) as f32
-    let blur = clampf((dist - shader_root_f32(6)) / maxf(0.04, 0.72 - shader_root_f32(6)), 0.0, 1.0) * shader_root_f32(7)
-    if shader_root_f32(8) > 0.5 {
-        blur = 12.0
+    return clampf((dist - shader_root_f32(6)) / maxf(0.04, 0.72 - shader_root_f32(6)), 0.0, 1.0) * shader_root_f32(7)
+}
+
+// Half-resolution 12-tap Vogel disk blur rotated per pixel by interleaved
+// gradient noise using complex recurrence (no sin/cos inside the loop).
+fn fs_lens_blur(input: vision_vertex) float4 {
+    let uv = input.uv
+    let blur = lens_blur_strength(uv)
+    if blur <= 0.15 {
+        let s = shader_sample_texture(uv)
+        return float4 { s.x, s.y, s.z, 1.0 }
     }
-    // Chromatic aberration follows the depth of field: root 9 is the
-    // magnification split per pixel of blur, so focus stays clean and fringes
-    // grow with the same falloff and strength as the blur. None behind the
-    // launcher, which is blurred and dimmed already.
-    let ca = shader_root_f32(9) * blur
-    if shader_root_f32(8) > 0.5 {
-        ca = 0.0
+    let dither = (environment_dither(uv.x * shader_root_f32(32) * 0.5, uv.y * shader_root_f32(33) * 0.5) + 0.5) * 6.2831853
+    let dx = cos(dither) as f32
+    let dy = sin(dither) as f32
+    let rc: f32 = -0.73736888
+    let rs: f32 = 0.67549029
+    let inv_w = blur / shader_root_f32(32)
+    let inv_h = blur / shader_root_f32(33)
+    let first = shader_sample_texture(uv)
+    let sx = first.x
+    let sy = first.y
+    let sz = first.z
+    for i in 0 to 12 {
+        let radius = sqrt((i as f32 + 0.5) / 12.0) as f32
+        let tap = shader_sample_texture(float2 {
+            uv.x + dx * radius * inv_w, uv.y + dy * radius * inv_h
+        })
+        sx = sx + tap.x
+        sy = sy + tap.y
+        sz = sz + tap.z
+        let nx = dx * rc - dy * rs
+        let ny = dx * rs + dy * rc
+        dx = nx
+        dy = ny
     }
-    let sum = lens_rgb(uv, ca)
-    let weight: f32 = 1.0
-    if blur > 0.2 {
-        for i in 0 to 24 {
-            let angle = i as f32 * 2.3999632
-            let radius = sqrt((i as f32 + 0.5) / 24.0) as f32 * blur
-            let px = cos(angle) as f32 * radius / shader_root_f32(32)
-            let py = sin(angle) as f32 * radius / shader_root_f32(33)
-            let tap = lens_rgb(float2 {
-                uv.x + px, uv.y + py
-            }, ca)
-            sum = float3 {
-                sum.x + tap.x, sum.y + tap.y, sum.z + tap.z
-            }
-            weight = weight + 1.0
+    let inv_w_sum: f32 = 1.0 / 13.0
+    return float4 {
+        sx * inv_w_sum, sy * inv_w_sum, sz * inv_w_sum, 1.0
+    }
+}
+
+fn fs_lens_sharp(input: vision_vertex) vision_pixel {
+    let c = shader_sample_texture(input.uv)
+    return vision_pixel {
+        float4 { c.x, c.y, c.z, 1.0 }, 0.000001
+    }
+}
+
+fn fs_lens_dof(input: vision_vertex) vision_pixel {
+    let uv = input.uv
+    let blur = lens_blur_strength(uv)
+    if shader_root_f32(8) > 0.5 {
+        let c = shader_sample_texture(uv)
+        let washed = env_mix(env_scale3(float3 { c.x, c.y, c.z }, 0.58), env_mix(float3 { c.x, c.y, c.z }, env_rgb(0.84, 0.84, 0.84), 0.62), shader_root_f32(10))
+        return vision_pixel {
+            float4 { washed.x, washed.y, washed.z, 1.0 }, 0.000001
         }
     }
-    // Behind the launcher a dark scene dims and a light one (root 10) washes
-    // towards white, so its inverted ink keeps contrast.
-    let c = float3 {
-        sum.x / weight, sum.y / weight, sum.z / weight
+    if blur <= 0.2 {
+        return vision_pixel {
+            float4 { 0.0, 0.0, 0.0, 0.0 }, 0.000001
+        }
     }
-    if shader_root_f32(8) > 0.5 {
-        c = env_mix(env_scale3(c, 0.58), env_mix(c, env_rgb(0.84, 0.84, 0.84), 0.62), shader_root_f32(10))
-    }
+    let ca = shader_root_f32(9) * blur
+    let c = lens_rgb(uv, ca)
+    let alpha = env_smooth(0.2, 1.8, blur)
     return vision_pixel {
-        float4 {
-            c.x, c.y, c.z, 1.0
-        }, 0.000001
+        float4 { c.x, c.y, c.z, alpha }, 0.000001
     }
 }
